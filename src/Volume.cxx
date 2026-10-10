@@ -12,7 +12,7 @@
 #include <format>
 #include <fstream>
 #include <sstream>
-#include <fnmatch.h>
+#include <regex>
 #include <cmath>
 #include <TGeoManager.h>
 #include <TGeoPhysicalNode.h>
@@ -617,7 +617,7 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
   json rules = data.is_array() ? data : data.value("rules", json::array());
   if (data.is_object() && data.contains("defaults")) {
     json defRule = data["defaults"];
-    defRule["match"] = "*";
+    defRule["match"] = ".*";
     rules.insert(rules.begin(), defRule);
   }
 
@@ -632,21 +632,36 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
     }
   }
 
-  // the pattern is also tried with an implicit leading "*"
-  auto matchPattern = [](const std::string& pattern, const std::string& sym) -> bool {
-    return fnmatch(pattern.c_str(), sym.c_str(), 0) == 0 || fnmatch(("*" + pattern).c_str(), sym.c_str(), 0) == 0;
-  };
+  // Each pattern is also tried with an implicit leading ".*", so e.g. a
+  // bare "ITSUStave3" still matches regardless of its ancestors. Compiled once per rule here,
+  // rather than once per (rule, volume) pair in the traversal below.
+  std::vector<std::string> patterns;
+  std::vector<std::regex> reDirect, reAnyPrefix;
+  patterns.reserve(rules.size());
+  reDirect.reserve(rules.size());
+  reAnyPrefix.reserve(rules.size());
+  for (const auto& rule : rules) {
+    const auto pattern = rule["match"].get<std::string>();
+    try {
+      reDirect.emplace_back(pattern);
+      reAnyPrefix.emplace_back(".*(?:" + pattern + ")");
+    } catch (const std::regex_error& e) {
+      LOGP(fatal, "Invalid regex in the rule match '{}': {}", pattern, e.what());
+    }
+    patterns.push_back(pattern);
+  }
 
   root->traverse([&](Volume* vol) {
     if (vol->isPseudo()) {
       return;
     }
     const std::string& sym = vol->getSymName();
-    for (const auto& rule : rules) { // in order: a later matching rule replaces the DOF set of an earlier one
-      const auto pattern = rule["match"].get<std::string>();
-      if (!matchPattern(pattern, sym)) {
+    for (size_t i = 0; i < rules.size(); ++i) { // in order: a later matching rule replaces the DOF set of an earlier one
+      if (!std::regex_match(sym, reDirect[i]) && !std::regex_match(sym, reAnyPrefix[i])) {
         continue;
       }
+      const auto& rule = rules[i];
+      const auto& pattern = patterns[i];
       if (rule.contains("rigidBody")) {
         // silently not applicable to the volumes which are not rigid-body alignable (the root of the
         // hierarchy, the envelopes w/o own geometry), for which only the calibration DOFs can be
