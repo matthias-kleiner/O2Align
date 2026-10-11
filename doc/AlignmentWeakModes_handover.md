@@ -259,6 +259,178 @@ should appear in `mp2param.txt`, e.g. compare its label count to the one in the
 all-free run, and `pede.log` should report the expected `NVGB` (number of variable
 parameters).
 
+## 4. `solA1` — `ITS_RB_v0.json` actually run: what the fit really did
+
+`/data/devAlg/tests/solA1` is the first *valid* run of the restricted config (`solA0` is void — it
+is the pre-fix run, `NVGB = 146016`, i.e. pede varied every unlisted label). In `solA1`
+`NVGB = 4134`, `NCGB = 1084`, all 157872 labels appear in `mp2param.txt` (4134 `V` + 153738 `F`),
+and the constraint product matrix has full rank 1084. So the explicit-fixing recipe of the previous
+section works, and the `std::regex` migration works in production (`.*`, `[0-2]`, `[0-9]+` all
+matched as intended, including both one- and two-digit OB stave IDs: all 48 Lr6 staves are free).
+`checkResid` nevertheless still degrades at OB. The cause is *not* the config bookkeeping.
+
+### What is in the solution
+
+All 1084 constraints are satisfied by `millepede.res` to ~1e-8 (verified term by term), so there is
+no constraint bug. But decomposing the fitted stave-level corrections into a coherent
+r-proportional term plus per-half-barrel azimuthal harmonics (ℓ = 0,1,2) leaves almost nothing:
+
+| DOF (stave local frame) | coherent r-term | raw RMS Lr0→Lr6 [µm] | RMS after removing r-term + ℓ≤2 [µm] |
+|---|---|---|---|
+| TX (rφ, precise)      | −0.46 µm/cm | 8.4 → 79.4  | 0.4 → 36.0 |
+| TY (sensor normal ≈ radial) | **−5.44 µm/cm** | 14.1 → 255.0 | 1.4 → 55.2 |
+| TZ (beam)             | +0.20 µm/cm | 2.7 → 50.7  | 0.1 → 3.9 |
+
+The local-frame axis assignment is fixed by the code, not guessed: `SensorITS::defineMatrixL2G`
+shifts the measurement plane by `(0, 0.5*delta, 0)` to reach the epitaxial layer, and
+`getFlatChipAlpha` states that the local X axis lies in the chip plane. So **local Y is the sensor
+normal** (≈ radial), X is rφ and Z is beam — the two in-plane, precisely measured directions are
+X and Z.
+
+The TY column is the headline: the whole barrel is fitted with a **uniform radial scaling of
+ε = −5.4·10⁻⁴** (−0.054%), perfectly linear in radius over all 7 layers — −13 µm at Lr0, −214 µm
+at Lr6. Everything else is low-order azimuthal structure per half-barrel. The genuinely local,
+stave-by-stave part is 1-2 µm at IB and 20-55 µm at OB (the latter is plausible as *real* OB stave
+misalignment; OB mounting tolerances are O(100 µm)).
+
+### Why these modes survive, and why they are the worst possible ones to leave free
+
+1. **The hierarchical constraint is a rigid-body constraint.** Both
+   `writeChildrenMeanConstraints` and `pinChildrenMean` impose that the weighted mean of a parent's
+   nearest free descendants, *transported into the parent frame*, vanishes — 6 scalar equations per
+   parent. That removes the net translation and rotation of each child set and nothing else. The
+   stave level spans a whole function space over (r, φ, z); the modes that are *not* net rigid
+   motions of any parent — radial scaling, ℓ=2 elliptical squashing, twist — carry no net rigid
+   component and pass straight through. Verified numerically: a pure Δr = ε·r mode has only a
+   small projection on the 22 half-barrel TY constraints, and the fit simply pays for it with a
+   compensating φ-modulation that satisfies them exactly. Note also that a half-barrel is a
+   *half*-shell, so an ℓ=0/1 φ-modulation of its staves' radii is a shape change, not a rigid
+   motion of the half-barrel, and so is only partly reachable by its own pin. **No choice of
+   `pinChildrenMean` can fix this — it is the wrong operator, not a wrong setting.**
+
+2. **Radial scaling is an (almost exactly) null direction of the track χ².** A uniform dilation of
+   the transverse plane maps straight lines to straight lines and circles to circles, so it is
+   absorbed entirely by rescaling 1/pT and the impact parameter. The only things that break the
+   degeneracy are a fixed external length scale — the beam spot, the B field map, and the material
+   radii. Here the beam spot is *also* free and unpriored (see point 4), so even that handle is
+   gone. Pede therefore takes a large amplitude in this direction for a negligible χ² gain, and
+   its fitted value is set by systematics (material budget, cluster-shape bias, B map), not by
+   geometry.
+
+3. **It damages `checkResid` maximally at large radius.** A *pure* dilation would be invisible even
+   to a leave-one-out estimator; what hurts is the φ-harmonic debris the pin forces in alongside
+   it, which is not invisible, plus the coupling of the dilation to the (non-dilated) beam spot and
+   momentum scale. This matches the plots: the IB (Lr0-2) panels of `checkResid_hman.pdf` are
+   essentially unchanged, while Lr3-6 acquire a 20-30 µm stave-to-stave scatter in ΔY vs φ that was
+   not there before, together with a systematic **B=0 vs B=+0.5T split** of ~15 µm. That split is
+   the fingerprint of the momentum-scale degeneracy: the fit was given three binaries (B0, B−, B+)
+   jointly, and a mode degenerate in one field setting but not another lands on a compromise value
+   that suits neither.
+
+4. **The mean vertex escaped the catch-all and is free with no prior.** `{"match": ".*",
+   "rigidBody": "fixed"}` sets only a *rigid-body* DOF set; `PVT/meanVertex` carries a
+   `MeanVertexDOFSet`, i.e. a *calibration* DOF set, which the clause never touches. Its 30 labels
+   (6 time slots × X,Y,Z,SlopeX,SlopeY) are written as `V` with presigma `+0` and make up exactly
+   the 30 by which `NVGB` exceeds the 4104 rigid-body DOFs. Fitted: X = +334 µm, Y = −1820 µm,
+   Z = −1808 µm (RMS 865 µm over slots). Worth checking against the CCDB `MeanVertex` actually
+   loaded — if it was, a 1.8 mm correction is a red flag; if the slots started at (0,0,0) it may
+   simply be the real beam position. Either way it should be priored, since it is the last external
+   anchor of the global scale.
+
+5. **No diagnostics were available.** `mpSteer.txt` uses `method sparseMINRES 4 0.10`, which
+   computes **no parameter errors** — the error column of `millepede.res` is `0.0000` throughout —
+   and no eigenvalue spectrum. With `NFGB = 3050` this is an unnecessary choice. Note also that the
+   headline "×5 χ²/ndf drop" is iteration 0 → 1 only (1.57e8 → 3.41e7), and the cut factor changes
+   from 20 to 10 across exactly that step; iterations 2-4 buy a further 4% while the rejected-record
+   count goes 118 → 55728. The ×5 is not a clean measure of geometry improvement.
+
+6. **Weakly-measured DOFs are freed where mechanical knowledge is much better than the fit.** IB
+   chip TY (the sensor normal) came out with 15-29 µm RMS and up to 84 µm, over chips sitting on one
+   flat silicon ladder whose normal positions are known to a few µm. That DOF can only absorb noise,
+   and it is the same channel that produced the `ITSBarFix` ramp (test 1).
+
+### Suggested fixes, in order of value
+
+**(a) Switch the solver and look at the spectrum — do this first.** In `mpSteer.txt` replace
+`method sparseMINRES 4 0.10` by
+
+```
+  method inversion            5 0.10
+```
+
+`NFGB = 3050` inverts in seconds, and this yields real parameter errors and global correlation
+coefficients. Run `method diagonalization 5 0.10` once as well: it prints the eigenvalue spectrum
+and the eigenvectors, which will show the modes above directly as the smallest eigenvalues. Without
+errors there is no way to tell a determined parameter from a weak-mode artefact, which is how a
+−214 µm Lr6 shift went unnoticed.
+
+**(b) Constrain the global deformation modes explicitly.** This is the real fix and it is a missing
+capability, not a misconfiguration. `macro/add_global_mode_constraints.py` adds the equations
+directly to an `mp2con.txt` written by `MilleSteer`, so the hypothesis can be tested *today* with no
+rebuild:
+
+```bash
+macro/add_global_mode_constraints.py mp2param.txt mp2con.txt -m radial,curl,ellipse
+pede mpSteer.txt
+```
+
+It appends, over all free stave-level DOFs, `Σ wᵢ rᵢ·TYᵢ = 0` (radial scaling),
+`Σ wᵢ rᵢ·TXᵢ = 0` (curl) and `Σ wᵢ cos2φᵢ·TYᵢ = 0`, `Σ wᵢ sin2φᵢ·TYᵢ = 0` (elliptical). On the
+`solA1` solution all four are violated at the 1e-3 cm level, i.e. they bite exactly where the
+decomposition says they should. It uses nominal layer radii and infers φ from the stave index, which
+is why it is a test harness and not the final answer.
+
+The proper implementation is a sibling of `writeRigidBodyConstraints` — say
+`writeGlobalModeConstraints` — driven by a new DOF-config clause, e.g.
+
+```json
+{ "match": "ITS/.*", "globalModes": ["radialScaling", "curl", "elliptical", "twist", "zScaling"] }
+```
+
+For each requested mode it walks the matched subtree and, for every free rigid-body DOF, writes the
+projection of the analytic mode displacement field onto that DOF's global displacement direction,
+taken from the volume's own `getL2G()` (and weighted by measurement count, as
+`writeRigidBodyConstraints` already does). For radial scaling the coefficient of a volume's local-TY
+DOF reduces to `r·(n̂·r̂) ≈ r` and of local-TX to `≈ 0`, which is why the hand-written version above
+is a faithful stand-in. Modes worth having: radial scaling (Δr ∝ r), z scaling (Δz ∝ z), curl
+(Δφ = const), twist/torsion (Δφ ∝ z), elliptical (Δr ∝ cos2φ, sin2φ), bowing (Δr ∝ z²).
+
+**(c) `doc/ITS_RB_v1.json`** — `v0` with the two changes that are justified by mechanical knowledge
+rather than by mode-suppression tuning, so the comparison stays attributable:
+
+- `PVT/meanVertex` given an explicit `calib` clause freeing only X, Y, Z (dropping SlopeX/SlopeY)
+  plus a 50 µm prior on X/Y and 1 mm on Z. Note the `measurement` must be its own rule, after the
+  `calib` rule — a combined rule is fatal.
+- **IB chip reduced to `TX, TZ`** (the two in-plane, measured directions), fixing the sensor-normal
+  TY. This removes 432 parameters that only absorb noise and closes the test-1 ramp channel at its
+  source. Expected `NVGB` ≈ 3690.
+
+Everything else is left identical to `v0` on purpose. `v1` is meant to be run *together with* (b);
+on its own it does not remove the radial scaling, because that mode can be realised by any free
+radial DOF at stave level.
+
+**(d) Do not expect priors to do (b)'s job.** A `measurement` prior at the honest mechanical
+tolerance (O(100 µm) for an OB stave radius) is far too loose to cap a 214 µm mode, and tightening
+it to the few-µm level needed would be fabricating knowledge. Priors belong where real external
+knowledge exists — the IB half-barrel gap (30 µm, already in `v0`), the beam spot, survey results.
+
+**(e) Optional, once (a)-(c) are in:** the OB stave and its two half-staves both at `"all"` is a
+pure reparametrization — 6 stave DOFs + 12 half-stave DOFs reduced by the 6-equation mean
+constraint. It is formally well-posed (and the fit does split them sensibly: stave RMS is large,
+half-stave RMS is 8-19 µm), but it doubles the OB parameter count for no new freedom. If the
+parameter count becomes a problem, keep one level and fix the other rather than both.
+
+### Minor code issues noticed
+
+- The warning-suppression heuristic `pattern.find('*') == npos` in `applyMeasurementConfig`,
+  `applyPinChildrenMeanConfig` and friends is a leftover from the `fnmatch` era: with regex
+  patterns, broad patterns such as `[0-9]+` contain no `*`, so they now warn where they used not
+  to, while a pattern containing a literal `*` quantifier is not necessarily broad.
+- `doc/ITS_RB_from_hstaves_IB.json` and any other glob-era config are now silently broken: their
+  `ITSUHalfBarrel?` patterns mean "optional `l`" in regex and never match. Worth either converting
+  them or deleting them so they cannot be picked up by accident.
+- `doc/DOFConfig_rules.md` and the README still document glob semantics.
+
 ## Caveat / next step
 
 The half-stave and chip DOF sets determine which derivative columns exist in the Mille
