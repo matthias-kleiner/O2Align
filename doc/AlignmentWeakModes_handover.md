@@ -420,16 +420,14 @@ constraint. It is formally well-posed (and the fit does split them sensibly: sta
 half-stave RMS is 8-19 µm), but it doubles the OB parameter count for no new freedom. If the
 parameter count becomes a problem, keep one level and fix the other rather than both.
 
-### Minor code issues noticed
+### Minor code issues (fixed)
 
-- The warning-suppression heuristic `pattern.find('*') == npos` in `applyMeasurementConfig`,
-  `applyPinChildrenMeanConfig` and friends is a leftover from the `fnmatch` era: with regex
-  patterns, broad patterns such as `[0-9]+` contain no `*`, so they now warn where they used not
-  to, while a pattern containing a literal `*` quantifier is not necessarily broad.
-- `doc/ITS_RB_from_hstaves_IB.json` and any other glob-era config are now silently broken: their
-  `ITSUHalfBarrel?` patterns mean "optional `l`" in regex and never match. Worth either converting
-  them or deleting them so they cannot be picked up by accident.
-- `doc/DOFConfig_rules.md` and the README still document glob semantics.
+- The warning suppression in `applyMeasurementConfig`, `applyPinChildrenMeanConfig` and the
+  `rigidBody` handling now uses `isLiteralPattern()` (`src/Volume.cxx`): an inapplicable rule warns
+  only if its pattern has no regex metacharacters, i.e. names one volume explicitly.
+- `doc/ITS_RB_from_hstaves_IB.json` and `doc/ITS_RB_from_staves.json` were converted from glob `?`
+  to regex `[0-9]`.
+- `doc/DOFConfig_rules.md` now documents regex semantics (the README had no glob references).
 
 ## Caveat / next step
 

@@ -502,6 +502,17 @@ std::unique_ptr<DOFSet> Volume::makeRigidBodyDOFSet(const nlohmann::json& rb, co
   return nullptr;
 }
 
+namespace
+{
+// A rule pattern naming one volume explicitly (no regex metacharacters). Only for such a pattern an
+// inapplicable rule is worth a warning: a regex is typically meant to be broad, matching volumes
+// of several kinds.
+bool isLiteralPattern(const std::string& pattern)
+{
+  return pattern.find_first_of("\\^$.|?*+()[]{}") == std::string::npos;
+}
+} // namespace
+
 // Apply the "pinChildrenMean" clause of a rule: a bool (all DOFs), "all", or an array of DOF names.
 // Unlike rigidBody/calib this never creates a DOF set, it only flags DOFs of the volume's own
 // (possibly absent or fixed) RigidBodyDOFSet for writeRigidBodyConstraints. A later matching rule
@@ -509,7 +520,7 @@ std::unique_ptr<DOFSet> Volume::makeRigidBodyDOFSet(const nlohmann::json& rb, co
 void Volume::applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::string& pattern)
 {
   if (!isRigidBodyAllowed()) {
-    if (pattern.find('*') == std::string::npos) {
+    if (isLiteralPattern(pattern)) {
       LOGP(warn, "Ignoring the pinChildrenMean rule '{}': {} is not rigid-body alignable", pattern, mSymName);
     }
     return;
@@ -543,7 +554,7 @@ void Volume::applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::st
 void Volume::applyMeasurementConfig(const nlohmann::json& meas, const std::string& pattern)
 {
   if (!mRigidBody && !mCalib) { // nothing to measure on this volume, e.g. under a broadly matching pattern
-    if (pattern.find('*') == std::string::npos) {
+    if (isLiteralPattern(pattern)) {
       LOGP(warn, "Ignoring the measurement rule '{}': {} has neither a rigid-body nor a calibration DOF set", pattern, mSymName);
     }
     return;
@@ -668,7 +679,7 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
         // configured. An explicitly named volume is likely a configuration mistake.
         if (vol->isRigidBodyAllowed()) {
           vol->setRigidBody(makeRigidBodyDOFSet(rule["rigidBody"], pattern));
-        } else if (pattern.find('*') == std::string::npos) {
+        } else if (isLiteralPattern(pattern)) {
           LOGP(warn, "Ignoring the rigidBody rule '{}': {} is not rigid-body alignable", pattern, sym);
         }
       }

@@ -1,6 +1,6 @@
 # DOF Configuration Rules
 
-`Volume::applyDOFConfig` traverses the hierarchy and applies matching rules to non-pseudo volumes. A `defaults` object, if present, is applied first to every volume; rules then run in order, and a later matching clause replaces the earlier DOF set of the same kind. Patterns are matched against symbolic volume names, with an implicit `*` prepended. Since `*` can match `/`, use exact-depth patterns when targeting a hierarchy level.
+`Volume::applyDOFConfig` traverses the hierarchy and applies matching rules to non-pseudo volumes. A `defaults` object, if present, is applied first to every volume; rules then run in order, and a later matching clause replaces the earlier DOF set of the same kind. Patterns are matched against symbolic volume names, as full-match ECMAScript regular expressions (not globs: `.` is any character, `?` and `*` are quantifiers), also retried with an implicit leading `.*`. Since `.*` can match `/`, use exact-depth patterns when targeting a hierarchy level.
 
 ## Rigid-Body DOFs
 
@@ -10,7 +10,7 @@ rule keeps none free. Free several at once by listing them together, e.g. the tw
 plus the in-plane rotation of every ITS stave:
 
 ```json
-{ "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel?/ITSUStave?", "rigidBody": ["TX", "TZ", "RZ"] }
+{ "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]", "rigidBody": ["TX", "TZ", "RZ"] }
 ```
 
 `"rigidBody": "all"` frees all six, `"rigidBody": "fixed"` (or `false`) fixes all six — the latter
@@ -68,8 +68,8 @@ two cases that matter in practice:
    movement (transported to the parent's frame) vanishes" is written **automatically**, with no DOF
    config needed beyond freeing both levels:
    ```json
-   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel?", "rigidBody": ["TY"] },
-   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel?/ITSUStave?", "rigidBody": ["TY"] }
+   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]", "rigidBody": ["TY"] },
+   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]", "rigidBody": ["TY"] }
    ```
    Here the half-barrel's `TY` and the mean `TY` of its staves are tied together automatically; a stave
    free only in, say, `RZ` instead would still contribute to that same constraint via `j(TY, RZ)`.
@@ -83,8 +83,8 @@ two cases that matter in practice:
    parent DOF into a fit parameter, it only pins the common mode of what's below it to the parent's
    (fixed) position:
    ```json
-   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel?", "rigidBody": "fixed", "pinChildrenMean": ["TY"] },
-   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel?/ITSUStave?", "rigidBody": ["TY"] }
+   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]", "rigidBody": "fixed", "pinChildrenMean": ["TY"] },
+   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]", "rigidBody": ["TY"] }
    ```
    Without the `pinChildrenMean` clause, this configuration leaves the mean `TY` of the staves
    unconstrained; with it, the mean is pinned to the (fixed) half-barrel position.
@@ -147,8 +147,8 @@ mean-vertex `X,Y,Z`; rad for `RX,RY,RZ`; dimensionless for `SlopeX,SlopeY`), rel
 used by the fit:
 
 ```json
-{ "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel?", "rigidBody": ["TX", "TY"] },
-{ "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel?", "measurement": { "TX": [0.01, 0.005], "TY": {"value": -0.02, "sigma": 0.01} } }
+{ "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]", "rigidBody": ["TX", "TY"] },
+{ "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]", "measurement": { "TX": [0.01, 0.005], "TY": {"value": -0.02, "sigma": 0.01} } }
 ```
 
 ```json
@@ -165,7 +165,7 @@ As for `pinChildrenMean`, no DOF set is created and a later matching rule replac
 measurements of both DOF sets of the volume (even if the new rule only touches one of them).
 `sigma` must be positive. A measurement of a DOF which is not free at the time of writing, as well as
 the clause on a volume having neither a rigid-body nor a calibration DOF set at all, is ignored with
-a warning (under an exact, non-wildcard pattern) or silently skipped (under a wildcard pattern, e.g.
+a warning (under a literal pattern, without regex metacharacters) or silently skipped (under any other pattern, e.g.
 a `measurement` rule meant for a different kind of volume).
 
 ## Aligning a Subtree as One Rigid Body
@@ -196,7 +196,7 @@ Fix both with:
 ## ITS Alignable Match Strings
 
 The patterns below are based on the output from the `macro/printAlignableVolumes.C` running over Run3 TGeometry root file. 
-The ITS envelope is the `ITS` alignable. The layer name is a path component, not a separate alignable entry. In the match patterns, layer IDs use `[0-2]` for the inner barrel and `[3-6]` for the outer barrel. Half-barrel, half-stave, module, and chip IDs in these paths are single digits, matched with `?`. Inner-barrel stave IDs are single digits; outer-barrel stave IDs can be one or two digits, so both exact-width forms are listed there. Avoid a trailing `*` when matching a specific level: `fnmatch` allows it to match `/` and descendants too.
+The ITS envelope is the `ITS` alignable. The layer name is a path component, not a separate alignable entry. In the match patterns, layer IDs use `[0-2]` for the inner barrel and `[3-6]` for the outer barrel. Half-barrel, half-stave, module, and chip IDs in these paths are single digits, matched with `[0-9]`. Inner-barrel stave IDs are single digits; outer-barrel stave IDs can be one or two digits, so both exact-width forms are listed there. Avoid a trailing `.*` when matching a specific level: it also matches `/` and descendants.
 
 ### Inner Barrel (Layers 0–2)
 
@@ -205,9 +205,9 @@ The inner-barrel hierarchy has half-barrels, staves, and chips:
 | Alignable level | `match` string |
 | --- | --- |
 | ITS envelope | `ITS` |
-| Half-barrel | `ITS/ITSULayer[0-2]/ITSUHalfBarrel?` |
-| Stave | `ITS/ITSULayer[0-2]/ITSUHalfBarrel?/ITSUStave?` |
-| Chip | `ITS/ITSULayer[0-2]/ITSUHalfBarrel?/ITSUStave?/ITSUChip?` |
+| Half-barrel | `ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]` |
+| Stave | `ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]` |
+| Chip | `ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]/ITSUChip[0-9]` |
 
 ### Outer Barrel (Layers 3–6)
 
@@ -216,15 +216,15 @@ The outer-barrel hierarchy adds half-staves and modules between staves and chips
 | Alignable level | `match` string |
 | --- | --- |
 | ITS envelope | `ITS` |
-| Half-barrel | `ITS/ITSULayer[3-6]/ITSUHalfBarrel?` |
-| Stave, one-digit ID | `ITS/ITSULayer[3-6]/ITSUHalfBarrel?/ITSUStave?` |
-| Stave, two-digit ID | `ITS/ITSULayer[3-6]/ITSUHalfBarrel?/ITSUStave[0-9][0-9]` |
-| Half-stave, under one-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel?/ITSUStave?/ITSUHalfStave?` |
-| Half-stave, under two-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel?/ITSUStave[0-9][0-9]/ITSUHalfStave?` |
-| Module, under one-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel?/ITSUStave?/ITSUHalfStave?/ITSUModule?` |
-| Module, under two-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel?/ITSUStave[0-9][0-9]/ITSUHalfStave?/ITSUModule?` |
-| Chip, under one-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel?/ITSUStave?/ITSUHalfStave?/ITSUModule?/ITSUChip?` |
-| Chip, under two-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel?/ITSUStave[0-9][0-9]/ITSUHalfStave?/ITSUModule?/ITSUChip?` |
+| Half-barrel | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]` |
+| Stave, one-digit ID | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]` |
+| Stave, two-digit ID | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9][0-9]` |
+| Half-stave, under one-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]/ITSUHalfStave[0-9]` |
+| Half-stave, under two-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9][0-9]/ITSUHalfStave[0-9]` |
+| Module, under one-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]/ITSUHalfStave[0-9]/ITSUModule[0-9]` |
+| Module, under two-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9][0-9]/ITSUHalfStave[0-9]/ITSUModule[0-9]` |
+| Chip, under one-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]/ITSUHalfStave[0-9]/ITSUModule[0-9]/ITSUChip[0-9]` |
+| Chip, under two-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9][0-9]/ITSUHalfStave[0-9]/ITSUModule[0-9]/ITSUChip[0-9]` |
 
 For example, replace a `match` value with one of the strings above in a rule such as `{ "match": "...", "rigidBody": ["TX", "TY", "TZ"] }`. ITS3 uses different names, such as `ITS3CarbonForm`, and is not selected by these patterns.
 
@@ -236,7 +236,7 @@ TRD has a dummy `TRD_envelope` (not a geometry alignable), followed by alignable
 | --- | --- |
 | O2Align envelope (not in geometry log) | `TRD_envelope` |
 | Supermodule | `TRD/sm[0-9][0-9]` |
-| Chamber | `TRD/sm[0-9][0-9]/st?/pl?` |
+| Chamber | `TRD/sm[0-9][0-9]/st[0-9]/pl[0-9]` |
 
 ## TOF Alignable Match Strings
 
