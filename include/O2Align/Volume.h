@@ -114,6 +114,9 @@ class Volume
   };
   /// name of a mode as used in the "globalModes" clause
   static const char* globalModeName(int mode);
+  /// displacement field u (translation) and local rotation omega = curl(u)/2 of the unit-amplitude mode
+  /// (phase selects cos2phi/sin2phi of Elliptical) at the global position pos; false if undefined there
+  static bool globalModeField(int mode, int phase, const double* pos, double* u, double* om);
   /// number of scalar equations of a mode: 2 for Elliptical (the two phases cos2phi, sin2phi), 1 otherwise
   static int globalModeNEq(int mode) { return mode == Elliptical ? 2 : 1; }
   /// one Millepede Constraint per requested mode and phase, spanning the free rigid-body DOFs of every
@@ -224,6 +227,10 @@ class Volume
   /// RigidBodyDOFSet layout, hence implemented once in the base class. The caller
   /// (writeMillepedeResults) only calls this when the volume has free rigid-body DOFs.
   virtual bool MP2JSON_RB(const std::map<uint32_t, double>& labelToValue, const std::vector<double>* inj, nlohmann::json& entry) const;
+  /// local delta (LOC->LOC, l' = delta*l) built from the fitted rigid-body parameters of this volume.
+  /// Returns false if it has no free rigid-body DOF or all its fitted values are 0 (fixed parameters
+  /// are absent from labelToValue, hence count as 0).
+  bool getFittedLocalDelta(const std::map<uint32_t, double>& labelToValue, TGeoHMatrix& delta) const;
   /// fitted value of a parameter, 0 if it was not fitted (fixed or absent from millepede.res)
   static double getFittedValue(const std::map<uint32_t, double>& labelToValue, uint32_t rawLabel)
   {

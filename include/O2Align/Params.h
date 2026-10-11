@@ -132,6 +132,9 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   // conversion of the fitted rigid-body corrections to o2::detectors::AlignParam (MilleRes stage)
   std::string algParamsOutFile = "alignment.root"; // if not empty, write the combined alignment of each detector to <DET>_<algParamsOutFile>, to be applied to the ideal geometry
 
+  // WeakModesDiag output (MilleRes stage): <weakModesOutBase>.json and <weakModesOutBase>.root
+  std::string weakModesOutBase = "weakModes";
+
   O2ParamDef(Params, "AlignParams");
 };
 } // namespace o2::alignrs

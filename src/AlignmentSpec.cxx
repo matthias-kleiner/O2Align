@@ -72,6 +72,7 @@
 #include "O2Align/AlignmentTypes.h"
 #include "O2Align/ProcessingStats.h"
 #include "O2Align/Volume.h"
+#include "O2Align/WeakModes.h"
 #include "O2Align/MisalignmentUtils.h"
 #include "O2Align/SensorITS.h"
 #include "O2Align/DetectorITS.h"
@@ -490,6 +491,9 @@ void AlignmentSpec::run(ProcessingContext& pc)
     Volume::writeMillepedeResults(mHierarchy.get(), fitted, mParams->milleResOutJson, mParams->misAlgJson);
     if (!mParams->algParamsOutFile.empty()) {
       writeAlignParams(fitted);
+    }
+    if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
+      diagnoseWeakModes(mHierarchy.get(), fitted, mParams->weakModesOutBase);
     }
   } else if (mOutOpt[o2::alignrs::OutputOpt::MilleSteer] && !mOutOpt[o2::alignrs::OutputOpt::ProcessData]) { // just mille parameters/constraints extraction
     updateTimeDependentParams(pc);

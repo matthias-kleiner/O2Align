@@ -25,6 +25,7 @@
 #include "ITSBase/GeometryTGeo.h"
 #include "Framework/Logger.h"
 #include "MathUtils/Utils.h"
+#include "DetectorsCommonDataFormats/AlignParam.h"
 
 namespace o2::alignrs
 {
@@ -308,8 +309,6 @@ void Volume::addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<M
   }
 }
 
-namespace
-{
 // Displacement field u(x) of a global deformation mode of unit amplitude, in the GLOBAL frame,
 // together with the local rotation omega(x) = 0.5*curl(u) that the field induces at that point.
 //
@@ -323,7 +322,7 @@ namespace
 // phiHat = (-sin phi, cos phi, 0). Each case below states how omega follows from u.
 // Returns false if the field is not defined at x (on the beam axis, where rHat and the 1/r rotation
 // terms of the non-axisymmetric modes are meaningless); such a volume is then simply left out.
-bool globalModeField(int mode, int phase, const double* pos, double* u, double* om)
+bool Volume::globalModeField(int mode, int phase, const double* pos, double* u, double* om)
 {
   constexpr double rMin = 1e-4; // cm
   const double x = pos[0], y = pos[1], z = pos[2];
@@ -390,7 +389,6 @@ bool globalModeField(int mode, int phase, const double* pos, double* u, double* 
   }
   return true;
 }
-} // namespace
 
 const char* Volume::globalModeName(int mode)
 {
@@ -479,6 +477,36 @@ void Volume::writeGlobalModeConstraints(std::ostream& os) const
       LOGP(info, "Wrote the constraint '{}': {} terms over {} flagged volumes", name, con.getSize(), nFlagged);
     }
   }
+}
+
+// Local delta d^n of the volume from its fitted rigid-body parameters (step 1). Returns false if
+// the volume has no free rigid-body DOF or all its fitted values are 0 (fixed parameters are
+// absent from labelToValue, hence count as 0).
+bool Volume::getFittedLocalDelta(const std::map<uint32_t, double>& labelToValue, TGeoHMatrix& delta) const
+{
+  // RSTODO In principle, if the volume has no rigid-body DOF, it should not have any fitted parameters either. 
+  // So, in the alignment results writing session one could skip initializing the same RB DOFs just for this check,
+  // instead, one can check isRigidBodyAllowed() and then loop as for (int i = 0; i < RigidBodyDOFSet::NDOF; ++i)
+  const auto* rb = getRigidBody();
+  if (rb == nullptr || !rb->nFreeDOFs()) {
+    return false;
+  }
+  std::array<double, RigidBodyDOFSet::NDOF> par{};
+  bool nonZero = false;
+  for (int i = 0; i < rb->nDOFs(); ++i) {
+    if (auto it = labelToValue.find(getLabel().raw(i)); it != labelToValue.end()) {
+      par[i] = it->second;
+      nonZero |= par[i] != 0.;
+    }
+  }
+  if (!nonZero) {
+    return false;
+  }
+  // the RigidBodyDOFSet parameters coincide with the AlignParam (x,y,z,psi,theta,phi), which builds
+  // the matrix with the same angle convention used for the derivatives (A.47)
+  using RB = RigidBodyDOFSet;
+  delta = o2::detectors::AlignParam("", -1, par[RB::TX], par[RB::TY], par[RB::TZ], par[RB::RX], par[RB::RY], par[RB::RZ], true, false).createMatrix();
+  return true;
 }
 
 void Volume::setCalibSlots(const TimeSlotsSet& slots)

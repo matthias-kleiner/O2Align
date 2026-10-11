@@ -19,13 +19,14 @@
 namespace o2::alignrs
 {
 
-enum class OutputOpt : uint8_t {
+enum class OutputOpt : uint16_t {
   VerboseGBL = 0,
   ProcessData, // expect data input for processing
   MilleData,   // produce mille data (imposes ProcessData)
   MilleSteer,  // extract mille steering files (standalone or in the beginning of ProcessData)
   MilleRes,    // convert pede results to CCDB objects
   MisRes,
+  WeakModesDiag, // with MilleRes: diagnose the global weak modes of the fitted corrections
   Debug,
 };
 using OutputEnum = utils::EnumFlags<OutputOpt>;

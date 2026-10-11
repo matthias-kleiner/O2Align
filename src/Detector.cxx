@@ -137,36 +137,6 @@ bool isSameMatrix(const TGeoHMatrix& a, const TGeoHMatrix& b, double eps = 1e-12
   return true;
 }
 
-/// Local delta d^n of the volume from its fitted rigid-body parameters (step 1). Returns false if
-/// the volume has no free rigid-body DOF or all its fitted values are 0 (fixed parameters are
-/// absent from labelToValue, hence count as 0).
-bool getFittedLocalDelta(const Volume* vol, const std::map<uint32_t, double>& labelToValue, TGeoHMatrix& delta)
-{
-  // RSTODO In principle, if the volume has no rigid-body DOF, it should not have any fitted parameters either. 
-  // So, in the alignment results writing session one could skip initializing the same RB DOFs just for this check,
-  // instead, one can check isRigidBodyAllowed() and then loop as for (int i = 0; i < RigidBodyDOFSet::NDOF; ++i)
-  const auto* rb = vol->getRigidBody();
-  if (rb == nullptr || !rb->nFreeDOFs()) {
-    return false;
-  }
-  std::array<double, RigidBodyDOFSet::NDOF> par{};
-  bool nonZero = false;
-  for (int i = 0; i < rb->nDOFs(); ++i) {
-    if (auto it = labelToValue.find(vol->getLabel().raw(i)); it != labelToValue.end()) {
-      par[i] = it->second;
-      nonZero |= par[i] != 0.;
-    }
-  }
-  if (!nonZero) {
-    return false;
-  }
-  // the RigidBodyDOFSet parameters coincide with the AlignParam (x,y,z,psi,theta,phi), which builds
-  // the matrix with the same angle convention used for the derivatives (A.47)
-  using RB = RigidBodyDOFSet;
-  delta = o2::detectors::AlignParam("", -1, par[RB::TX], par[RB::TY], par[RB::TZ], par[RB::RX], par[RB::RY], par[RB::RZ], true, false).createMatrix();
-  return true;
-}
-
 /// Step 1: cumulative global delta P^n of the new corrections for every non-virtual volume of the
 /// branch below top (included). The branch is traversed parents first, the parent of top being
 /// the common root, which has no DOFs: the corrections of different detectors never mix.
@@ -177,7 +147,7 @@ PathMatrices collectNewCumulativeDeltas(Volume* top, const std::map<uint32_t, do
   top->traverse([&](Volume* vol) {
     TGeoHMatrix pn = vol == top ? TGeoHMatrix() : cumulative.at(vol->getParent());
     TGeoHMatrix delta;
-    if (getFittedLocalDelta(vol, labelToValue, delta)) {
+    if (vol->getFittedLocalDelta(labelToValue, delta)) {
       const auto& l2g = vol->getMatrixL2G();
       pn = pn * l2g * delta * l2g.Inverse();
       if (vol->isVirtual() && !vol->isLeaf()) {

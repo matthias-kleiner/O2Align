@@ -50,6 +50,7 @@ add_library(O2Align SHARED
             src/MisalignmentUtils.cxx # tmp?
             src/AlignmentTypes.cxx
             src/TimeSlotsSet.cxx
+            src/WeakModes.cxx
             src/ProcessingStats.cxx
             src/AlignmentSpec.cxx)
 #add_library(O2::Align ALIAS O2Align)

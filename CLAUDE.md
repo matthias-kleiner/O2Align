@@ -35,8 +35,13 @@ Three-stage workflow, the same executable each time:
    rebuilds the hierarchy and translates `millepede.res` into `result.json`, subtracting the
    injected misalignment if `misAlgJson` is given.
 
+With `MilleRes`, `WeakModesDiag` also runs `diagnoseWeakModes` ([WeakModes.h](include/O2Align/WeakModes.h)):
+per detector branch it writes `weakModes.json/.root` (prefix `AlignParams.weakModesOutBase`) with the amplitude of every
+global mode, from the constraint projection (A) and from a fit of the sensor displacement field (B);
+`macro/drawWeakModes.C` plots them.
+
 `--output` is a comma-separated `EnumFlags` list: `VerboseGBL, MilleData, MilleSteer, MilleRes,
-MisRes, Debug` ([AlignmentSpec.h](include/O2Align/AlignmentSpec.h)).
+MisRes, WeakModesDiag, Debug` ([AlignmentSpec.h](include/O2Align/AlignmentSpec.h)).
 
 ## Coding preferences
 
