@@ -133,6 +133,56 @@ or none of the free DOFs feeds it through the chained jacobians) is skipped with
 or an envelope without its own geometry such as `TRD_envelope`), so the common mode of the
 supermodules of a detector can't be pinned this way.
 
+## Constraining Global Deformation Modes
+
+`pinChildrenMean` and the automatic mean constraint are both *rigid-body* constraints: 6 scalar
+equations per parent, removing the net translation and rotation of that parent's set of free
+descendants and nothing else. A coherent deformation of the barrel as a whole — a uniform radial
+scaling, an elliptical squashing of each layer, a twist — is not a net rigid motion of any single
+parent, carries no net rigid component, and therefore passes straight through it, however
+`pinChildrenMean` is set. Such modes are also (very nearly) null directions of the track χ², so
+Millepede takes large amplitudes in them for a negligible χ² gain. This is a different operator, not
+a different setting of the same one.
+
+The `globalModes` clause flags the volumes whose free rigid-body DOFs take part in one global
+equation per mode, written by `Volume::writeGlobalModeConstraints` (called once on the root from
+`writeRigidBodyConstraints`), forcing the total amplitude of that mode over the whole flagged set to
+vanish:
+
+```json
+{ "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+",
+  "globalModes": ["radialScaling", "elliptical", "twist"] }
+```
+
+| mode | displacement field | equations |
+|---|---|---|
+| `radialScaling` | Δr = ε·r (uniform transverse dilation, absorbed by the 1/p<sub>T</sub> scale) | 1 |
+| `zScaling`      | Δz = ε·z | 1 |
+| `curl`          | Δφ = ε (rigid rotation about the beam) | 1 |
+| `twist`         | Δφ = ε·z (torsion along the beam) | 1 |
+| `elliptical`    | Δr = ε·cos2φ and Δr = ε·sin2φ | **2** |
+| `bowing`        | Δr = ε·z² (radial sagitta along the beam) | 1 |
+
+The clause takes a boolean (all modes), the string `"all"`, or an array of mode names, and — like
+`rigidBody`/`calib`/`pinChildrenMean` — a later matching rule replaces the flags of an earlier one.
+It creates no DOF set and frees nothing: it only adds terms for DOFs that are already free, so it
+must follow the rule that frees them. Flagging several nested levels at once is legitimate and is not
+double counting: the equation then constrains the total amplitude summed over all of them, which is
+the degenerate quantity, regardless of which level realises it.
+
+The coefficients come from each volume's own `getL2G()`, not from nominal radii: for every free DOF,
+the projection of the mode's analytic displacement field **u**(x) (for `TX,TY,TZ`) or of the local
+rotation **ω**(x) = ½∇×**u** it induces (for `RX,RY,RZ`) onto the corresponding local axis. The
+rotation part is not optional: it is what makes `twist` constrain the OB staves' `RY` rather than
+their translations. Each equation is homogeneous, so it is normalised to a largest coefficient of 1,
+and terms below 1e-9 of that are dropped as rounding residues of the L2G matrices.
+
+A mode with no handle on the flagged level is skipped with a warning rather than silently. `zScaling`
+and `bowing` project on a volume's local Z (beam) DOF with a coefficient ∝ z of that volume, which
+vanishes for an ITS stave — a stave is centred at z = 0 — so these two need free DOFs that are
+*distributed* in z (module or chip level) to be observable at all. `globalModes` is ignored, with a
+warning, on a volume that is not rigid-body alignable.
+
 ## Measurements of Rigid-Body and Calibration DOFs
 
 The `measurement` clause supplies an external measurement (e.g. from a survey, or a value carried

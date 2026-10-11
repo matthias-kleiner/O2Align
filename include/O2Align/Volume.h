@@ -91,6 +91,37 @@ class Volume
   void writeParameters(std::ostream& os) const;
   void writeTree(std::ostream& os, int indent = 0) const;
 
+  /// \name Global deformation-mode constraints
+  /// The hierarchical constraint of writeChildrenMeanConstraints / pinChildrenMean is a *rigid-body*
+  /// constraint: 6 scalar equations per parent, removing the net translation and rotation of that
+  /// parent's set of free descendants and nothing else. A coherent deformation of the whole barrel --
+  /// radial scaling, elliptical squashing, twist, ... -- is not a net rigid motion of any single
+  /// parent, carries no net rigid component, and therefore passes straight through it. Such modes are
+  /// also (very nearly) null directions of the track chi2, so Millepede takes large amplitudes in them
+  /// for a negligible chi2 gain. The "globalModes" clause of the DOF config flags the volumes whose
+  /// free rigid-body DOFs take part in one global equation per mode, forcing the total amplitude of
+  /// that mode over the whole flagged set to vanish. This is a different operator from the mean
+  /// constraint, not a different setting of it.
+  ///@{
+  enum GlobalMode : int {
+    RadialScaling, ///< dr = eps*r       : uniform transverse dilation, absorbed by the 1/pt scale
+    ZScaling,      ///< dz = eps*z       : longitudinal scale
+    Curl,          ///< r*dphi = eps*r   : rigid rotation about the beam
+    Twist,         ///< r*dphi = eps*z*r : torsion along the beam
+    Elliptical,    ///< dr = eps*cos(2phi) and dr = eps*sin(2phi): TWO equations
+    Bowing,        ///< dr = eps*z^2     : radial sagitta along the beam
+    NGlobalModes
+  };
+  /// name of a mode as used in the "globalModes" clause
+  static const char* globalModeName(int mode);
+  /// number of scalar equations of a mode: 2 for Elliptical (the two phases cos2phi, sin2phi), 1 otherwise
+  static int globalModeNEq(int mode) { return mode == Elliptical ? 2 : 1; }
+  /// one Millepede Constraint per requested mode and phase, spanning the free rigid-body DOFs of every
+  /// volume flagged by a "globalModes" rule. A mode equation is global, so this is written once for the
+  /// whole tree, not per volume: call it on the root (writeRigidBodyConstraints already does).
+  void writeGlobalModeConstraints(std::ostream& os) const;
+  ///@}
+
   // tree-like
   auto getLevel() const noexcept { return mLevel; }
   bool isRoot() const noexcept { return mParent == nullptr; }
@@ -250,6 +281,13 @@ class Volume
   /// written as Millepede "Measurement" records; a later matching rule replaces all the measurements
   /// of an earlier one (of either DOF set), like the other clauses
   void applyMeasurementConfig(const nlohmann::json& meas, const std::string& pattern);
+  /// apply the "globalModes" clause of a rule: flags this volume as a participant of the global
+  /// deformation-mode equations, with the same "replace, don't merge" semantics as the other clauses
+  void applyGlobalModesConfig(const nlohmann::json& modes, const std::string& pattern);
+  /// accumulate the terms of one mode equation over this volume (if flagged for that mode) and its
+  /// whole subtree, as (label, coefficient) pairs still carrying their physical lever arms, counting
+  /// in nFlagged the volumes which were flagged for the mode and do have a free rigid-body DOF
+  void collectGlobalModeTerms(int mode, int phase, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged) const;
   /// one Millepede "Measurement" per free rigid-body DOF of this volume having one configured
   void writeRigidBodyDOFMeasurements(std::ostream& os) const;
   /// one Millepede "Measurement" per free calibration DOF having one configured, for every declared
@@ -285,6 +323,9 @@ class Volume
   /// rigid-body DOF set at all. Set by the
   /// "pinChildrenMean" clause of the DOF config; see writeRigidBodyConstraints.
   std::array<bool, RigidBodyDOFSet::NDOF> mPinChildrenMean{};
+  /// per global deformation mode: this volume's free rigid-body DOFs take part in that mode's
+  /// equation. Set by the "globalModes" clause of the DOF config; see writeGlobalModeConstraints.
+  std::array<bool, NGlobalModes> mGlobalModes{};
   std::vector<Label> mCalibLabels{};            // calibration label per time slot, filled with the slot 0 in the ctor
   size_t mActiveCalibSlot{0};                   // index in mCalibLabels of the slot being processed
   const TimeSlotsSet* mCalibSlots{nullptr};     //! calibration slots, if declared; not owned

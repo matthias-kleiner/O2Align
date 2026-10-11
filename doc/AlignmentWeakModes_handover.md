@@ -364,8 +364,13 @@ and the eigenvectors, which will show the modes above directly as the smallest e
 errors there is no way to tell a determined parameter from a weak-mode artefact, which is how a
 −214 µm Lr6 shift went unnoticed.
 
-**(b) Constrain the global deformation modes explicitly.** This is the real fix and it is a missing
-capability, not a misconfiguration. `macro/add_global_mode_constraints.py` adds the equations
+**(b) Constrain the global deformation modes explicitly.** This is the real fix. It is now
+**implemented** as the `globalModes` DOF-config clause — see
+[Constraining Global Deformation Modes](DOFConfig_rules.md#constraining-global-deformation-modes) and
+the subsection *"The `globalModes` clause as implemented"* below. The description of the stop-gap
+Python harness is kept for reference.
+
+`macro/add_global_mode_constraints.py` adds the equations
 directly to an `mp2con.txt` written by `MilleSteer`, so the hypothesis can be tested *today* with no
 rebuild:
 
@@ -394,6 +399,42 @@ taken from the volume's own `getL2G()` (and weighted by measurement count, as
 DOF reduces to `r·(n̂·r̂) ≈ r` and of local-TX to `≈ 0`, which is why the hand-written version above
 is a faithful stand-in. Modes worth having: radial scaling (Δr ∝ r), z scaling (Δz ∝ z), curl
 (Δφ = const), twist/torsion (Δφ ∝ z), elliptical (Δr ∝ cos2φ, sin2φ), bowing (Δr ∝ z²).
+
+#### The `globalModes` clause as implemented
+
+`Volume::writeGlobalModeConstraints` (`src/Volume.cxx`) is the sibling of `writeRigidBodyConstraints`
+proposed above; `writeRigidBodyConstraints` calls it once on the root, since a mode equation spans the
+whole tree. The clause flags the participating volumes:
+
+```json
+{ "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+",
+  "globalModes": ["radialScaling", "curl", "elliptical", "twist"] }
+```
+
+Six modes are available — `radialScaling`, `zScaling`, `curl`, `twist`, `elliptical` (two equations,
+cos2φ and sin2φ), `bowing`. Coefficients come from each volume's own `getL2G()`: for every *free*
+rigid-body DOF, the projection of the mode's analytic field **u**(x) (translations) or of the local
+rotation **ω**(x) = ½∇×**u** it induces (rotations) onto the corresponding local axis. `doc/ITS_RB_v2.json`
+is `v1` plus the rule above.
+
+Verified against the real geometry through a standalone `MilleSteer` run on the `v0` free set:
+
+- 5 equations written, 1084 → 1089 constraints, and the numerical rank of the full set is **1089**
+  (the hierarchical 1084 alone rank 1084). The mode equations are therefore linearly independent of
+  the mean constraints — direct confirmation that these modes lived in their null space.
+- `radialScaling` gets coefficients exactly ∝ r on stave `TY`, constant within a layer
+  (0.054 / 0.072 / 0.091 / 0.524 / 0.643 / 0.880 / 1.000 for Lr0→Lr6), *plus* `TX` terms on the IB
+  staves only — the real IB stave tilt, which the Python harness could not know about.
+- `twist` lands exclusively on the OB staves' `RY` (via **ω**; the IB staves have no free `RY`),
+  i.e. the rotation part of the field is what carries this mode, not the translations.
+- Evaluated on the `solA1` solution, Σcᵢpᵢ / Σ|cᵢ| is **+174 µm for `radialScaling`** (matching
+  ε = −5.4·10⁻⁴ over a ~30 cm mean lever arm), −1.5 µm for `curl` (the Python harness gave
+  −1.50 µm — independent cross-check), +50/−20 µm for the two elliptical phases, and −0.18 µm for
+  `twist`. So the radial scaling is overwhelmingly the dominant violation, the ℓ=2 terms matter, and
+  the twist was never a problem in `solA1`.
+- `zScaling` and `bowing` are skipped with a warning at stave level, correctly: both project on a
+  volume's local Z with a coefficient ∝ z, and an ITS stave is centred at z = 0. They need free DOFs
+  distributed in z (module/chip level) to be observable at all.
 
 **(c) `doc/ITS_RB_v1.json`** — `v0` with the two changes that are justified by mechanical knowledge
 rather than by mode-suppression tuning, so the comparison stays attributable:

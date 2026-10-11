@@ -181,6 +181,11 @@ void Volume::finalise(uint8_t level)
 
 void Volume::writeRigidBodyConstraints(std::ostream& os) const
 {
+  if (isRoot()) {
+    // a global deformation mode spans the whole tree, so its equation is written once here and not
+    // during the per-volume recursion below
+    writeGlobalModeConstraints(os);
+  }
   // a volume which is not rigid-body alignable (the root of the hierarchy, a detector envelope)
   // imposes no constraint on its branches, but these may still constrain their own children
   if (!isLeaf() && mRBAllowed) {
@@ -299,6 +304,179 @@ void Volume::addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<M
       if (std::abs(coeff) > 1e-16) {
         con.add(vol->getLabel().raw(jDOF), coeff);
       }
+    }
+  }
+}
+
+namespace
+{
+// Displacement field u(x) of a global deformation mode of unit amplitude, in the GLOBAL frame,
+// together with the local rotation omega(x) = 0.5*curl(u) that the field induces at that point.
+//
+// A volume sitting at x realises the mode by translating by u(x) *and* rotating by omega(x): the
+// rotation part is not optional decoration, it is the first-order content of the field's gradient
+// and it is what makes e.g. the twist constrain the staves' RX/RY and not only their TX/TY.
+// Projecting u and omega on the volume's own local axes gives the coefficients of its 6 rigid-body
+// DOFs in the mode equation (see collectGlobalModeTerms).
+//
+// Cylindrical coordinates, z along the beam: r = sqrt(x^2+y^2), rHat = (cos phi, sin phi, 0),
+// phiHat = (-sin phi, cos phi, 0). Each case below states how omega follows from u.
+// Returns false if the field is not defined at x (on the beam axis, where rHat and the 1/r rotation
+// terms of the non-axisymmetric modes are meaningless); such a volume is then simply left out.
+bool globalModeField(int mode, int phase, const double* pos, double* u, double* om)
+{
+  constexpr double rMin = 1e-4; // cm
+  const double x = pos[0], y = pos[1], z = pos[2];
+  const double r = std::sqrt(x * x + y * y);
+  u[0] = u[1] = u[2] = om[0] = om[1] = om[2] = 0.;
+  switch (mode) {
+    case Volume::RadialScaling:
+      // u = r*rHat = (x, y, 0) = grad(r^2/2): a gradient field, hence curl-free -- a pure dilation
+      // carries no rotation at all, which is exactly why it is so nearly invisible to a helix fit
+      u[0] = x;
+      u[1] = y;
+      break;
+    case Volume::ZScaling:
+      // u = z*zHat = (0, 0, z) = grad(z^2/2): curl-free as well
+      u[2] = z;
+      break;
+    case Volume::Curl:
+      // u = r*phiHat = (-y, x, 0), the rigid rotation about the beam: curl u = (0, 0, 2), om = zHat.
+      // Kept available although the top-level pin of RZ normally removes it already
+      u[0] = -y;
+      u[1] = x;
+      om[2] = 1.;
+      break;
+    case Volume::Twist:
+      // u = z*r*phiHat = (-y*z, x*z, 0): curl u = (-x, -y, 2z), so om = (-x/2, -y/2, z).
+      // The rotation grows linearly with z, i.e. each end of the barrel is rotated the opposite way
+      u[0] = -y * z;
+      u[1] = x * z;
+      om[0] = -0.5 * x;
+      om[1] = -0.5 * y;
+      om[2] = z;
+      break;
+    case Volume::Elliptical: {
+      // u_r = cos(2phi) (phase 0) or sin(2phi) (phase 1), u_phi = u_z = 0: each layer is squashed
+      // into an ellipse, the two phases covering the two orientations of its axes.
+      // In cylindrical coordinates only curl_z survives, curl_z = -(1/r) d(u_r)/dphi, hence
+      // om = +sin(2phi)/r * zHat for phase 0 and -cos(2phi)/r * zHat for phase 1
+      if (r < rMin) {
+        return false;
+      }
+      const double c = x / r, s = y / r;                 // cos phi, sin phi
+      const double c2 = c * c - s * s, s2 = 2. * c * s;  // cos 2phi, sin 2phi
+      const double ur = (phase == 0) ? c2 : s2;
+      u[0] = ur * c;
+      u[1] = ur * s;
+      om[2] = ((phase == 0) ? s2 : -c2) / r;
+      break;
+    }
+    case Volume::Bowing: {
+      // u = z^2*rHat: the barrel bulges radially towards its ends. Only curl_phi survives,
+      // curl_phi = d(u_r)/dz = 2z, hence om = z*phiHat = z*(-sin phi, cos phi, 0)
+      if (r < rMin) {
+        return false;
+      }
+      const double c = x / r, s = y / r;
+      u[0] = z * z * c;
+      u[1] = z * z * s;
+      om[0] = -z * s;
+      om[1] = z * c;
+      break;
+    }
+    default:
+      return false;
+  }
+  return true;
+}
+} // namespace
+
+const char* Volume::globalModeName(int mode)
+{
+  static constexpr const char* names[NGlobalModes] = {"radialScaling", "zScaling", "curl", "twist", "elliptical", "bowing"};
+  return (mode >= 0 && mode < NGlobalModes) ? names[mode] : "?";
+}
+
+void Volume::collectGlobalModeTerms(int mode, int phase, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged) const
+{
+  // only the volumes explicitly flagged for this mode contribute, and only through DOFs which are
+  // actually free: a fixed DOF is not a parameter of the fit and must not appear in a constraint
+  if (mGlobalModes[mode] && !mIsPseudo && mRigidBody && mRigidBody->nFreeDOFs() > 0) {
+    ++nFlagged;
+    const auto& l2g = getMatrixL2G();
+    const double* pos = l2g.GetTranslation();    // this volume's origin in the global frame
+    const double* rot = l2g.GetRotationMatrix(); // row-major 3x3; column k = local axis k in GLO
+    double u[3], om[3];
+    if (globalModeField(mode, phase, pos, u, om)) {
+      const int nDOF = std::min(mRigidBody->nDOFs(), static_cast<int>(RigidBodyDOFSet::NDOF));
+      for (int iDOF = 0; iDOF < nDOF; ++iDOF) {
+        if (!mRigidBody->isFree(iDOF)) {
+          continue;
+        }
+        // The 6 local rigid-body DOFs are mutually orthogonal unit directions of the parameter
+        // space (3 translations along orthonormal axes, 3 rotations about the same axes), so the
+        // component of the mode along a DOF is simply the projection of u (for TX,TY,TZ) or of
+        // omega (for RX,RY,RZ) on the corresponding local axis, i.e. on that column of L2G.
+        // For an ITS sensor local Y is the sensor normal (~ radial), so for radialScaling this
+        // reduces to r*(nHat.rHat) ~ r on TY and to ~0 on the in-plane TX, TZ.
+        const double* v = (iDOF < 3) ? u : om;
+        const int ax = iDOF % 3;
+        // kept unconditionally: a term which is only numerically nonzero (the matrices of volumes
+        // that are exactly axis-aligned leave ~1e-16 residues) is dropped later, relative to the
+        // largest coefficient of the equation, since there is no meaningful absolute scale here
+        terms.emplace_back(mLabel.raw(iDOF), v[0] * rot[ax] + v[1] * rot[3 + ax] + v[2] * rot[6 + ax]);
+      }
+    }
+  }
+  for (const auto& c : mChildren) {
+    c->collectGlobalModeTerms(mode, phase, terms, nFlagged);
+  }
+}
+
+void Volume::writeGlobalModeConstraints(std::ostream& os) const
+{
+  std::vector<std::pair<uint32_t, double>> terms;
+  for (int mode = 0; mode < NGlobalModes; ++mode) {
+    for (int phase = 0; phase < globalModeNEq(mode); ++phase) {
+      terms.clear();
+      int nFlagged = 0;
+      collectGlobalModeTerms(mode, phase, terms, nFlagged);
+      if (nFlagged == 0) { // the mode was not requested, or nothing is free where it was requested
+        continue;
+      }
+      const auto name = std::format("Global mode {}{} over {}", globalModeName(mode),
+                                    globalModeNEq(mode) > 1 ? (phase == 0 ? " (cos2phi)" : " (sin2phi)") : "",
+                                    mSymName);
+      // the equation is homogeneous (= 0), so its overall scale is arbitrary; normalise the largest
+      // coefficient to 1 to keep the constraint matrix well conditioned, since the raw coefficients
+      // carry the physical lever arms and span orders of magnitude between modes (r ~ 40 cm for
+      // radialScaling against z*r ~ 10^3 cm^2 for the twist)
+      const double norm = terms.empty() ? 0. : std::abs(std::max_element(terms.begin(), terms.end(), [](const auto& a, const auto& b) {
+                                                          return std::abs(a.second) < std::abs(b.second);
+                                                        })->second);
+      Constraint con(name, 0.);
+      if (norm > 0.) {
+        for (const auto& [lab, coeff] : terms) {
+          // relative cut: everything above it is a real projection of the mode, everything below is
+          // a rounding residue of the L2G matrices (the two are separated by many orders of magnitude)
+          if (std::abs(coeff) > 1e-9 * norm) {
+            con.add(lab, coeff / norm);
+          }
+        }
+      }
+      // A mode can legitimately have no handle on the flagged level: z scaling and bowing project on
+      // the local Z (beam) DOF with a coefficient ~ z of the volume, which vanishes for an ITS stave
+      // since a stave is centred at z = 0 -- these modes are only observable with free DOFs that are
+      // *distributed* in z (module/chip level). Say so rather than silently writing nothing. One term
+      // alone is not a mode either, it is a measurement of a single DOF.
+      if (con.getSize() < 2) {
+        LOGP(warn, "Ignoring the constraint '{}': only {} of the {} flagged volumes' free DOFs project on this mode",
+             name, con.getSize(), nFlagged);
+        continue;
+      }
+      con.write(os);
+      LOGP(info, "Wrote the constraint '{}': {} terms over {} flagged volumes", name, con.getSize(), nFlagged);
     }
   }
 }
@@ -546,6 +724,57 @@ void Volume::applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::st
   }
 }
 
+// Apply the "globalModes" clause of a rule: a bool (all modes), "all", or an array of mode names
+// out of radialScaling, zScaling, curl, twist, elliptical, bowing.
+// Like pinChildrenMean this never creates a DOF set and never frees anything: it only flags this
+// volume as a participant of the global deformation-mode equations written by
+// writeGlobalModeConstraints, over whichever of its rigid-body DOFs happen to be free at the time of
+// writing. A later matching rule replaces the flags of an earlier one, like the other clauses.
+// The clause is meant for a level which is *free*, typically the stave level, e.g.
+//   { "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+",
+//     "globalModes": ["radialScaling", "elliptical", "twist"] }
+// Flagging several nested levels at once is legitimate and not double counting: the equation then
+// constrains the total amplitude of the mode summed over all of them, which is the quantity that is
+// degenerate, regardless of the level that realises it.
+void Volume::applyGlobalModesConfig(const nlohmann::json& modes, const std::string& pattern)
+{
+  if (!isRigidBodyAllowed()) {
+    if (isLiteralPattern(pattern)) {
+      LOGP(warn, "Ignoring the globalModes rule '{}': {} is not rigid-body alignable", pattern, mSymName);
+    }
+    return;
+  }
+  mGlobalModes.fill(false);
+  if (modes.is_boolean()) {
+    mGlobalModes.fill(modes.get<bool>());
+    return;
+  }
+  if (modes.is_string()) {
+    if (modes.get<std::string>() != "all") {
+      LOGP(fatal, "Unknown globalModes value '{}' in the rule '{}', allowed are a bool, \"all\" or a list of mode names", modes.get<std::string>(), pattern);
+    }
+    mGlobalModes.fill(true);
+    return;
+  }
+  if (!modes.is_array()) {
+    LOGP(fatal, "Invalid globalModes clause in the rule '{}', allowed are a bool, \"all\" or a list of mode names", pattern);
+  }
+  for (const auto& item : modes) {
+    const auto name = item.get<std::string>();
+    int idx = -1;
+    for (int m = 0; m < NGlobalModes; ++m) {
+      if (name == globalModeName(m)) {
+        idx = m;
+        break;
+      }
+    }
+    if (idx < 0) {
+      LOGP(fatal, "Unknown global mode '{}' in the rule '{}', allowed are radialScaling, zScaling, curl, twist, elliptical, bowing", name, pattern);
+    }
+    mGlobalModes[idx] = true;
+  }
+}
+
 // Apply the "measurement" clause of a rule: an object DOF name -> [value, sigma] or {"value", "sigma"}.
 // Each name is resolved against whichever of this volume's rigid-body or calibration DOF set has a
 // matching dofName() (the two never share a name, e.g. TX..RZ vs X,Y,Z,SlopeX,SlopeY for the mean
@@ -690,6 +919,9 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
       }
       if (rule.contains("pinChildrenMean")) {
         vol->applyPinChildrenMeanConfig(rule["pinChildrenMean"], pattern);
+      }
+      if (rule.contains("globalModes")) {
+        vol->applyGlobalModesConfig(rule["globalModes"], pattern);
       }
       if (rule.contains("measurement")) {
         vol->applyMeasurementConfig(rule["measurement"], pattern);
