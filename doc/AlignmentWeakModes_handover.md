@@ -112,34 +112,71 @@ free DOFs to capture the chip-scale structure seen in test 1), now in regex:
 
 ```json
 [
-  { "match": "ITS", "rigidBody": "fixed" },
+  { "match": "ITS", "rigidBody": "fixed", "pinChildrenMean": ["TX", "TY", "TZ", "RZ"] },
 
-  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]+", "rigidBody": "fixed", "pinChildrenMean": ["TX", "TY", "TZ", "RZ"] },
-  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]+", "rigidBody": "fixed", "pinChildrenMean": "all" },
+  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]", "rigidBody": ["TX", "TY", "TZ", "RZ"] },
+  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]", "measurement": { "TX": [0.0, 0.003], "TY": [0.0, 0.003], "TZ": [0.0, 0.003] } },
 
-  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]+/ITSUStave[0-9]+", "rigidBody": ["TX", "TY", "TZ", "RZ"] },
+  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]", "rigidBody": "fixed", "pinChildrenMean": "all" },
 
-  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]+/ITSUStave[0-9]+", "rigidBody": "all" },
+  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+", "rigidBody": ["TX", "TY", "TZ", "RZ"] },
 
-  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]+/ITSUStave[0-9]+/ITSUHalfStave[0-9]+", "rigidBody": "all" },
+  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+", "rigidBody": "all" },
 
-  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]+/ITSUStave[0-9]+/ITSUChip[0-9]+", "rigidBody": ["TX", "TY", "TZ"] }
+  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUHalfStave[0-9]+", "rigidBody": "all" },
+
+  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUChip[0-9]+", "rigidBody": ["TX", "TY", "TZ"] }
 ]
 ```
 
-Six rules instead of the glob version's eight, with no duplication left to omit a
-width from by mistake.
+Eight rules now (two of them the IB half-barrel's DOF definition and its measurement,
+which — per the applyDOFConfig rule — must be separate rules, the measurement always
+following the one that frees the DOFs).
 
 Changes and rationale:
 
-- **`ITS` fixed** instead of free+soft-measurement. Overall ITS position/orientation
-  belongs to global (GLO) alignment; a free top level with only a soft prior was
-  itself a weak mode. The now-redundant `measurement` clause is dropped.
-- **`pinChildrenMean` added at every half-barrel**, replacing the role the dropped
-  envelope measurement tried (and partly failed, being silently ignored once a parent
-  is fixed) to play. This is the fix validated by test 3. The pin list is tailored
-  per branch (`TX,TY,TZ,RZ` for IB, `all` for OB) to match what's actually free below,
-  avoiding "no free descendant" warnings.
+- **`ITS` fixed, with `pinChildrenMean` moved up here** from the half-barrel level.
+  Overall ITS position/orientation belongs to global (GLO) alignment, so the envelope
+  itself stays fixed, but since the IB half-barrels below it are now free (next
+  bullet), the envelope needs its own pin to avoid reopening the `StavesOnly`-style
+  unconstrained common mode, this time one level higher. `TX,TY,TZ,RZ` is enough:
+  `RX,RY` have no free contributor from the IB side (the half-barrel itself doesn't
+  free them) to be degenerate with, and leaving them out of the pin keeps the OB
+  staves' own `RX,RY` (looked through the fixed-and-already-self-pinned OB
+  half-barrel) from being pulled into one large, awkward cross-half-barrel
+  constraint.
+- **IB half-barrel freed in `TX,TY,TZ,RZ`, anchored by a 30 µm soft `measurement`
+  prior instead of fixed + hard `pinChildrenMean`.** This is a direct response to a
+  real physical suspicion, not a weak-mode fix: the two IB half-shells meet at a
+  mechanical gap, and fixing them (as the original draft did) *structurally forbids*
+  the fit from ever recovering a genuine common displacement of one half-shell
+  relative to the other — `pinChildrenMean` at the half-barrel would have forced the
+  mean of its own staves to exactly zero relative to the (assumed-perfect) fixed
+  half-barrel pose, zeroing out precisely the mode a gap-closure error would produce.
+  A soft prior (value 0, sigma 0.003 cm = 30 µm, the quoted uncertainty on the gap)
+  keeps the same regularizing role — it still prevents this mode from blowing up the
+  way the unconstrained `StavesOnly` common mode did — but *lets the data move it*
+  if the evidence supports an offset beyond that tolerance, rather than hard-zeroing
+  it. `RZ` is freed alongside the translations (a relative half-shell twist is as
+  plausible as a pure offset) but left without its own measurement — cm-scale sigma
+  doesn't translate to a rotation, and it's already regularized indirectly by the
+  envelope-level pin and by the automatic stave/half-barrel mean constraint (both
+  being free DOFs of matching name). Before spending effort on this, check
+  `checkResid`'s dy/dz vs phi specifically **near phi ≈ 0/2π and ≈ π**, where the two
+  half-barrels physically meet — a localized step there (rather than a smooth
+  stave-to-stave pattern) is the expected fingerprint of this defect and would
+  confirm it's worth carrying.
+- Note there's no intermediate "layer" volume to pin a half-barrel *pair* against:
+  per `CLAUDE.md`, the layer number is a path component, not a real alignable, so
+  `ITS` (the envelope) is the *direct* parent of all 14 half-barrels across all 7
+  layers at once. The envelope-level pin above therefore ties the aggregate mean
+  across all of them (mostly the 6 IB ones, since the OB ones already net to ~0
+  through their own pin), not a clean per-layer pairing — good enough to remove the
+  degeneracy, but it's the per-half-barrel measurement, not this pin, that's doing
+  the real job of letting an individual IB half-barrel's relative offset through.
+- **OB half-barrel unchanged (fixed + `pinChildrenMean:"all"`)**: the gap suspicion is
+  specifically about the IB half-shells; no comparable evidence or mechanical reason
+  has come up for OB, so it keeps the simpler, more conservative treatment.
 - **IB stave restricted to `TX,TY,TZ,RZ`** (drops `RX,RY`). Directly removes the
   degenerate channel identified in test 1 — the stave tilts whose lever-arm transport
   aliases with the per-chip translation ramp — without growing the parameter count
@@ -182,14 +219,14 @@ half-stave → module → chip):
 ```json
 [
   { "match": "ITS", "rigidBody": "all" },
-  { "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-9]+", "rigidBody": "all" },
-  { "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-9]+/ITSUStave[0-9]+", "rigidBody": "all" },
+  { "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]", "rigidBody": "all" },
+  { "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+", "rigidBody": "all" },
 
-  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]+/ITSUStave[0-9]+/ITSUHalfStave[0-9]+", "rigidBody": "all" },
-  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]+/ITSUStave[0-9]+/ITSUHalfStave[0-9]+/ITSUModule[0-9]+", "rigidBody": "all" },
-  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]+/ITSUStave[0-9]+/ITSUHalfStave[0-9]+/ITSUModule[0-9]+/ITSUChip[0-9]+", "rigidBody": "all" },
+  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUHalfStave[0-9]+", "rigidBody": "all" },
+  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUHalfStave[0-9]+/ITSUModule[0-9]+", "rigidBody": "all" },
+  { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUHalfStave[0-9]+/ITSUModule[0-9]+/ITSUChip[0-9]+", "rigidBody": "all" },
 
-  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-9]+/ITSUStave[0-9]+/ITSUChip[0-9]+", "rigidBody": "all" }
+  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUChip[0-9]+", "rigidBody": "all" }
 ]
 ```
 
