@@ -237,6 +237,28 @@ derivative columns exist in the binary so later tests can fix them (or constrain
 them) cheaply, without a new `MilleData` pass, rather than to ever solve for them
 directly.
 
+## Running a restricted config over all-free Mille data: fix everything not mentioned
+
+A restricted config applied to data generated with every DOF free has a trap:
+`Volume::writeParameters` only writes parameter lines for volumes that *have* a
+rigid-body DOF set. A volume matched by no rule has none, so its labels are absent from
+`mp2param.txt` while their derivatives are still in the binary, and pede treats an
+unlisted label as a variable parameter. In `ITS_RB_v0.json` this hits the OB modules
+and OB chips (free in the all-free data, never mentioned).
+
+`doc/ITS_RB_v0_explicit.json` is v0 with a catch-all `{"match": ".*", "rigidBody":
+"fixed"}` as its **first** rule. Rules apply in order and a later match replaces the DOF
+set, so the free set is exactly v0's; every volume the later rules don't mention now
+carries an all-fixed DOF set and is written as `F` lines (presigma −1), which pede
+honours. The rule is silently skipped for volumes that aren't rigid-body alignable (the
+pattern contains `*`, so no warning). It stays correct whatever the superset freed,
+unlike enumerating the missing levels (OB module, OB chip) by hand.
+
+Check after regenerating the steering files: every label with derivatives in the data
+should appear in `mp2param.txt`, e.g. compare its label count to the one in the
+all-free run, and `pede.log` should report the expected `NVGB` (number of variable
+parameters).
+
 ## Caveat / next step
 
 The half-stave and chip DOF sets determine which derivative columns exist in the Mille
