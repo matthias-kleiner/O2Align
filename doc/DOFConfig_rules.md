@@ -133,6 +133,47 @@ or none of the free DOFs feeds it through the chained jacobians) is skipped with
 or an envelope without its own geometry such as `TRD_envelope`), so the common mode of the
 supermodules of a detector can't be pinned this way.
 
+### `pinChildrenMeanNoCross`: the same pin without the jacobian cross-terms
+
+The transported form above sums *every* free DOF of each child weighted by a jacobian element, and
+those elements carry the lever arm from the child to the parent. That is the correct operator when
+the parent's DOF is a fit parameter — the degeneracy genuinely is "parent pose vs transported
+children pose". It is the **wrong** operator for pinning a collective drift, because the fit can
+satisfy it with whichever contributing DOF is cheapest in χ², and a weakly-observable rotation with a
+large lever arm is by far the cheapest. Measured in the ITS (see
+[AlignmentWeakModes_handover.md](AlignmentWeakModes_handover.md)): in `DOF TY for …/ITSUStave0` the two
+half-staves moved −119 and −75 µm, and the equation was satisfied to 5·10⁻⁴ µm because each took an
+RZ of ±7.5 mrad — rotation about the sensor normal, which displaces the measured coordinates by
+almost nothing but enters the equation with a coefficient of 0.645 against 0.5 for TY. The pin did not
+prevent the 97 µm drift; it manufactured a 0.43° rotation to pay for it. At the OB half-barrel the
+coefficient ratio is 1.724 vs 0.042 — a factor of 41, the stave radius in cm.
+
+`pinChildrenMeanNoCross` writes the same equation with the cross-terms dropped: the plain mean of the
+children's *own* same-named DOF, which no other DOF of the child can pay for.
+
+```json
+{ "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]", "rigidBody": "fixed",
+  "pinChildrenMeanNoCross": ["TX", "TY", "TZ", "RX", "RY"] }
+```
+
+It takes the same values as `pinChildrenMean` (a bool, `"all"`, or a list of DOF names), has the same
+"replace, don't merge" semantics, and its flags are independent — so both clauses may appear on one
+volume and each writes its own equation. **In practice, use one or the other per volume**: over the
+same set of contributors the two span largely overlapping subspaces, and requesting both at a level
+with 5-6 free DOFs per child makes the constraint set rank-deficient (pede then reports a rank below
+the number of constraint equations). Keep the transported form where the parent's DOF is free, and
+use the cross-term-free form to pin a fixed parent's children.
+
+Two things it deliberately cannot do, because they are not collective *drifts* of any single DOF:
+
+- a global rigid **shift** or **tilt** of the whole branch is a cos φ / sin φ pattern in each child's
+  local DOFs, so its plain mean vanishes and this clause is blind to it (the transported form does see
+  it — that is what the cross-terms are for);
+- any deformation mode — use [`globalModes`](#constraining-global-deformation-modes).
+
+A pinned DOF that no descendant has free is skipped with a warning, which is the expected message
+when, say, the stave RZ below an OB half-barrel is fixed.
+
 ## Constraining Global Deformation Modes
 
 `pinChildrenMean` and the automatic mean constraint are both *rigid-body* constraints: 6 scalar
@@ -160,11 +201,25 @@ vanish:
 | `zScaling`      | Δz = ε·z | 1 |
 | `curl`          | Δφ = ε (rigid rotation about the beam) | 1 |
 | `twist`         | Δφ = ε·z (torsion along the beam) | 1 |
-| `elliptical`    | Δr = ε·cos2φ and Δr = ε·sin2φ | **2** |
+| `elliptical`    | Δr = ε·cos2φ and Δr = ε·sin2φ (r-independent amplitude) | **2** |
 | `bowing`        | Δr = ε·z² (radial sagitta along the beam) | 1 |
+| `radialHarmonic` | Δr = ε·r·cos(ℓφ) and ε·r·sin(ℓφ), ℓ = 1…`GlobalHarmonicLMax` (4) | **8** |
+| `tangentialHarmonic` | rΔφ = ε·r·cos(ℓφ) and ε·r·sin(ℓφ), same ℓ range | **8** |
+| `globalTilt`    | rigid rotation of the branch about the global X and about the global Y axis | **2** |
 
-The clause takes a boolean (all modes), the string `"all"`, or an array of mode names, and — like
-`rigidBody`/`calib`/`pinChildrenMean` — a later matching rule replaces the flags of an earlier one.
+The two harmonic families are the generic form of the azimuthal modes, with the amplitude explicitly
+proportional to r because that is the measured shape: the fitted ε = amplitude/r of the surviving ITS
+modes is coherent to 2-6 % across the IB and the OB, two independently mounted structures spanning
+r = 2.3 → 39 cm. At ℓ = 0 they reduce exactly to `radialScaling` and `curl`, which is why their orders
+start at ℓ = 1, and `tangentialHarmonic2` is the companion that `elliptical` — a purely radial field —
+does not cover. `globalTilt` supplies the two transverse partners of `curl`; it is needed as an
+explicit constraint because a tilt shows up as a child TZ pattern ∝ −r·cos φ whose mean vanishes both
+over a half-shell and over the full circle, so no `pinChildrenMean*` of the TZ DOF can see it.
+
+The clause takes a boolean (all equations), the string `"all"`, or an array of names, each of which may
+be a mode name (all its equations), a single order of a harmonic family (`radialHarmonic3`), or a
+single equation (`elliptical_cos2phi`, `tangentialHarmonic2_sin2phi`, `globalTilt_y`). Like
+`rigidBody`/`calib`/`pinChildrenMean` a later matching rule replaces the flags of an earlier one.
 It creates no DOF set and frees nothing: it only adds terms for DOFs that are already free, so it
 must follow the rule that frees them. Flagging several nested levels at once is legitimate and is not
 double counting: the equation then constrains the total amplitude summed over all of them, which is
@@ -182,6 +237,15 @@ and `bowing` project on a volume's local Z (beam) DOF with a coefficient ∝ z o
 vanishes for an ITS stave — a stave is centred at z = 0 — so these two need free DOFs that are
 *distributed* in z (module or chip level) to be observable at all. `globalModes` is ignored, with a
 warning, on a volume that is not rigid-body alignable.
+
+`globalTilt` is nearly the same equation as a `pinChildrenMean` (transported form) of the parent's
+`RX`/`RY`, so requesting both makes the constraint set rank-deficient. Prefer `globalTilt`: the pin's
+contributor walk stops at the first descendant with any free DOF, which in the ITS excludes the 48 IB
+staves, while `globalTilt` flagged at the stave level covers all 192.
+
+Adding a mode to `Volume::GlobalMode` propagates automatically to the `WeakModesDiag` output and to
+`macro/drawWeakModes.C`, which resolve the mode columns by name; a `static_assert` after the class
+guards `Volume::NGlobalEq` against going out of step.
 
 ## Measurements of Rigid-Body and Calibration DOFs
 

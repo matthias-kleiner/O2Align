@@ -207,27 +207,42 @@ void Volume::writeRigidBodyConstraints(std::ostream& os) const
 // own label, also serves a second purpose: for a DOF flagged by mPinChildrenMean (the
 // "pinChildrenMean" DOF config clause) but fixed here, or even w/o a rigid-body DOF set at all, it
 // pins the common mode of the children, there being no parameter of this volume to absorb it.
+// A DOF flagged by mPinChildrenMeanNoCross ("pinChildrenMeanNoCross") gets, in addition, the
+// cross-term-free variant of the same equation -- see addChildrenMeanTerms for why that matters.
 void Volume::writeChildrenMeanConstraints(std::ostream& os) const
 {
   // the degeneracy is with the nearest free level below, which needs not be the direct children
   std::vector<MeanContributor> contributors;
   collectMeanContributors(Matrix66::Identity(), contributors);
+  const double weight = contributors.empty() ? 0. : 1.0 / static_cast<double>(contributors.size());
   for (int iDOF = 0; iDOF < RigidBodyDOFSet::NDOF; ++iDOF) {
     const bool free = mRigidBody && mRigidBody->isFree(iDOF);
-    if (!free && !mPinChildrenMean[iDOF]) {
-      continue;
-    }
     const char* dofName = RigidBodyDOFSet::RigidBodyDOFNames[iDOF];
-    Constraint con(std::format("DOF {} for {}{}", dofName, mSymName, free ? "" : " (pinned)"), 0.);
-    if (!contributors.empty()) {
-      addChildrenMeanTerms(con, iDOF, contributors, 1.0 / static_cast<double>(contributors.size()));
+    // the transported (cross-term) equation, for a free or pinChildrenMean-flagged DOF
+    if (free || mPinChildrenMean[iDOF]) {
+      Constraint con(std::format("DOF {} for {}{}", dofName, mSymName, free ? "" : " (pinned)"), 0.);
+      if (!contributors.empty()) {
+        addChildrenMeanTerms(con, iDOF, contributors, weight, false);
+      }
+      // a single term is a legitimate constraint as well: e.g. for a parent with a single active
+      // child it removes the degeneracy of their common rotation
+      if (con.getSize() > 0) {
+        con.write(os);
+      } else if (!free) { // w/o any free descendant DOF feeding it, a free parent DOF has no degeneracy to break
+        LOGP(warn, "Ignoring pinChildrenMean of DOF {} for {}: no free descendant DOF contributes to it", dofName, mSymName);
+      }
     }
-    // a single term is a legitimate constraint as well: e.g. for a parent with a single active
-    // child it removes the degeneracy of their common rotation
-    if (con.getSize() > 0) {
-      con.write(os);
-    } else if (!free) { // w/o any free descendant DOF feeding it, a free parent DOF has no degeneracy to break
-      LOGP(warn, "Ignoring pinChildrenMean of DOF {} for {}: no free descendant DOF contributes to it", dofName, mSymName);
+    // the cross-term-free equation, an independent one: the plain mean of the children's own iDOF
+    if (mPinChildrenMeanNoCross[iDOF]) {
+      Constraint con(std::format("DOF {} for {} (pinned, no cross-terms)", dofName, mSymName), 0.);
+      if (!contributors.empty()) {
+        addChildrenMeanTerms(con, iDOF, contributors, weight, true);
+      }
+      if (con.getSize() > 0) {
+        con.write(os);
+      } else {
+        LOGP(warn, "Ignoring pinChildrenMeanNoCross of DOF {} for {}: no descendant has that DOF free", dofName, mSymName);
+      }
     }
   }
 }
@@ -294,9 +309,17 @@ void Volume::collectMeanContributors(const Matrix66& jToThis, std::vector<MeanCo
   }
 }
 
-void Volume::addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<MeanContributor>& contributors, double weight)
+void Volume::addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<MeanContributor>& contributors, double weight, bool noCross)
 {
   for (const auto& [vol, j] : contributors) {
+    if (noCross) {
+      // only the contributor's own iDOF, with no transport: the equation then says that the plain mean
+      // of that one DOF vanishes, which no other DOF of the contributor can pay for
+      if (iDOF < vol->mRigidBody->nDOFs() && vol->mRigidBody->isFree(iDOF)) {
+        con.add(vol->getLabel().raw(iDOF), weight);
+      }
+      continue;
+    }
     for (int jDOF = 0; jDOF < vol->mRigidBody->nDOFs(); ++jDOF) {
       if (!vol->mRigidBody->isFree(jDOF)) {
         continue;
@@ -384,23 +407,112 @@ bool Volume::globalModeField(int mode, int phase, const double* pos, double* u, 
       om[1] = z * c;
       break;
     }
+    case Volume::RadialHarmonic:
+    case Volume::TangentialHarmonic: {
+      // The generic azimuthal-harmonic family, amplitude proportional to r:
+      //   RadialHarmonic:     u_r   = r*C(phi),  u_phi = 0
+      //   TangentialHarmonic: u_phi = r*C(phi),  u_r   = 0
+      // with C = cos(l*phi) or sin(l*phi), l = globalHarmonicL(phase) and the cos/sin selected by
+      // globalHarmonicIsSin(phase). Both are the measured shape of the ITS weak modes: the fitted
+      // amplitude/r is coherent across the IB and the OB (see AlignmentWeakModes_handover.md), which
+      // is why the field is written r*C and not C.
+      //
+      // Only curl_z survives, curl_z = (1/r)[d(r*u_phi)/dr - d(u_r)/dphi], hence
+      //   RadialHarmonic:     om_z = -C'(phi)/2   (C' = dC/dphi)
+      //   TangentialHarmonic: om_z = +C(phi)
+      // Both are finite on the axis, unlike Elliptical whose r-independent field needs om ~ 1/r.
+      // At l = 0 the two families reduce exactly to RadialScaling and Curl, which is why the
+      // harmonic orders start at l = 1.
+      if (r < rMin) {
+        return false;
+      }
+      const int l = globalHarmonicL(phase);
+      const double c = x / r, s = y / r; // cos phi, sin phi
+      const double lphi = l * std::atan2(s, c);
+      const double C = globalHarmonicIsSin(phase) ? std::sin(lphi) : std::cos(lphi);
+      const double dC = l * (globalHarmonicIsSin(phase) ? std::cos(lphi) : -std::sin(lphi));
+      if (mode == Volume::RadialHarmonic) {
+        u[0] = r * C * c;
+        u[1] = r * C * s;
+        om[2] = -0.5 * dC;
+      } else {
+        u[0] = -r * C * s;
+        u[1] = r * C * c;
+        om[2] = C;
+      }
+      break;
+    }
+    case Volume::GlobalTilt: {
+      // Rigid rotation of the whole branch about the global X (phase 0) or Y (phase 1) axis:
+      // u = e x r, om = e. These are the two transverse partners of Curl, which is the same thing
+      // about Z, and they are needed as explicit constraints because no mean-of-children pin can
+      // remove them: a tilt about Y shows up as a stave TZ pattern ~ -r*cos(phi) (and a stave RX
+      // pattern ~ cos(phi)), whose mean vanishes over a half-shell *and* over the full circle, so
+      // the cross-term pin that would see it is instead paid off between the two (measured in
+      // doc/AlignmentWeakModes_handover.md: 155 urad about Y, identical on all 14 ITS half-barrels).
+      const double e[3] = {phase == 0 ? 1. : 0., phase == 0 ? 0. : 1., 0.};
+      u[0] = e[1] * z - e[2] * y;
+      u[1] = e[2] * x - e[0] * z;
+      u[2] = e[0] * y - e[1] * x;
+      om[0] = e[0];
+      om[1] = e[1];
+      om[2] = e[2];
+      break;
+    }
     default:
       return false;
   }
   return true;
 }
 
+int Volume::globalEqMode(int eq)
+{
+  for (int m = 0; m < NGlobalModes; ++m) {
+    if (eq < globalEqFirst(m) + globalModeNEq(m)) {
+      return m;
+    }
+  }
+  return -1;
+}
+
+int Volume::globalEqPhase(int eq)
+{
+  const int m = globalEqMode(eq);
+  return m < 0 ? -1 : eq - globalEqFirst(m);
+}
+
+std::string Volume::globalEqName(int eq)
+{
+  const int m = globalEqMode(eq), ph = globalEqPhase(eq);
+  if (m < 0) {
+    return "?";
+  }
+  const std::string base = globalModeName(m);
+  if (m == Elliptical) {
+    return base + (ph == 0 ? "_cos2phi" : "_sin2phi");
+  }
+  if (m == GlobalTilt) {
+    return base + (ph == 0 ? "_x" : "_y");
+  }
+  if (m == RadialHarmonic || m == TangentialHarmonic) {
+    const int l = globalHarmonicL(ph);
+    return std::format("{}{}_{}{}phi", base, l, globalHarmonicIsSin(ph) ? "sin" : "cos", l);
+  }
+  return base;
+}
+
 const char* Volume::globalModeName(int mode)
 {
-  static constexpr const char* names[NGlobalModes] = {"radialScaling", "zScaling", "curl", "twist", "elliptical", "bowing"};
+  static constexpr const char* names[NGlobalModes] = {"radialScaling", "zScaling", "curl", "twist", "elliptical", "bowing", "radialHarmonic", "tangentialHarmonic", "globalTilt"};
   return (mode >= 0 && mode < NGlobalModes) ? names[mode] : "?";
 }
 
-void Volume::collectGlobalModeTerms(int mode, int phase, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged) const
+void Volume::collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged) const
 {
-  // only the volumes explicitly flagged for this mode contribute, and only through DOFs which are
+  const int mode = globalEqMode(eq), phase = globalEqPhase(eq);
+  // only the volumes explicitly flagged for this equation contribute, and only through DOFs which are
   // actually free: a fixed DOF is not a parameter of the fit and must not appear in a constraint
-  if (mGlobalModes[mode] && !mIsPseudo && mRigidBody && mRigidBody->nFreeDOFs() > 0) {
+  if (mGlobalModes[eq] && !mIsPseudo && mRigidBody && mRigidBody->nFreeDOFs() > 0) {
     ++nFlagged;
     const auto& l2g = getMatrixL2G();
     const double* pos = l2g.GetTranslation();    // this volume's origin in the global frame
@@ -428,24 +540,22 @@ void Volume::collectGlobalModeTerms(int mode, int phase, std::vector<std::pair<u
     }
   }
   for (const auto& c : mChildren) {
-    c->collectGlobalModeTerms(mode, phase, terms, nFlagged);
+    c->collectGlobalModeTerms(eq, terms, nFlagged);
   }
 }
 
 void Volume::writeGlobalModeConstraints(std::ostream& os) const
 {
   std::vector<std::pair<uint32_t, double>> terms;
-  for (int mode = 0; mode < NGlobalModes; ++mode) {
-    for (int phase = 0; phase < globalModeNEq(mode); ++phase) {
+  for (int eq = 0; eq < NGlobalEq; ++eq) {
+    {
       terms.clear();
       int nFlagged = 0;
-      collectGlobalModeTerms(mode, phase, terms, nFlagged);
+      collectGlobalModeTerms(eq, terms, nFlagged);
       if (nFlagged == 0) { // the mode was not requested, or nothing is free where it was requested
         continue;
       }
-      const auto name = std::format("Global mode {}{} over {}", globalModeName(mode),
-                                    globalModeNEq(mode) > 1 ? (phase == 0 ? " (cos2phi)" : " (sin2phi)") : "",
-                                    mSymName);
+      const auto name = std::format("Global mode {} over {}", globalEqName(eq), mSymName);
       // the equation is homogeneous (= 0), so its overall scale is arbitrary; normalise the largest
       // coefficient to 1 to keep the constraint matrix well conditioned, since the raw coefficients
       // carry the physical lever arms and span orders of magnitude between modes (r ~ 40 cm for
@@ -723,44 +833,49 @@ bool isLiteralPattern(const std::string& pattern)
 // Unlike rigidBody/calib this never creates a DOF set, it only flags DOFs of the volume's own
 // (possibly absent or fixed) RigidBodyDOFSet for writeRigidBodyConstraints. A later matching rule
 // replaces the flags of an earlier one, like the rigidBody/calib clauses.
-void Volume::applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::string& pattern)
+void Volume::applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::string& pattern, bool noCross)
 {
+  const char* clause = noCross ? "pinChildrenMeanNoCross" : "pinChildrenMean";
+  auto& flags = noCross ? mPinChildrenMeanNoCross : mPinChildrenMean;
   if (!isRigidBodyAllowed()) {
     if (isLiteralPattern(pattern)) {
-      LOGP(warn, "Ignoring the pinChildrenMean rule '{}': {} is not rigid-body alignable", pattern, mSymName);
+      LOGP(warn, "Ignoring the {} rule '{}': {} is not rigid-body alignable", clause, pattern, mSymName);
     }
     return;
   }
-  mPinChildrenMean.fill(false);
+  flags.fill(false);
   if (pin.is_boolean()) {
-    mPinChildrenMean.fill(pin.get<bool>());
+    flags.fill(pin.get<bool>());
     return;
   }
   if (pin.is_string() && pin.get<std::string>() == "all") {
-    mPinChildrenMean.fill(true);
+    flags.fill(true);
     return;
   }
   if (!pin.is_array()) {
-    LOGP(fatal, "Invalid pinChildrenMean clause in the rule '{}', allowed are a bool, \"all\" or a list of DOF names", pattern);
+    LOGP(fatal, "Invalid {} clause in the rule '{}', allowed are a bool, \"all\" or a list of DOF names", clause, pattern);
   }
   for (const auto& name : pin) {
     const auto idx = RigidBodyDOFSet::dofIndex(name.get<std::string>());
     if (idx < 0) {
-      LOGP(fatal, "Unknown rigid-body DOF '{}' in the pinChildrenMean rule '{}', allowed are TX,TY,TZ,RX,RY,RZ", name.get<std::string>(), pattern);
+      LOGP(fatal, "Unknown rigid-body DOF '{}' in the {} rule '{}', allowed are TX,TY,TZ,RX,RY,RZ", name.get<std::string>(), clause, pattern);
     }
-    mPinChildrenMean[idx] = true;
+    flags[idx] = true;
   }
 }
 
-// Apply the "globalModes" clause of a rule: a bool (all modes), "all", or an array of mode names
-// out of radialScaling, zScaling, curl, twist, elliptical, bowing.
+// Apply the "globalModes" clause of a rule: a bool (all equations), "all", or an array of names, each
+// of which may be a mode name (radialScaling, zScaling, curl, twist, elliptical, bowing,
+// radialHarmonic, tangentialHarmonic), one order of a harmonic family (radialHarmonic3), or one
+// equation (elliptical_cos2phi, tangentialHarmonic2_sin2phi).
 // Like pinChildrenMean this never creates a DOF set and never frees anything: it only flags this
 // volume as a participant of the global deformation-mode equations written by
 // writeGlobalModeConstraints, over whichever of its rigid-body DOFs happen to be free at the time of
 // writing. A later matching rule replaces the flags of an earlier one, like the other clauses.
 // The clause is meant for a level which is *free*, typically the stave level, e.g.
 //   { "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+",
-//     "globalModes": ["radialScaling", "elliptical", "twist"] }
+//     "globalModes": ["radialScaling", "curl", "elliptical", "twist",
+//                     "radialHarmonic", "tangentialHarmonic"] }
 // Flagging several nested levels at once is legitimate and not double counting: the equation then
 // constrains the total amplitude of the mode summed over all of them, which is the quantity that is
 // degenerate, regardless of the level that realises it.
@@ -789,17 +904,27 @@ void Volume::applyGlobalModesConfig(const nlohmann::json& modes, const std::stri
   }
   for (const auto& item : modes) {
     const auto name = item.get<std::string>();
-    int idx = -1;
-    for (int m = 0; m < NGlobalModes; ++m) {
-      if (name == globalModeName(m)) {
-        idx = m;
-        break;
+    int nSet = 0;
+    for (int eq = 0; eq < NGlobalEq; ++eq) {
+      const int m = globalEqMode(eq);
+      const std::string mode = globalModeName(m);
+      // a name selects either one equation ("radialHarmonic3_cos3phi", "elliptical_sin2phi"), or a
+      // whole mode ("elliptical" = both phases, "radialHarmonic" = every order), or one order of a
+      // harmonic family ("radialHarmonic3" = its cos and sin)
+      const bool hit = name == globalEqName(eq) || name == mode ||
+                       ((m == RadialHarmonic || m == TangentialHarmonic) &&
+                        name == mode + std::to_string(globalHarmonicL(globalEqPhase(eq))));
+      if (hit) {
+        mGlobalModes[eq] = true;
+        ++nSet;
       }
     }
-    if (idx < 0) {
-      LOGP(fatal, "Unknown global mode '{}' in the rule '{}', allowed are radialScaling, zScaling, curl, twist, elliptical, bowing", name, pattern);
+    if (nSet == 0) {
+      LOGP(fatal, "Unknown global mode '{}' in the rule '{}'. Allowed are the mode names radialScaling, zScaling, curl, twist, "
+                  "elliptical, bowing, radialHarmonic, tangentialHarmonic, globalTilt, a single harmonic order "
+                  "(e.g. radialHarmonic3) or a single equation (e.g. elliptical_cos2phi, globalTilt_y)",
+           name, pattern);
     }
-    mGlobalModes[idx] = true;
   }
 }
 
@@ -946,7 +1071,10 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
         }
       }
       if (rule.contains("pinChildrenMean")) {
-        vol->applyPinChildrenMeanConfig(rule["pinChildrenMean"], pattern);
+        vol->applyPinChildrenMeanConfig(rule["pinChildrenMean"], pattern, false);
+      }
+      if (rule.contains("pinChildrenMeanNoCross")) {
+        vol->applyPinChildrenMeanConfig(rule["pinChildrenMeanNoCross"], pattern, true);
       }
       if (rule.contains("globalModes")) {
         vol->applyGlobalModesConfig(rule["globalModes"], pattern);

@@ -22,23 +22,14 @@ namespace o2::alignrs
 namespace
 {
 constexpr double CmToUm = 1e4;
-constexpr int NRigid = 6;                       // global shift (3) and rotation (3) absorbed before the modes
-constexpr int NCols = Volume::NGlobalModes + 1; // one more column: Elliptical has two phases
+constexpr int NRigid = 6;                   // global shift (3) and rotation (3) absorbed before the modes
+constexpr int NCols = Volume::NGlobalEq;    // one column per mode *equation*, see Volume::NGlobalEq
 constexpr int NPar = NRigid + NCols;
 
-// A column of the mode part of the design matrix: the mode and its phase
-struct ModeCol {
-  int mode;
-  int phase;
-};
-constexpr std::array<ModeCol, NCols> ModeCols = {{{Volume::RadialScaling, 0}, {Volume::ZScaling, 0}, {Volume::Curl, 0}, {Volume::Twist, 0}, {Volume::Elliptical, 0}, {Volume::Elliptical, 1}, {Volume::Bowing, 0}}};
-
-std::string colName(int c)
-{
-  const auto& mc = ModeCols[c];
-  const std::string n = Volume::globalModeName(mc.mode);
-  return mc.mode == Volume::Elliptical ? n + (mc.phase == 0 ? "_cos2phi" : "_sin2phi") : n;
-}
+// A column of the mode part of the design matrix is one global-mode equation, identified by its flat
+// index; the mode and the phase are decoded from it, so adding a mode to Volume::GlobalMode
+// propagates here with no change.
+std::string colName(int c) { return Volume::globalEqName(c); }
 
 // Displacement of the centre of a sensor between the geometry the fit started from and the corrected one
 struct SensorDisp {
@@ -113,8 +104,9 @@ struct MetricA {
   int nTerms{0};
 };
 
-MetricA metricA(Volume* top, const std::map<uint32_t, double>& labelToValue, const ModeCol& mc)
+MetricA metricA(Volume* top, const std::map<uint32_t, double>& labelToValue, int eq)
 {
+  const int mode = Volume::globalEqMode(eq), phase = Volume::globalEqPhase(eq);
   double sumCP = 0., sumC = 0.;
   int nTerms = 0;
   top->traverse([&](Volume* vol) {
@@ -124,7 +116,7 @@ MetricA metricA(Volume* top, const std::map<uint32_t, double>& labelToValue, con
     }
     const auto* l2g = &vol->getMatrixL2G();
     double u[3], om[3];
-    if (!Volume::globalModeField(mc.mode, mc.phase, l2g->GetTranslation(), u, om)) {
+    if (!Volume::globalModeField(mode, phase, l2g->GetTranslation(), u, om)) {
       return;
     }
     const double* rot = l2g->GetRotationMatrix();
@@ -171,9 +163,11 @@ std::array<double, NCols> modeScales(const std::vector<SensorDisp>& sensors)
   zMax = zMax > 0. ? zMax : 1.;
   std::array<double, NCols> sc{};
   for (int c = 0; c < NCols; ++c) {
-    switch (ModeCols[c].mode) {
+    switch (Volume::globalEqMode(c)) {
       case Volume::RadialScaling:
       case Volume::Curl:
+      case Volume::RadialHarmonic:     // the harmonic families carry an explicit factor r, so their
+      case Volume::TangentialHarmonic: // native amplitude is the dimensionless eps as well
         sc[c] = rMax;
         break;
       case Volume::ZScaling:
@@ -184,6 +178,9 @@ std::array<double, NCols> modeScales(const std::vector<SensorDisp>& sensors)
         break;
       case Volume::Bowing:
         sc[c] = zMax * zMax;
+        break;
+      case Volume::GlobalTilt: // a rigid rotation: the displacement is the angle times the lever arm
+        sc[c] = std::max(rMax, zMax);
         break;
       default: // Elliptical: the field is already a length
         sc[c] = 1.;
@@ -217,7 +214,7 @@ ModeFit fitModes(const std::vector<SensorDisp>& sensors)
     }
     for (int c = 0; c < NCols; ++c) {
       double u[3], om[3];
-      if (Volume::globalModeField(ModeCols[c].mode, ModeCols[c].phase, s.x.data(), u, om)) {
+      if (Volume::globalModeField(Volume::globalEqMode(c), Volume::globalEqPhase(c), s.x.data(), u, om)) {
         for (int k = 0; k < 3; ++k) {
           A(3 * i + k, NRigid + c) = u[k] / fit.scale[c];
         }
@@ -437,7 +434,7 @@ void diagnoseWeakModes(Volume* root, const std::map<uint32_t, double>& labelToVa
     fits.push_back(fitModes(br.sensors));
     auto& a = mA.emplace_back();
     for (int c = 0; c < NCols; ++c) {
-      a[c] = metricA(br.top, labelToValue, ModeCols[c]);
+      a[c] = metricA(br.top, labelToValue, c);
     }
     logBranch(br, fits.back(), a);
     jsonOut.push_back(branchToJSON(br, fits.back(), a));

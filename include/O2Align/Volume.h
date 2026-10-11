@@ -104,21 +104,54 @@ class Volume
   /// constraint, not a different setting of it.
   ///@{
   enum GlobalMode : int {
-    RadialScaling, ///< dr = eps*r       : uniform transverse dilation, absorbed by the 1/pt scale
-    ZScaling,      ///< dz = eps*z       : longitudinal scale
-    Curl,          ///< r*dphi = eps*r   : rigid rotation about the beam
-    Twist,         ///< r*dphi = eps*z*r : torsion along the beam
-    Elliptical,    ///< dr = eps*cos(2phi) and dr = eps*sin(2phi): TWO equations
-    Bowing,        ///< dr = eps*z^2     : radial sagitta along the beam
+    RadialScaling,      ///< dr = eps*r       : uniform transverse dilation, absorbed by the 1/pt scale
+    ZScaling,           ///< dz = eps*z       : longitudinal scale
+    Curl,               ///< r*dphi = eps*r   : rigid rotation about the beam
+    Twist,              ///< r*dphi = eps*z*r : torsion along the beam
+    Elliptical,         ///< dr = eps*cos(2phi) and dr = eps*sin(2phi): TWO equations
+    Bowing,             ///< dr = eps*z^2     : radial sagitta along the beam
+    RadialHarmonic,     ///< dr = eps*r*cos(l*phi) / sin(l*phi), l = 1..GlobalHarmonicLMax
+    TangentialHarmonic, ///< r*dphi = eps*r*cos(l*phi) / sin(l*phi), l = 1..GlobalHarmonicLMax
+    GlobalTilt,         ///< rigid rotation of the whole branch about the global X / Y axis: TWO equations
     NGlobalModes
   };
+  /// highest azimuthal order of the RadialHarmonic / TangentialHarmonic families
+  static constexpr int GlobalHarmonicLMax = 4;
+  /// number of scalar equations of a mode: 2 for Elliptical (phases cos2phi, sin2phi) and for
+  /// GlobalTilt (about X, about Y), 2*GlobalHarmonicLMax for the harmonic families, 1 for the rest
+  static constexpr int globalModeNEq(int mode)
+  {
+    return (mode == Elliptical || mode == GlobalTilt) ? 2 : ((mode == RadialHarmonic || mode == TangentialHarmonic) ? 2 * GlobalHarmonicLMax : 1);
+  }
+  /// flat index of the first equation of a mode, and the total number of equations of all the modes.
+  /// The flat index is what the DOF-config flags, what writeGlobalModeConstraints loops over and what
+  /// indexes the columns of the WeakModes diagnostics.
+  static constexpr int globalEqFirst(int mode)
+  {
+    int n = 0;
+    for (int m = 0; m < mode; ++m) {
+      n += globalModeNEq(m);
+    }
+    return n;
+  }
+  /// Total number of mode equations. Spelled out rather than computed with globalEqFirst() because a
+  /// constexpr member function may not be called in a constant expression inside its own class body
+  /// (rootcling rejects it); the static_assert right after the class checks the two agree.
+  static constexpr int NGlobalEq = 5 /* the one-equation modes */ + 2 /* Elliptical */ + 2 /* GlobalTilt */ + 2 * (2 * GlobalHarmonicLMax);
+  static constexpr int globalEqIndex(int mode, int phase) { return globalEqFirst(mode) + phase; }
+  static int globalEqMode(int eq);
+  static int globalEqPhase(int eq);
+  /// azimuthal order and cos/sin selection encoded in the phase of a harmonic-family equation
+  static constexpr int globalHarmonicL(int phase) { return phase / 2 + 1; }
+  static constexpr bool globalHarmonicIsSin(int phase) { return phase % 2 != 0; }
   /// name of a mode as used in the "globalModes" clause
   static const char* globalModeName(int mode);
+  /// name of one equation: the mode name for a single-equation mode, otherwise qualified by the phase,
+  /// e.g. "elliptical_cos2phi", "radialHarmonic3_sin3phi". Accepted by the "globalModes" clause too.
+  static std::string globalEqName(int eq);
   /// displacement field u (translation) and local rotation omega = curl(u)/2 of the unit-amplitude mode
-  /// (phase selects cos2phi/sin2phi of Elliptical) at the global position pos; false if undefined there
+  /// at the global position pos; phase selects the equation within the mode; false if undefined there
   static bool globalModeField(int mode, int phase, const double* pos, double* u, double* om);
-  /// number of scalar equations of a mode: 2 for Elliptical (the two phases cos2phi, sin2phi), 1 otherwise
-  static int globalModeNEq(int mode) { return mode == Elliptical ? 2 : 1; }
   /// one Millepede Constraint per requested mode and phase, spanning the free rigid-body DOFs of every
   /// volume flagged by a "globalModes" rule. A mode equation is global, so this is written once for the
   /// whole tree, not per volume: call it on the root (writeRigidBodyConstraints already does).
@@ -278,10 +311,12 @@ class Volume
   /// DOF sets described by the rigidBody / calib clauses of a rule of the DOF configuration
   static std::unique_ptr<DOFSet> makeRigidBodyDOFSet(const nlohmann::json& rb, const std::string& pattern);
   static std::unique_ptr<DOFSet> makeCalibDOFSet(const nlohmann::json& cal, const std::string& pattern, const std::string& sym);
-  /// apply the "pinChildrenMean" clause of a rule: flags rigid-body DOFs (free or fixed) for which
-  /// writeRigidBodyConstraints must still force the weighted mean of the active children's movement
-  /// to vanish, mirroring the "replace, don't merge" semantics of the rigidBody/calib clauses
-  void applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::string& pattern);
+  /// apply the "pinChildrenMean" (noCross = false) or "pinChildrenMeanNoCross" (noCross = true) clause
+  /// of a rule: flags rigid-body DOFs (free or fixed) for which writeRigidBodyConstraints must still
+  /// force the weighted mean of the active children's movement to vanish, mirroring the
+  /// "replace, don't merge" semantics of the rigidBody/calib clauses. The two clauses have independent
+  /// flags and may both be set on the same volume (they are different equations).
+  void applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::string& pattern, bool noCross);
   /// apply the "measurement" clause of a rule: {"TX": [value, sigma], "SlopeX": {"value": v, "sigma": s}, ...}
   /// external measurements of rigid-body AND/OR calibration DOFs of this volume, resolved by name
   /// against whichever of mRigidBody/mCalib has a matching dofName() (the two never share a name),
@@ -294,7 +329,7 @@ class Volume
   /// accumulate the terms of one mode equation over this volume (if flagged for that mode) and its
   /// whole subtree, as (label, coefficient) pairs still carrying their physical lever arms, counting
   /// in nFlagged the volumes which were flagged for the mode and do have a free rigid-body DOF
-  void collectGlobalModeTerms(int mode, int phase, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged) const;
+  void collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged) const;
   /// one Millepede "Measurement" per free rigid-body DOF of this volume having one configured
   void writeRigidBodyDOFMeasurements(std::ostream& os) const;
   /// one Millepede "Measurement" per free calibration DOF having one configured, for every declared
@@ -312,8 +347,15 @@ class Volume
   /// collect the nearest descendants having a free RB DOF: a child w/o one (no DOF set or all fixed)
   /// is looked through, its own children being taken with its getJP2L() folded in
   void collectMeanContributors(const Matrix66& jToThis, std::vector<MeanContributor>& out) const;
-  /// add to con the free DOFs of the contributors feeding the DOF iDOF of this volume, scaled by weight
-  static void addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<MeanContributor>& contributors, double weight);
+  /// Add to con the contributors' free DOFs feeding the DOF iDOF of this volume, scaled by weight.
+  /// noCross = false: every free DOF jDOF of a contributor enters with the jacobian element
+  /// jToThis(iDOF, jDOF), i.e. the contributor's *pose* transported into this volume's frame -- the
+  /// correct operator when this volume's DOF is a fit parameter, since that is exactly the degeneracy.
+  /// noCross = true: only the contributor's own iDOF enters, with the weight alone. Use this to pin a
+  /// collective drift: the transported form mixes translations and rotations with lever arms of up to
+  /// tens of cm, so it is cheaply satisfied by a weakly-observable rotation (an ITS half-stave RZ of
+  /// 7.5 mrad cancelling a 97 um mean TY) instead of by the displacement one meant to constrain.
+  static void addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<MeanContributor>& contributors, double weight, bool noCross);
 
   std::string mSymName;
   Label mLabel;
@@ -330,9 +372,12 @@ class Volume
   /// rigid-body DOF set at all. Set by the
   /// "pinChildrenMean" clause of the DOF config; see writeRigidBodyConstraints.
   std::array<bool, RigidBodyDOFSet::NDOF> mPinChildrenMean{};
-  /// per global deformation mode: this volume's free rigid-body DOFs take part in that mode's
-  /// equation. Set by the "globalModes" clause of the DOF config; see writeGlobalModeConstraints.
-  std::array<bool, NGlobalModes> mGlobalModes{};
+  /// as mPinChildrenMean, but the equation sums only the children's *same-named* DOF, without the
+  /// jacobian cross-terms. Set by the "pinChildrenMeanNoCross" clause; see addChildrenMeanTerms.
+  std::array<bool, RigidBodyDOFSet::NDOF> mPinChildrenMeanNoCross{};
+  /// per global deformation-mode equation (flat index, see NGlobalEq): this volume's free rigid-body
+  /// DOFs take part in it. Set by the "globalModes" clause; see writeGlobalModeConstraints.
+  std::array<bool, NGlobalEq> mGlobalModes{};
   std::vector<Label> mCalibLabels{};            // calibration label per time slot, filled with the slot 0 in the ctor
   size_t mActiveCalibSlot{0};                   // index in mCalibLabels of the slot being processed
   const TimeSlotsSet* mCalibSlots{nullptr};     //! calibration slots, if declared; not owned
@@ -347,6 +392,10 @@ class Volume
 
   void init();
 };
+
+// Guards the hand-written NGlobalEq against any change to GlobalMode or globalModeNEq()
+static_assert(Volume::NGlobalEq == Volume::globalEqFirst(Volume::NGlobalModes),
+              "Volume::NGlobalEq is out of step with GlobalMode / globalModeNEq()");
 
 } // namespace o2::alignment
 

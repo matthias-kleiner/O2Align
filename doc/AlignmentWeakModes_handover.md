@@ -411,11 +411,11 @@ whole tree. The clause flags the participating volumes:
   "globalModes": ["radialScaling", "curl", "elliptical", "twist"] }
 ```
 
-Six modes are available — `radialScaling`, `zScaling`, `curl`, `twist`, `elliptical` (two equations,
-cos2φ and sin2φ), `bowing`. Coefficients come from each volume's own `getL2G()`: for every *free*
-rigid-body DOF, the projection of the mode's analytic field **u**(x) (translations) or of the local
-rotation **ω**(x) = ½∇×**u** it induces (rotations) onto the corresponding local axis. `doc/ITS_RB_v2.json`
-is `v1` plus the rule above.
+Coefficients come from each volume's own `getL2G()`: for every *free* rigid-body DOF, the projection
+of the mode's analytic field **u**(x) (translations) or of the local rotation **ω**(x) = ½∇×**u** it
+induces (rotations) onto the corresponding local axis. The mode list was later extended — see
+[section 5](#5-the-inversion--global-constraint-runs-the-pin-itself-is-the-binding-problem) — and
+`doc/ITS_RB_v2.json` now carries the full prescription rather than just `v1` plus this rule.
 
 Verified against the real geometry through a standalone `MilleSteer` run on the `v0` free set:
 
@@ -469,6 +469,154 @@ parameter count becomes a problem, keep one level and fix the other rather than 
 - `doc/ITS_RB_from_hstaves_IB.json` and `doc/ITS_RB_from_staves.json` were converted from glob `?`
   to regex `[0-9]`.
 - `doc/DOFConfig_rules.md` now documents regex semantics (the README had no glob references).
+
+## 5. The `inversion` + global-constraint runs: the pin itself is the binding problem
+
+Four runs in `/data/devAlg/tests/resOp/` (`solA1Iv0`, `solA1Iv1`, and the same two with the
+`macro/add_global_mode_constraints.py` constraints appended, `…GC`), all with
+`method inversion 5 0.10`, so with real parameter errors for the first time. All four still degrade
+`checkResid`.
+
+### The constraints worked; they were just not the binding constraint
+
+| | `Iv0` | `Iv0GC` |
+|---|---|---|
+| radial scaling ε | −5.4·10⁻⁴ | **−5.6·10⁻⁸** |
+| u_r ℓ=0 at Lr6 | 212 µm | 8 µm |
+| u_r ℓ=2 at Lr6 | 125 µm | 5 µm |
+| curl θ_z | −71 µrad | −19 µrad |
+| pede χ² | 3.2735·10⁷ | 3.2829·10⁷ (**+0.29 %**) |
+
+Removing a 213 µm mode costs 0.29 % of the χ² — the quantitative proof that it was a null direction.
+`v1` ≈ `v0` as predicted (Lr6 TY mean −212.8 vs −212.6 µm) at +1.0 % χ² for 444 fewer parameters.
+
+### Root cause: the hierarchical mean constraint is paid off with a lever-arm cancellation
+
+One pin equation, printed term by term — `DOF TY for ITS/ITSULayer6/ITSUHalfBarrel0/ITSUStave0`:
+
+```
+TY  ITSUHalfStave0  coef +0.5000   val   -119.39 um    c*p = -59.70 um
+RZ  ITSUHalfStave0  coef +0.6450   val  +7523.80 urad  c*p = +48.53 um
+TY  ITSUHalfStave1  coef +0.5000   val    -74.72 um    c*p = -37.36 um
+RZ  ITSUHalfStave1  coef -0.6450   val  -7523.80 urad  c*p = +48.53 um
+                                              sum = 0.0005 um
+```
+
+The two half-staves moved −119 and −75 µm (mean **−97 µm**) and the equation is satisfied to
+5·10⁻⁴ µm because each took an RZ of **±7.5 mrad**, equal and opposite to 6 digits — the signature of
+a null direction. The pin did not prevent the drift; it manufactured a 0.43° rotation to pay for it.
+
+| pin equation | translation coef | rotation coef | cancellation |
+|---|---|---|---|
+| ITS envelope, TZ | TZ 0.01 | RX 0.28 | RX −8.5 ↔ TZ +8.5 µm |
+| ITS envelope, TY | TY 0.01 | RZ 0.28 | RZ −13.5 ↔ TX +11.1, TY +2.5 µm |
+| OB half-barrel, TY | TY 0.042 | RZ 1.724 (= r/N, r ≈ 41 cm) | RZ −43.2 ↔ TX +43.0 µm; mean TY only +0.24 µm |
+| OB stave, TY | TY 0.50 | RZ 0.645 | RZ +97.1 ↔ TY −97.1 µm |
+| IB stave → chip | TX,TY,TZ 0.11 | *none free* | **genuinely zero** |
+
+RZ is the currency — rotation about the sensor normal, ~25 µm of unmeasured normal displacement over
+the stave half-width, but weighted by the 41 cm lever arm in the constraint:
+
+```
+halfstave  RZ  median  971  p90 5136  max 8058 urad     stave  RZ  median 657  p90 2013  max 5571 urad
+halfstave  RX  median  9.7  p90   37  max   89 urad     stave  RX  median  55  p90  128  max  194 urad
+halfstave  RY  median  6.1  p90   20  max   46 urad     stave  RY  median  46  p90   87  max  139 urad
+```
+
+Wherever the children have free rotations the pin therefore imposes nothing on their mean
+displacement. The only level where it bit is IB stave → chip, precisely because the chips have no
+free rotations — which is why the chip mode appears as a *ramp* (1st moment) and not an offset.
+
+### What survived, and the evidence that it is the fit and not mechanics
+
+Per harmonic, ε = amplitude/r fitted per layer. A real deformation cannot be coherent in ε across the
+IB and the OB — independently mounted structures spanning r = 2.3 → 39 cm. A weak mode must be.
+
+| mode | ε [10⁻⁴] | spread over 7 layers | Lr6 amplitude | was constrained? |
+|---|---|---|---|---|
+| u_φ ℓ=2 (tangential elliptical) | 1.88–2.52 | **6 %** | **105 µm** | no |
+| global rigid tilt θ_y | — | −155 ± 20 µrad on all 14 half-barrels | 69 µm in u_z | no |
+| u_r ℓ=3 | 1.24–1.35 | **3 %** | 56 µm | no |
+| u_r ℓ=4 | 0.74–1.38 | 14 % | 41 µm | no |
+| u_φ ℓ=1 | 0.74–0.81 (OB) | 4 % | 34 µm | no |
+| u_r ℓ=0, ℓ=2; u_φ ℓ=0 | 0.05–0.6 | 23–63 % (incoherent) | ≤ 8 µm | **yes ✓** |
+
+Plus two localised modes. **Clamshell / half-shell gap**, the suspected defect but at the OB and
+large: relative rigid motion of the two half-barrels ΔT_y = +36, +53, +62, +55 µm at Lr3-6 and
+ΔR_x = −200 µrad, constant across all four OB layers (at the IB only +5 to +8 µm). A global tilt and a
+clamshell both have zero mean over a half-shell (⟨cos φ⟩ = 0 on [0,π]), so no half-barrel pin can see
+either. And the **IB chip dipole**, the `ITSBarFix` ramp back and bigger — chip TY averaged over all
+staves of a layer, chip 0 → 8:
+
+```
+Lr0  -50.1 -24.4 -12.3  -3.7  +2.6  +8.6 +15.4 +24.0 +39.9   span  76 um
+Lr1  -28.9 -17.4  -9.3  -3.1  +2.0  +6.0 +10.9 +16.0 +23.9   span  48 um
+Lr2  -18.4  -9.7  -4.1  -0.2  +2.6  +4.1  +6.1  +7.7 +12.0   span  26 um
+```
+
+The 0th moment is honestly constrained; the **1st moment is not constrained at all**, and `v0`/`v1`
+removed IB stave RX, so the mode has nowhere else to live. In `v1`, with chip TY fixed, it moved into
+the **measured** directions as a z² bow: chip TZ +23.0 → −10.6 → +12.5 µm and chip TX +11.3 → −7.9 µm,
+against ±2 µm in `v0`. That is why `v1` is not an improvement.
+
+### What was implemented in response
+
+1. **`pinChildrenMeanNoCross`** (`src/Volume.cxx`, `addChildrenMeanTerms(..., noCross)`): the same
+   mean equation with the jacobian cross-terms dropped, so only the children's own same-named DOF
+   enters and no other DOF of the child can pay for it. `pinChildrenMean` is unchanged and remains the
+   right operator wherever the parent's DOF is a fit parameter.
+   **Do not request both on the same volume** — over one contributor set with 5-6 free DOFs per child
+   they span overlapping subspaces and the constraint set goes rank-deficient (measured: 14 deficient
+   equations out of 849 when both were set at the ITS envelope and the OB half-barrels).
+   Note what the no-cross form deliberately cannot see: a global rigid shift or tilt is a cos φ / sin φ
+   pattern in the children's local DOFs, so its plain mean vanishes. That is what the cross-terms are
+   for, and what `globalTilt` is for.
+2. **Two generic harmonic families and `globalTilt`** added to `Volume::GlobalMode`:
+   `radialHarmonic` (Δr = ε·r·cos/sin(ℓφ)) and `tangentialHarmonic` (rΔφ = ε·r·cos/sin(ℓφ)),
+   ℓ = 1…4, and the two transverse partners of `curl`. The amplitude carries an explicit factor r
+   because that is the measured shape (the ε table above). At ℓ = 0 the families reduce exactly to
+   `radialScaling` and `curl`. The mode set is now indexed by a *flat equation index*
+   (`Volume::NGlobalEq` = 25), which the `globalModes` clause flags individually, so a name may select
+   a whole mode, one harmonic order (`radialHarmonic3`) or one equation (`globalTilt_y`).
+3. **Propagated** to `src/WeakModes.cxx` (one diagnostic column per equation, resolved through
+   `Volume::globalEqName`) and to `macro/drawWeakModes.C`, which now resolves the `uMode` columns by
+   name from the file instead of by hard-coded index and has a new page for the harmonic families.
+   `macro/add_global_mode_constraints.py` gained the same families and a note that it is superseded.
+4. **`doc/ITS_RB_v2.json`**: IB chips fixed outright and IB stave RX/RY restored (the stave tilt is the
+   physical parameter; the chips sit on one silicon ladder flat to a few µm); stave and half-stave RZ
+   fixed (it buys ~25 µm of unmeasured displacement while carrying a 41 cm lever arm into every
+   constraint); `pinChildrenMeanNoCross` at the ITS envelope and the OB half-barrels; the global-mode
+   set above at the stave level. Verified: NVGB = 2427, 803 constraints of which 21 global-mode, and
+   the constraint matrix is **full rank 803**, the global modes contributing 21 independent equations.
+
+Validation of the new equations against the `solA1Iv0GC` solution, Σcᵢpᵢ/Σ|cᵢ|:
+
+```
+radialScaling                 +0.06 um     (already constrained there - cross-check of the new code)
+radialHarmonic2_cos/sin2phi   -1.21/+0.59  (ditto, the harness's radial ellipse)
+tangentialHarmonic2_cos/sin   -44.0/+49.4  <== the dominant survivor
+globalTilt_y                  -41.1        <== the 155 urad tilt   (globalTilt_x only +5.4)
+radialHarmonic3_sin3phi       +33.6        <== u_r l=3
+radialHarmonic4_cos/sin4phi   -18.5/+18.6  <== u_r l=4
+tangentialHarmonic1_cos/sin   +18.3/+11.2  <== u_phi l=1
+twist                         -0.15        (never was a problem)
+```
+
+Every equation bites exactly where the decomposition said it should, and the two the harness had
+already constrained come out at ~0 — an independent check of the geometry-based coefficients against
+the index-based ones.
+
+### Still open
+
+- The **OB clamshell** (ΔT_y ≈ 55 µm, ΔR_x ≈ −200 µrad between the two half-shells) is not addressed
+  by any of the above: it is a relative rigid motion of two half-shells, invisible to a mean over
+  either of them and not a global deformation mode. It needs either a `measurement` prior on the OB
+  half-barrel poses (freeing them first, as the IB ones are) or a dedicated clamshell constraint.
+- `zScaling` and `bowing` remain unobservable at stave level (coefficient ∝ z of the volume, and a
+  stave is centred at z = 0). They need the module/chip level free to be constrained at all, and with
+  the IB chips now fixed in `v2` there is no level left that is distributed in z.
+- The **IB chip 1st moment** is now moot in `v2` (chips fixed), but if chip DOFs are ever freed again
+  the dipole needs its own constraint, not just the mean.
 
 ## Caveat / next step
 
