@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A standalone package built against ALICE O2, producing `libO2Align` plus one DPL workflow
-executable, `o2-its3-alignment-workflow` ([src/alignment-workflow.cxx](src/alignment-workflow.cxx)).
+executable, `o2-dev-alignment-workflow` ([src/alignment-workflow.cxx](src/alignment-workflow.cxx)).
 It aligns ALICE barrel detectors by refitting tracks with GBL (General Broken Lines) and writing
 Millepede-II input. Originally cloned from `O2/Detectors/Upgrades/ITS3/alignment`, so ITS/ITS3 is
 still the most developed part.
@@ -42,6 +42,8 @@ global mode, from the constraint projection (A) and from a fit of the sensor dis
 
 `--output` is a comma-separated `EnumFlags` list: `VerboseGBL, MilleData, MilleSteer, MilleRes,
 MisRes, WeakModesDiag, Debug` ([AlignmentSpec.h](include/O2Align/AlignmentSpec.h)).
+
+If DPL workflow should be piped to a chain of shell comands, it has to have `--run` option before the 1st element not being a workflow, i.e. `... | o2-dev-alignment-workflow --run | tee my.log`.
 
 ## Coding preferences
 
