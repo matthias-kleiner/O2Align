@@ -14,6 +14,10 @@
 #include <sstream>
 #include <regex>
 #include <cmath>
+#include <limits>
+#include <algorithm>
+#include <unordered_map>
+#include <functional>
 #include <TGeoManager.h>
 #include <TGeoPhysicalNode.h>
 #include <TMath.h>
@@ -186,6 +190,7 @@ void Volume::writeRigidBodyConstraints(std::ostream& os) const
     // a global deformation mode spans the whole tree, so its equation is written once here and not
     // during the per-volume recursion below
     writeGlobalModeConstraints(os);
+    writeRayModeConstraints(os);
   }
   // a volume which is not rigid-body alignable (the root of the hierarchy, a detector envelope)
   // imposes no constraint on its branches, but these may still constrain their own children
@@ -459,6 +464,48 @@ bool Volume::globalModeField(int mode, int phase, const double* pos, double* u, 
       om[2] = e[2];
       break;
     }
+    case Volume::RadialPolar:
+    case Volume::TangentialPolar:
+    case Volume::LongitudinalPolar: {
+      // Axisymmetric fields of amplitude f = r^p * t^k, t = z/r (the tgLambda of a track from the
+      // nominal vertex), along rHat, phiHat or zHat; see isPolarDuplicate for the members left out.
+      // With dt/dz = 1/r and dt/dr = -t/r, the cylindrical curl of each field is
+      //   radial:       curl_phi = d(u_r)/dz                         =  k     r^(p-1) t^(k-1)
+      //   tangential:   curl_r   = -d(u_phi)/dz                      = -k     r^(p-1) t^(k-1)
+      //                 curl_z   = (1/r) d(r u_phi)/dr               = (p+1-k) r^(p-1) t^k
+      //   longitudinal: curl_phi = -d(u_z)/dr                        = (k-p)  r^(p-1) t^k
+      // and om = curl/2. Checks: tangential (1,0) is Curl (om_z = 1), longitudinal (1,0) the telescope
+      // dz = r (om = -phiHat/2), longitudinal (1,1) = z is curl-free as ZScaling.
+      if (r < rMin) {
+        return false;
+      }
+      const auto [p, k] = polarPK(mode, phase);
+      if (p < 0) {
+        return false;
+      }
+      const double c = x / r, s = y / r, t = z / r;
+      const double rp1 = p == 1 ? 1. : 1. / r; // r^(p-1)
+      const double tk = std::pow(t, k), tk1 = k > 0 ? std::pow(t, k - 1) : 0.;
+      const double f = (p == 1 ? r : 1.) * tk;
+      double omR = 0., omPhi = 0., omZ = 0.;
+      if (mode == Volume::RadialPolar) {
+        u[0] = f * c;
+        u[1] = f * s;
+        omPhi = 0.5 * k * rp1 * tk1;
+      } else if (mode == Volume::TangentialPolar) {
+        u[0] = -f * s;
+        u[1] = f * c;
+        omR = -0.5 * k * rp1 * tk1;
+        omZ = 0.5 * (p + 1 - k) * rp1 * tk;
+      } else {
+        u[2] = f;
+        omPhi = 0.5 * (k - p) * rp1 * tk;
+      }
+      om[0] = omR * c - omPhi * s;
+      om[1] = omR * s + omPhi * c;
+      om[2] = omZ;
+      break;
+    }
     default:
       return false;
   }
@@ -498,12 +545,17 @@ std::string Volume::globalEqName(int eq)
     const int l = globalHarmonicL(ph);
     return std::format("{}{}_{}{}phi", base, l, globalHarmonicIsSin(ph) ? "sin" : "cos", l);
   }
+  if (isPolarMode(m)) {
+    const auto [p, k] = polarPK(m, ph);
+    return std::format("{}_r{}t{}", base, p, k); // amplitude r^p * (z/r)^k
+  }
   return base;
 }
 
 const char* Volume::globalModeName(int mode)
 {
-  static constexpr const char* names[NGlobalModes] = {"radialScaling", "zScaling", "curl", "twist", "elliptical", "bowing", "radialHarmonic", "tangentialHarmonic", "globalTilt"};
+  static constexpr const char* names[NGlobalModes] = {"radialScaling", "zScaling", "curl", "twist", "elliptical", "bowing", "radialHarmonic", "tangentialHarmonic", "globalTilt",
+                                                      "radialPolar", "tangentialPolar", "longitudinalPolar"};
   return (mode >= 0 && mode < NGlobalModes) ? names[mode] : "?";
 }
 
@@ -544,8 +596,292 @@ void Volume::collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, doub
   }
 }
 
+uint32_t Volume::minFreeRigidBodyLabel() const
+{
+  uint32_t lmin = std::numeric_limits<uint32_t>::max();
+  if (mRigidBody) {
+    const int nDOF = std::min(mRigidBody->nDOFs(), static_cast<int>(RigidBodyDOFSet::NDOF));
+    for (int iDOF = 0; iDOF < nDOF; ++iDOF) {
+      if (mRigidBody->isFree(iDOF)) {
+        lmin = std::min(lmin, mLabel.raw(iDOF));
+      }
+    }
+  }
+  for (const auto& c : mChildren) {
+    lmin = std::min(lmin, c->minFreeRigidBodyLabel());
+  }
+  return lmin;
+}
+
+void Volume::addPedeGroupingAnchor(Constraint& con, uint32_t anchorLabel)
+{
+  // against a largest coefficient of 1 this is negligible for the equation and its rank, but nonzero:
+  // pede's text reader (addItem) silently drops a zero factor, and the anchor with it
+  constexpr double AnchorCoeff = 1e-12;
+  const auto& labs = con.getLabels();
+  if (anchorLabel != std::numeric_limits<uint32_t>::max() && std::find(labs.begin(), labs.end(), anchorLabel) == labs.end()) {
+    con.add(anchorLabel, AnchorCoeff);
+  }
+}
+
+void Volume::collectSensors(std::vector<const Volume*>& out) const
+{
+  if (isLeaf()) {
+    if (!mVirtual && !mIsPseudo && !isRoot()) {
+      out.push_back(this);
+    }
+    return;
+  }
+  for (const auto& c : mChildren) {
+    c->collectSensors(out);
+  }
+}
+
+const char* Volume::rayCompName(int comp)
+{
+  static constexpr const char* names[NRayComps] = {"rdphi", "dz", "dr"};
+  return (comp >= 0 && comp < NRayComps) ? names[comp] : "?";
+}
+
+// Apply the "rayModes" clause of a rule, e.g.
+//   { "match": "ITS", "rayModes": { "nPhi": 24, "nT": 16, "tMax": 4.0, "components": ["rdphi", "dz", "dr"] } }
+// true takes the RayModesConfig defaults, false removes the flag. Like globalModes it frees nothing; it
+// flags a branch whose sensors are binned, see writeRayModeConstraints.
+void Volume::applyRayModesConfig(const nlohmann::json& cfg, const std::string& pattern)
+{
+  if (cfg.is_boolean()) {
+    mRayModes = cfg.get<bool>() ? std::make_shared<const RayModesConfig>() : nullptr;
+    return;
+  }
+  if (!cfg.is_object()) {
+    LOGP(fatal, "Invalid rayModes clause in the rule '{}': a bool or an object is expected", pattern);
+  }
+  RayModesConfig c;
+  for (const auto& [key, val] : cfg.items()) {
+    if (key == "nPhi") {
+      c.nPhi = val.get<int>();
+    } else if (key == "phi0") {
+      c.phi0 = val.get<double>();
+    } else if (key == "nT") {
+      c.nT = val.get<int>();
+    } else if (key == "tMax") {
+      c.tMax = val.get<double>();
+    } else if (key == "rSpanMin") {
+      c.rSpanMin = val.get<double>();
+    } else if (key == "rMin") {
+      c.rMin = val.get<double>();
+    } else if (key == "rMax") {
+      c.rMax = val.get<double>();
+    } else if (key == "rEdges") {
+      c.rEdges = val.get<std::vector<double>>();
+    } else if (key == "components") {
+      c.comps.fill(false);
+      for (const auto& item : val) {
+        const auto name = item.get<std::string>();
+        int comp = 0;
+        while (comp < NRayComps && name != rayCompName(comp)) {
+          ++comp;
+        }
+        if (comp == NRayComps) {
+          LOGP(fatal, "Unknown rayModes component '{}' in the rule '{}', allowed are rdphi, dz, dr", name, pattern);
+        }
+        c.comps[comp] = true;
+      }
+    } else {
+      LOGP(fatal, "Unknown rayModes key '{}' in the rule '{}', allowed are nPhi, phi0, nT, tMax, rSpanMin, rEdges, rMin, rMax, components", key, pattern);
+    }
+  }
+  if (c.nPhi < 1 || c.nT < 1 || c.tMax <= 0. || !std::is_sorted(c.rEdges.begin(), c.rEdges.end())) {
+    LOGP(fatal, "Invalid rayModes binning in the rule '{}': nPhi, nT >= 1, tMax > 0 and increasing rEdges are required", pattern);
+  }
+  mRayModes = std::make_shared<const RayModesConfig>(std::move(c));
+}
+
+namespace
+{
+// Linearised displacement of a point x (global frame) per unit value of each rigid-body DOF of a
+// volume: d(x) = A*x + b, stored row-major as A (9) then b (3). Built from the very matrix the fitted
+// corrections are applied with (AlignParam in the local frame, conjugated by L2G, as in
+// getFittedLocalDelta and the result writing), by central differences, so the rotation convention
+// cannot drift from the one of the fit.
+using DOFDisp = std::array<double, 12>;
+std::array<DOFDisp, RigidBodyDOFSet::NDOF> rigidBodyDisplacements(const TGeoHMatrix& l2g)
+{
+  std::array<DOFDisp, RigidBodyDOFSet::NDOF> out{};
+  const TGeoHMatrix g2l = l2g.Inverse();
+  for (int i = 0; i < RigidBodyDOFSet::NDOF; ++i) {
+    const double eps = i < 3 ? 1e-4 : 1e-6; // cm, rad
+    TGeoHMatrix gpm[2];
+    for (int sgn = 0; sgn < 2; ++sgn) {
+      std::array<double, RigidBodyDOFSet::NDOF> par{};
+      par[i] = sgn == 0 ? eps : -eps;
+      const auto delta = o2::detectors::AlignParam("", -1, par[0], par[1], par[2], par[3], par[4], par[5], true, false).createMatrix();
+      gpm[sgn] = l2g * delta * g2l;
+    }
+    const double *rp = gpm[0].GetRotationMatrix(), *rm = gpm[1].GetRotationMatrix();
+    const double *tp = gpm[0].GetTranslation(), *tm = gpm[1].GetTranslation();
+    for (int k = 0; k < 9; ++k) {
+      out[i][k] = (rp[k] - rm[k]) / (2. * eps);
+    }
+    for (int k = 0; k < 3; ++k) {
+      out[i][9 + k] = (tp[k] - tm[k]) / (2. * eps);
+    }
+  }
+  return out;
+}
+} // namespace
+
+// For a track from the vertex at azimuth phi and t = z/r, a displacement r*F(phi, t)*e of every
+// sensor it crosses (e = phiHat: its phi changes by F; e = zHat: its tgLambda by F; e = rHat: its
+// points slide along it, i.e. dz = -t*dr = -r*t*F absorbed by tgLambda, and with B != 0 the curvature)
+// costs no chi2 whatever F is. The global modes constrain a few smooth members of this family; with
+// DOFs distributed in z the fit finds the others (measured in ITS_RB_v3: 87 % of the per-cell dz/r
+// variance common to all seven layers). Discretised: per cell of (phi, t) and component,
+//   sum over the sensors s of the cell of (e_s . d_s) / r_s = 0,
+// d_s = sum over the free rigid-body DOFs p on the path from s to the root of (dd_s/dp) * p, the
+// linearised displacement of the sensor centre, i.e. the mean angular displacement of the cell seen
+// from the vertex must vanish. A common-ray motion eps*r*e of the cell gives eps*nSensors != 0 and is
+// removed. Any positive weighting would remove it; the angular one with unit weights is the natural
+// measure of a ray and does not favour the outer layers by r^2. What else is removed is one direction
+// per cell, the mean angular motion of its sensors, which for a single layer is a measurable motion:
+// hence a cell whose sensors do not span rSpanMin in radius is skipped.
+// The cells use the nominal t = z/r, i.e. a vertex at z = 0. A track from z_v crosses the layer at
+// radius r at t + z_v/r, so the cell indicator is a null direction only where z_v/r is small compared
+// to the cell width: at the ITS IB (r ~ 2-4 cm, z_v ~ +-5 cm) the shift exceeds the cell, the IB
+// sensors of a cell are not on the rays of its OB sensors, and the equation constrains measurable
+// IB-vs-OB motion instead (seen as worse vertex and IB dz residuals). rMin excludes such sensors.
+void Volume::writeRayModeConstraints(std::ostream& os) const
+{
+  std::vector<const Volume*> tops; // the topmost flagged volumes: each one is a branch of its own
+  std::function<void(const Volume*)> findTops = [&](const Volume* v) {
+    if (v->mRayModes) {
+      tops.push_back(v);
+      return;
+    }
+    for (const auto& c : v->mChildren) {
+      findTops(c.get());
+    }
+  };
+  findTops(this);
+  if (tops.empty()) {
+    return;
+  }
+  const uint32_t anchor = minFreeRigidBodyLabel(); // called on the root: see writeGlobalModeConstraints
+  std::unordered_map<const Volume*, std::array<DOFDisp, RigidBodyDOFSet::NDOF>> dispCache;
+  constexpr double rMin = 1e-4; // cm
+  for (const auto* top : tops) {
+    const auto& cfg = *top->mRayModes;
+    const int nR = static_cast<int>(cfg.rEdges.size()) + 1;
+    struct Cell {
+      std::array<std::map<uint32_t, double>, NRayComps> terms;
+      double rLow{std::numeric_limits<double>::max()}, rHigh{0.};
+      int nSensors{0};
+    };
+    std::vector<Cell> cells(nR * cfg.nPhi * cfg.nT);
+    std::vector<const Volume*> sensors;
+    top->collectSensors(sensors);
+    const double dPhi = 2. * M_PI / cfg.nPhi, dT = 2. * cfg.tMax / cfg.nT;
+    for (const auto* s : sensors) {
+      const double* x = s->getMatrixL2G().GetTranslation();
+      const double r = std::hypot(x[0], x[1]);
+      if (r < rMin || r < cfg.rMin || r > cfg.rMax) {
+        continue;
+      }
+      const int iR = static_cast<int>(std::upper_bound(cfg.rEdges.begin(), cfg.rEdges.end(), r) - cfg.rEdges.begin());
+      double phi = std::fmod(std::atan2(x[1], x[0]) - cfg.phi0, 2. * M_PI);
+      phi += phi < 0. ? 2. * M_PI : 0.;
+      const int iPhi = std::min(cfg.nPhi - 1, static_cast<int>(phi / dPhi));
+      const int iT = std::clamp(static_cast<int>(std::floor((x[2] / r + cfg.tMax) / dT)), 0, cfg.nT - 1);
+      auto& cell = cells[(iR * cfg.nPhi + iPhi) * cfg.nT + iT];
+      cell.rLow = std::min(cell.rLow, r);
+      cell.rHigh = std::max(cell.rHigh, r);
+      ++cell.nSensors;
+      // angular displacement of the sensor seen from the vertex: e/r with e = phiHat, zHat, rHat
+      const double r2 = r * r;
+      const double field[NRayComps][3] = {{-x[1] / r2, x[0] / r2, 0.}, {0., 0., 1. / r}, {x[0] / r2, x[1] / r2, 0.}};
+      for (const Volume* a = s; a; a = a->mParent) {
+        const auto* rb = a->mRigidBody.get();
+        if (!rb || rb->nFreeDOFs() == 0) {
+          continue;
+        }
+        auto it = dispCache.find(a);
+        if (it == dispCache.end()) {
+          it = dispCache.emplace(a, rigidBodyDisplacements(a->getMatrixL2G())).first;
+        }
+        const int nDOF = std::min(rb->nDOFs(), static_cast<int>(RigidBodyDOFSet::NDOF));
+        for (int i = 0; i < nDOF; ++i) {
+          if (!rb->isFree(i)) {
+            continue;
+          }
+          const auto& D = it->second[i];
+          double d[3];
+          for (int k = 0; k < 3; ++k) {
+            d[k] = D[3 * k] * x[0] + D[3 * k + 1] * x[1] + D[3 * k + 2] * x[2] + D[9 + k];
+          }
+          for (int comp = 0; comp < NRayComps; ++comp) {
+            if (cfg.comps[comp]) {
+              cell.terms[comp][a->mLabel.raw(i)] += field[comp][0] * d[0] + field[comp][1] * d[1] + field[comp][2] * d[2];
+            }
+          }
+        }
+      }
+    }
+    int nWritten = 0, nSingleLayer = 0, nEmpty = 0;
+    for (int iR = 0; iR < nR; ++iR) {
+      for (int iPhi = 0; iPhi < cfg.nPhi; ++iPhi) {
+        for (int iT = 0; iT < cfg.nT; ++iT) {
+          const auto& cell = cells[(iR * cfg.nPhi + iPhi) * cfg.nT + iT];
+          if (cell.nSensors == 0) {
+            ++nEmpty;
+            continue;
+          }
+          if (cell.rHigh - cell.rLow < cfg.rSpanMin) {
+            ++nSingleLayer;
+            continue;
+          }
+          for (int comp = 0; comp < NRayComps; ++comp) {
+            const auto& terms = cell.terms[comp];
+            if (!cfg.comps[comp] || terms.size() < 2) {
+              continue;
+            }
+            double norm = 0.;
+            for (const auto& [lab, coeff] : terms) {
+              norm = std::max(norm, std::abs(coeff));
+            }
+            Constraint con(std::format("Ray mode {} over {}: r-range {} phi-cell {} t-cell {} ({} sensors)", rayCompName(comp), top->mSymName, iR, iPhi, iT, cell.nSensors), 0.);
+            for (const auto& [lab, coeff] : terms) {
+              if (std::abs(coeff) > 1e-9 * norm) { // same relative cut as the global modes
+                con.add(lab, coeff / norm);
+              }
+            }
+            if (con.getSize() < 2) {
+              continue;
+            }
+            addPedeGroupingAnchor(con, anchor);
+            con.write(os);
+            ++nWritten;
+          }
+        }
+      }
+    }
+    LOGP(info, "Wrote {} ray-mode constraints over {}: {} sensors in {} x {} x {} cells, {} cells empty, {} skipped as spanning less than {} cm in radius",
+         nWritten, top->mSymName, sensors.size(), nR, cfg.nPhi, cfg.nT, nEmpty, nSingleLayer, cfg.rSpanMin);
+  }
+}
+
 void Volume::writeGlobalModeConstraints(std::ostream& os) const
 {
+  // Workaround for the constraint grouping of pede (grpcon, Millepede-II 4fd638f67f): constraints are
+  // processed in the order of their lowest parameter index, and a constraint joining several groups
+  // formed before it relabels its direct neighbours only, which can leave an earlier group empty;
+  // pede then indexes globalParCons(0) and corrupts the heap ("free(): invalid next size"). A mode
+  // equation spans most of the free DOFs, so it is exactly such a joining constraint unless it is
+  // processed first: give every mode equation the lowest label of any free rigid-body DOF of the tree
+  // (all hierarchical constraints are built over those) as an anchor term. It is then the first
+  // constraint pede sees, its group absorbs every constraint sharing a DOF with it, and nothing is
+  // merged afterwards. The coefficient cannot be 0, which pede's reader (addItem) silently drops, see
+  // addPedeGroupingAnchor. Any other long constraint written later (ray modes) needs the same anchor.
+  const uint32_t firstLabel = minFreeRigidBodyLabel();
   std::vector<std::pair<uint32_t, double>> terms;
   for (int eq = 0; eq < NGlobalEq; ++eq) {
     {
@@ -583,6 +919,7 @@ void Volume::writeGlobalModeConstraints(std::ostream& os) const
              name, con.getSize(), nFlagged);
         continue;
       }
+      addPedeGroupingAnchor(con, firstLabel);
       con.write(os);
       LOGP(info, "Wrote the constraint '{}': {} terms over {} flagged volumes", name, con.getSize(), nFlagged);
     }
@@ -866,8 +1203,9 @@ void Volume::applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::st
 
 // Apply the "globalModes" clause of a rule: a bool (all equations), "all", or an array of names, each
 // of which may be a mode name (radialScaling, zScaling, curl, twist, elliptical, bowing,
-// radialHarmonic, tangentialHarmonic), one order of a harmonic family (radialHarmonic3), or one
-// equation (elliptical_cos2phi, tangentialHarmonic2_sin2phi).
+// radialHarmonic, tangentialHarmonic, globalTilt, radialPolar, tangentialPolar, longitudinalPolar),
+// one order of a harmonic family (radialHarmonic3), or one equation (elliptical_cos2phi,
+// tangentialHarmonic2_sin2phi, radialPolar_r0t1).
 // Like pinChildrenMean this never creates a DOF set and never frees anything: it only flags this
 // volume as a participant of the global deformation-mode equations written by
 // writeGlobalModeConstraints, over whichever of its rigid-body DOFs happen to be free at the time of
@@ -921,8 +1259,9 @@ void Volume::applyGlobalModesConfig(const nlohmann::json& modes, const std::stri
     }
     if (nSet == 0) {
       LOGP(fatal, "Unknown global mode '{}' in the rule '{}'. Allowed are the mode names radialScaling, zScaling, curl, twist, "
-                  "elliptical, bowing, radialHarmonic, tangentialHarmonic, globalTilt, a single harmonic order "
-                  "(e.g. radialHarmonic3) or a single equation (e.g. elliptical_cos2phi, globalTilt_y)",
+                  "elliptical, bowing, radialHarmonic, tangentialHarmonic, globalTilt, radialPolar, tangentialPolar, "
+                  "longitudinalPolar, a single harmonic order (e.g. radialHarmonic3) or a single equation "
+                  "(e.g. elliptical_cos2phi, globalTilt_y, radialPolar_r0t1)",
            name, pattern);
     }
   }
@@ -1078,6 +1417,9 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
       }
       if (rule.contains("globalModes")) {
         vol->applyGlobalModesConfig(rule["globalModes"], pattern);
+      }
+      if (rule.contains("rayModes")) {
+        vol->applyRayModesConfig(rule["rayModes"], pattern);
       }
       if (rule.contains("measurement")) {
         vol->applyMeasurementConfig(rule["measurement"], pattern);

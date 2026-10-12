@@ -19,6 +19,7 @@
 #include <string>
 #include <map>
 #include <array>
+#include <limits>
 #include <algorithm>
 
 #include <Eigen/Dense>
@@ -113,14 +114,58 @@ class Volume
     RadialHarmonic,     ///< dr = eps*r*cos(l*phi) / sin(l*phi), l = 1..GlobalHarmonicLMax
     TangentialHarmonic, ///< r*dphi = eps*r*cos(l*phi) / sin(l*phi), l = 1..GlobalHarmonicLMax
     GlobalTilt,         ///< rigid rotation of the whole branch about the global X / Y axis: TWO equations
+    RadialPolar,        ///< dr     = eps*r^p*t^k, t = z/r: radial displacement set by the polar angle
+    TangentialPolar,    ///< r*dphi = eps*r^p*t^k
+    LongitudinalPolar,  ///< dz     = eps*r^p*t^k
     NGlobalModes
   };
   /// highest azimuthal order of the RadialHarmonic / TangentialHarmonic families
   static constexpr int GlobalHarmonicLMax = 4;
+  /// highest power k of t = z/r in the polar families
+  static constexpr int GlobalPolarKMax = 2;
+  static constexpr bool isPolarMode(int mode) { return mode == RadialPolar || mode == TangentialPolar || mode == LongitudinalPolar; }
+  /// The polar families are the displacement fields a track from the vertex cannot see: at radius r it
+  /// is at z ~ r*t (t = tgLambda), so a field r*f(t) is absorbed by its phi (rphi), tgLambda (z) or,
+  /// with B != 0, curvature (r), and a field f(t) by its d0 / z0, i.e. broken only by the vertex.
+  /// They are invisible as long as every free DOF sits at z ~ 0 (stave level), and become accessible
+  /// once DOFs distributed in z (modules, chips) are freed. The members (p, k), p = 0, 1, k = 0..KMax,
+  /// which are already modes of their own are left out: radial (1,0) = RadialScaling, tangential
+  /// (1,0) = Curl, longitudinal (1,1) = ZScaling; so is longitudinal (0,0), a rigid z shift.
+  static constexpr bool isPolarDuplicate(int mode, int p, int k)
+  {
+    return (p == 1 && k == 0 && (mode == RadialPolar || mode == TangentialPolar)) ||
+           (mode == LongitudinalPolar && ((p == 0 && k == 0) || (p == 1 && k == 1)));
+  }
+  static constexpr int polarNEq(int mode)
+  {
+    int n = 0;
+    for (int p = 0; p < 2; ++p) {
+      for (int k = 0; k <= GlobalPolarKMax; ++k) {
+        n += isPolarDuplicate(mode, p, k) ? 0 : 1;
+      }
+    }
+    return n;
+  }
+  /// powers (p, k) of the polar-family equation 'phase', in the order p-major, k-minor
+  static constexpr std::pair<int, int> polarPK(int mode, int phase)
+  {
+    for (int p = 0; p < 2; ++p) {
+      for (int k = 0; k <= GlobalPolarKMax; ++k) {
+        if (!isPolarDuplicate(mode, p, k) && phase-- == 0) {
+          return {p, k};
+        }
+      }
+    }
+    return {-1, -1};
+  }
   /// number of scalar equations of a mode: 2 for Elliptical (phases cos2phi, sin2phi) and for
-  /// GlobalTilt (about X, about Y), 2*GlobalHarmonicLMax for the harmonic families, 1 for the rest
+  /// GlobalTilt (about X, about Y), 2*GlobalHarmonicLMax for the harmonic families, polarNEq for the
+  /// polar families, 1 for the rest
   static constexpr int globalModeNEq(int mode)
   {
+    if (isPolarMode(mode)) {
+      return polarNEq(mode);
+    }
     return (mode == Elliptical || mode == GlobalTilt) ? 2 : ((mode == RadialHarmonic || mode == TangentialHarmonic) ? 2 * GlobalHarmonicLMax : 1);
   }
   /// flat index of the first equation of a mode, and the total number of equations of all the modes.
@@ -137,7 +182,8 @@ class Volume
   /// Total number of mode equations. Spelled out rather than computed with globalEqFirst() because a
   /// constexpr member function may not be called in a constant expression inside its own class body
   /// (rootcling rejects it); the static_assert right after the class checks the two agree.
-  static constexpr int NGlobalEq = 5 /* the one-equation modes */ + 2 /* Elliptical */ + 2 /* GlobalTilt */ + 2 * (2 * GlobalHarmonicLMax);
+  static constexpr int NGlobalEq = 5 /* the one-equation modes */ + 2 /* Elliptical */ + 2 /* GlobalTilt */ + 2 * (2 * GlobalHarmonicLMax) +
+                                   3 * 2 * (GlobalPolarKMax + 1) - 4 /* polar families minus their duplicates */;
   static constexpr int globalEqIndex(int mode, int phase) { return globalEqFirst(mode) + phase; }
   static int globalEqMode(int eq);
   static int globalEqPhase(int eq);
@@ -156,6 +202,34 @@ class Volume
   /// volume flagged by a "globalModes" rule. A mode equation is global, so this is written once for the
   /// whole tree, not per volume: call it on the root (writeRigidBodyConstraints already does).
   void writeGlobalModeConstraints(std::ostream& os) const;
+  ///@}
+
+  /// \name Ray-mode constraints
+  /// A track from the vertex crosses every layer at the same azimuth phi and t = z/r (its tgLambda),
+  /// so a sensor displacement r*F(phi, t)*e, e = phiHat, zHat or rHat, is absorbed by the track's phi,
+  /// tgLambda or (B != 0) curvature for *any* function F: a function space of null directions, not a
+  /// short list of global modes. It becomes accessible as soon as free DOFs are distributed in z
+  /// (modules, chips). The "rayModes" clause bins the sensors of the flagged branch in (phi, t) cells
+  /// and writes, per cell and component, sum_s (e . d_s) / r_s = 0 over the sensors s of the cell,
+  /// d_s being the linearised displacement of the sensor centre by every free rigid-body DOF on its
+  /// path to the root. This removes the common-ray motion of each cell and nothing finer than the cell.
+  ///@{
+  struct RayModesConfig {
+    int nPhi{24};                     ///< azimuthal cells over [phi0, phi0 + 2pi)
+    double phi0{0.};                  ///< lower edge of the first azimuthal cell
+    int nT{16};                       ///< polar cells over [-tMax, tMax], sensors beyond go to the edge cells
+    double tMax{4.};
+    double rSpanMin{1.};              ///< cm: a cell whose sensors span a smaller radial range (one layer) is skipped
+    std::vector<double> rEdges{};     ///< cm: optional radial boundaries, each radial range gets its own cells
+    double rMin{0.};                  ///< cm: sensors at smaller radius are not binned (see writeRayModeConstraints)
+    double rMax{std::numeric_limits<double>::max()}; ///< cm: nor those at larger radius
+    std::array<bool, 3> comps{true, true, true}; ///< components r*dphi, dz, dr
+  };
+  static constexpr int NRayComps = 3;
+  static const char* rayCompName(int comp);
+  /// one Constraint per (radial range, phi cell, t cell, component) for every branch flagged by a
+  /// "rayModes" rule; written once for the whole tree from the root (writeRigidBodyConstraints does)
+  void writeRayModeConstraints(std::ostream& os) const;
   ///@}
 
   // tree-like
@@ -330,6 +404,15 @@ class Volume
   /// whole subtree, as (label, coefficient) pairs still carrying their physical lever arms, counting
   /// in nFlagged the volumes which were flagged for the mode and do have a free rigid-body DOF
   void collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged) const;
+  /// smallest Millepede label of a free rigid-body DOF in this subtree, UINT32_MAX if there is none
+  uint32_t minFreeRigidBodyLabel() const;
+  /// workaround for the constraint grouping of pede, see writeGlobalModeConstraints
+  static void addPedeGroupingAnchor(Constraint& con, uint32_t anchorLabel);
+  /// apply the "rayModes" clause of a rule: true (defaults), false, or an object overriding the
+  /// fields of RayModesConfig ("nPhi", "phi0", "nT", "tMax", "rSpanMin", "rEdges", "components")
+  void applyRayModesConfig(const nlohmann::json& cfg, const std::string& pattern);
+  /// the sensors (leaves which are neither virtual nor pseudo) of this subtree
+  void collectSensors(std::vector<const Volume*>& out) const;
   /// one Millepede "Measurement" per free rigid-body DOF of this volume having one configured
   void writeRigidBodyDOFMeasurements(std::ostream& os) const;
   /// one Millepede "Measurement" per free calibration DOF having one configured, for every declared
@@ -378,6 +461,9 @@ class Volume
   /// per global deformation-mode equation (flat index, see NGlobalEq): this volume's free rigid-body
   /// DOFs take part in it. Set by the "globalModes" clause; see writeGlobalModeConstraints.
   std::array<bool, NGlobalEq> mGlobalModes{};
+  /// set by the "rayModes" clause: the sensors of this branch enter the ray-mode constraints with this
+  /// binning (a flagged ancestor takes precedence); see writeRayModeConstraints
+  std::shared_ptr<const RayModesConfig> mRayModes{}; //!
   std::vector<Label> mCalibLabels{};            // calibration label per time slot, filled with the slot 0 in the ctor
   size_t mActiveCalibSlot{0};                   // index in mCalibLabels of the slot being processed
   const TimeSlotsSet* mCalibSlots{nullptr};     //! calibration slots, if declared; not owned

@@ -206,6 +206,9 @@ vanish:
 | `radialHarmonic` | Δr = ε·r·cos(ℓφ) and ε·r·sin(ℓφ), ℓ = 1…`GlobalHarmonicLMax` (4) | **8** |
 | `tangentialHarmonic` | rΔφ = ε·r·cos(ℓφ) and ε·r·sin(ℓφ), same ℓ range | **8** |
 | `globalTilt`    | rigid rotation of the branch about the global X and about the global Y axis | **2** |
+| `radialPolar`   | Δr = ε·r^p·t^k, t = z/r, (p,k) ∈ {(0,0),(0,1),(0,2),(1,1),(1,2)} | **5** |
+| `tangentialPolar` | rΔφ = ε·r^p·t^k, same (p,k) | **5** |
+| `longitudinalPolar` | Δz = ε·r^p·t^k, (p,k) ∈ {(0,1),(0,2),(1,0),(1,2)} | **4** |
 
 The two harmonic families are the generic form of the azimuthal modes, with the amplitude explicitly
 proportional to r because that is the measured shape: the fitted ε = amplitude/r of the surviving ITS
@@ -216,9 +219,27 @@ does not cover. `globalTilt` supplies the two transverse partners of `curl`; it 
 explicit constraint because a tilt shows up as a child TZ pattern ∝ −r·cos φ whose mean vanishes both
 over a half-shell and over the full circle, so no `pinChildrenMean*` of the TZ DOF can see it.
 
+The three polar families are the modes that depend on the polar angle rather than on φ. A track from
+the vertex is at z ≈ r·t at radius r, t = tgλ, so a field r·f(t) is absorbed by its φ (rφ component),
+its tgλ (z component) or, with B ≠ 0, its curvature (radial component): these p = 1 members are null
+directions whatever the vertex does. A field f(t) (p = 0) shifts the track's d0 or z0 instead, which
+only the vertex constraint can see. The members which are already modes of their own are left out:
+radial (1,0) is `radialScaling`, tangential (1,0) is `curl`, longitudinal (1,1) = z is `zScaling`, and
+longitudinal (0,0) is a rigid z shift. Longitudinal (1,0), Δz = ε·r, is the telescope mode, and radial
+(0,1), Δr = ε·z/r, is the cone that showed up as the IB chip-TY dipole. Like `zScaling` these families
+have no handle on stave-level DOFs (all at z ≈ 0): they matter as soon as DOFs distributed in z
+(modules, chips) are free, which is exactly when they must be requested. Note that `bowing`
+(Δr = ε·z², one ε for all layers) is *not* a null direction; its null counterpart is
+`radialPolar_r0t2`, Δr = ε·z²/r². The equations are named `<family>_r<p>t<k>`, e.g.
+`radialPolar_r0t1`. They are only the axisymmetric, low-order members of a family that is
+really a function of (φ, t): with free DOFs at module/chip granularity a fit can still take large
+amplitudes in, e.g., Δz = r·g(φ, t) with g not covered here (measured in `ITS_RB_v3`, see
+AlignmentWeakModes_handover.md section 6). The `rayModes` clause below covers the whole family.
+
 The clause takes a boolean (all equations), the string `"all"`, or an array of names, each of which may
 be a mode name (all its equations), a single order of a harmonic family (`radialHarmonic3`), or a
-single equation (`elliptical_cos2phi`, `tangentialHarmonic2_sin2phi`, `globalTilt_y`). Like
+single equation (`elliptical_cos2phi`, `tangentialHarmonic2_sin2phi`, `globalTilt_y`,
+`radialPolar_r0t1`). Like
 `rigidBody`/`calib`/`pinChildrenMean` a later matching rule replaces the flags of an earlier one.
 It creates no DOF set and frees nothing: it only adds terms for DOFs that are already free, so it
 must follow the rule that frees them. Flagging several nested levels at once is legitimate and is not
@@ -246,6 +267,59 @@ staves, while `globalTilt` flagged at the stave level covers all 192.
 Adding a mode to `Volume::GlobalMode` propagates automatically to the `WeakModesDiag` output and to
 `macro/drawWeakModes.C`, which resolve the mode columns by name; a `static_assert` after the class
 guards `Volume::NGlobalEq` against going out of step.
+
+## Constraining Ray Modes
+
+A track from the vertex crosses every layer at the same azimuth φ and the same t = z/r (its tgλ). A
+sensor displacement r·F(φ, t)·**e**, with **e** = φ̂, ẑ or r̂, is therefore absorbed by the track's φ,
+tgλ or (B ≠ 0) curvature *for any function F*: a function space of null directions, not a short list
+of global modes. Rigid-body DOFs at stave level, all centred at z ≈ 0, cannot realise it, but free DOFs
+distributed in z (modules, chips) can.
+
+The `rayModes` clause flags a branch, typically the detector envelope. The sensors under it are
+binned in (φ, t) cells, and per cell and component one equation is written:
+
+  Σ over the sensors s of the cell of (**e**·**d**ₛ)/rₛ = 0
+
+Here **d**ₛ is the linearised displacement of the sensor centre by every free rigid-body DOF on its
+path to the root. The equation states that the mean angular displacement of the cell, seen from the
+vertex, vanishes. A common-ray motion of the cell is removed. So is one other direction per cell,
+the mean angular motion of its sensors, which for a single layer would be a measurable motion; hence
+cells whose sensors span less than `rSpanMin` in radius are skipped. The per-DOF displacement is
+built by finite differences from the same `AlignParam` matrix the corrections are applied with, so
+it follows the fit's rotation convention by construction.
+
+```json
+{ "match": "ITS", "rigidBody": "fixed",
+  "rayModes": { "nPhi": 24, "nT": 16, "tMax": 4.0, "components": ["rdphi", "dz", "dr"] } }
+```
+
+| key | default | meaning |
+|---|---|---|
+| `nPhi`, `phi0` | 24, 0 | azimuthal cells over [φ0, φ0 + 2π) |
+| `nT`, `tMax` | 16, 4.0 | cells in t = z/r over [−tMax, tMax]; sensors beyond go to the edge cells |
+| `rSpanMin` | 1.0 cm | minimal radial span of a cell's sensors |
+| `rEdges` | [] | optional radial boundaries; each range gets its own cells (this forbids, e.g., a relative IB/OB ray motion, which tracks do measure) |
+| `rMin`, `rMax` | 0, ∞ cm | only sensors within this radial range are binned |
+
+The cells use the nominal t = z/r, i.e. a vertex at z = 0. A track from z_v crosses the layer at
+radius r at t + z_v/r. With σ(z_v) ≈ 5 cm this shifts t by about ±2 at the ITS IB but only by
+±0.13-0.25 in the OB. So at the IB a cell is not a set of rays, and its equation is not a pure
+null direction. Use `rMin` (e.g. 10 cm for the ITS) to bin only the OB; see
+AlignmentWeakModes_handover.md section 6 for the measured effect.
+| `components` | all | any of `rdphi`, `dz`, `dr` |
+
+`true` takes the defaults and `false` removes the flag. A flagged ancestor takes precedence over a
+flagged descendant.
+
+**Do not combine with the global modes that lie in the ray span.** That excludes `radialScaling`,
+`curl`, `zScaling`, `globalTilt`, the two harmonic families, and the p = 1 members of the polar
+families: each is, up to the discretisation, a weighted sum of the cell equations, so requesting it
+as well makes the constraint set nearly degenerate. Still meaningful alongside `rayModes` are `twist`
+(∝ r², not a ray field), `elliptical`, and the p = 0 polar members (∝ F(t), broken only by the vertex).
+
+Like the global modes, every equation carries the pede grouping anchor (see
+`Volume::addPedeGroupingAnchor`).
 
 ## Measurements of Rigid-Body and Calibration DOFs
 

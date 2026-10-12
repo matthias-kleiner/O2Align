@@ -61,17 +61,18 @@ std::string radialOf(const char* n) { return radialOf(colOf(n)); }
 std::string phiOf(const char* n) { return phiOf(colOf(n)); }
 std::string zOf(const char* n) { return zOf(colOf(n)); }
 
-// sum of one component over every equation of a harmonic family present in the file
-std::string familySum(const char* family, bool radial)
+// sum of one component (0: radial, 1: r*dphi, 2: z) over every equation of a family present in the file
+std::string familySum(const char* family, int comp)
 {
   std::string s = "0";
   for (const auto& [name, col] : gCol) {
     if (name.rfind(family, 0) == 0) {
-      s += "+" + (radial ? radialOf(col) : phiOf(col));
+      s += "+" + (comp == 0 ? radialOf(col) : (comp == 1 ? phiOf(col) : zOf(col)));
     }
   }
   return "(" + s + ")";
 }
+std::string familySum(const char* family, bool radial) { return familySum(family, radial ? 0 : 1); }
 
 std::unique_ptr<TGraph> graphOf(TTree* t, const std::string& yx, const std::string& cut, int color, int marker, double size)
 {
@@ -191,6 +192,26 @@ void harmonicPage(TTree* sens, int ib, const std::string& name, const std::strin
   c->Print(pdf.c_str());
 }
 
+// The polar families, fields r^p*(z/r)^k: plotted vs t = z/r, the variable they depend on, one panel per
+// displacement component with the whole family summed
+void polarPage(TTree* sens, int ib, const std::string& name, const std::string& pdf)
+{
+  if (colOf("radialPolar_r0t1") < 0) { // written before the polar families existed
+    return;
+  }
+  const std::string cut = Form("branch==%d", ib);
+  const std::string rigR = "(dRigid[0]*x+dRigid[1]*y)/r", rigP = "(-dRigid[0]*y+dRigid[1]*x)/r";
+  auto* c = new TCanvas(Form("cpol%d", ib), "polar", 1500, 900);
+  c->Divide(3, 1);
+  c->cd(1);
+  panel(sens, cut, Form("%s: radialPolar (#Deltar vs z/r)", name.c_str()), "z/r", "z/r", "dr", rigR + "+" + familySum("radialPolar", 0));
+  c->cd(2);
+  panel(sens, cut, "tangentialPolar (r#Delta#phi vs z/r)", "z/r", "z/r", "rdphi", rigP + "+" + familySum("tangentialPolar", 1));
+  c->cd(3);
+  panel(sens, cut, "longitudinalPolar (#Deltaz vs z/r)", "z/r", "z/r", "dz", "dRigid[2]+" + familySum("longitudinalPolar", 2));
+  c->Print(pdf.c_str());
+}
+
 // #Deltar map in (z, #phi): any structure the modes do not describe shows up here
 void mapPage(TTree* sens, int ib, const std::string& name, const std::string& pdf)
 {
@@ -248,6 +269,7 @@ void drawWeakModes(const char* inFile = "weakModes.root", const char* outPdf = "
     summaryPage(modes, ib, name, pdf);
     profilePage(sens, ib, name, pdf);
     harmonicPage(sens, ib, name, pdf);
+    polarPage(sens, ib, name, pdf);
     mapPage(sens, ib, name, pdf);
   }
   if (!first) {

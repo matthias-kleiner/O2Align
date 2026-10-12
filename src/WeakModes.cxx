@@ -182,6 +182,18 @@ std::array<double, NCols> modeScales(const std::vector<SensorDisp>& sensors)
       case Volume::GlobalTilt: // a rigid rotation: the displacement is the angle times the lever arm
         sc[c] = std::max(rMax, zMax);
         break;
+      case Volume::RadialPolar:
+      case Volume::TangentialPolar:
+      case Volume::LongitudinalPolar: // r^p*(z/r)^k: no closed form, take the largest |u| over the branch
+        sc[c] = 0.;
+        for (const auto& s : sensors) {
+          double u[3], om[3];
+          if (Volume::globalModeField(Volume::globalEqMode(c), Volume::globalEqPhase(c), s.x.data(), u, om)) {
+            sc[c] = std::max(sc[c], std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]));
+          }
+        }
+        sc[c] = sc[c] > 0. ? sc[c] : 1.;
+        break;
       default: // Elliptical: the field is already a length
         sc[c] = 1.;
     }
@@ -226,7 +238,10 @@ ModeFit fitModes(const std::vector<SensorDisp>& sensors)
     colNorm(j) = A.col(j).norm() > 0. ? A.col(j).norm() : 1.;
     A.col(j) /= colNorm(j);
   }
-  Eigen::BDCSVD<MatrixXd> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
+  // JacobiSVD, not BDCSVD: the design matrix is exactly rank deficient by construction (curl and
+  // globalTilt duplicate the rigid rotation columns), and BDCSVD (Eigen 3.4) returned NaN singular
+  // values on it, which left rank 0 and the whole fit void. ~45 columns, so the cost is irrelevant.
+  Eigen::JacobiSVD<MatrixXd> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
   const auto& sv = svd.singularValues();
   const double tol = 1e-8 * sv(0);
   Eigen::MatrixXd cov = Eigen::MatrixXd::Zero(NPar, NPar); // of the normalised parameters, unit sigma

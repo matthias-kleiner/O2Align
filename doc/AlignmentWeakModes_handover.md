@@ -618,6 +618,214 @@ the index-based ones.
 - The **IB chip 1st moment** is now moot in `v2` (chips fixed), but if chip DOFs are ever freed again
   the dipole needs its own constraint, not just the mean.
 
+## 6. `solA1Iv2GC`: what checkResid still shows, and `ITS_RB_v3.json`
+
+### The v2 residuals are better than V10n; the remaining structure is below the stave
+
+- **Binning:** the apparent growth of the OB dy-vs-φ scatter in the first v2 PDF was a binning
+  mismatch: the V10n hman files had 30 φ bins, the MP2 ones 100. With equal binning (RMS over φ bins
+  of the truncated means, pp B0):
+  - dy, Lr3-6: 11.8/11.1/28.1/7.8 → 8.5/8.5/19.7/6.5 µm;
+  - dz, Lr3-6: 11.7/9.7/23.7/13.9 → 3.8/2.9/8.9/2.8 µm.
+  OO B+ behaves the same. v2 ≈ v1GC, as expected: the modes it constrains are invisible to the
+  leave-one-out residual.
+- **Per sensor, from the trees:**
+  - Per OB half-stave the v2 correction is anticorrelated with the V10n residual (−0.64…−0.88), and
+    the half-stave mean RMS drops to 4-8 µm (dy) and 2-4 µm (dz).
+  - Inside a half-stave the per-chip dy RMS is still 12-24 µm, dominated by an offset between the
+    two chip rows of a module (rows 7-13 vs 0-6: mean −10…−22 µm, RMS 10-29 µm). It is reproduced
+    in pp B0 and OO B+ (per-chip correlation 0.73-0.84), so it is real, and no v2 DOF can touch it.
+- **Large-scale Z/tgλ structures (p.3/4/7/8):** these are identical for V10n and v2 and in both
+  datasets.
+  - In the IB, a per-sensor fit of dy, dz on {1, z_loc, tgλ, z_loc·tgλ} shows:
+    - an in-plane chip rotation coherent over all staves and growing with z (Lr0: −3.5 … +2.5 µm/cm,
+      chips 0 → 8), which is the 3 cm sawtooth in dy vs Z;
+    - end-chip offsets of a few µm.
+  - In the OB the structures sit at the module scale, on the outer modules.
+
+  All need DOFs distributed in z.
+- **Lr5 dz:** it is anomalously broad (RMS 350 µm against 220-245 µm in the other OB layers);
+  still to be understood.
+
+### The modes that DOFs distributed in z open: the polar families
+
+For a track from the vertex, z ≈ r·t (t = tgλ), so fields r·f(t) (rφ, z, radial) are absorbed by
+the track φ, tgλ and curvature, and fields f(t) by d0/z0 (broken only by the vertex). The existing
+modes only cover the t-independent members, which sufficed while every free DOF sat at z ≈ 0.
+`radialPolar`, `tangentialPolar` and `longitudinalPolar` (`Volume::GlobalMode`, 14 equations, see
+[DOFConfig_rules.md](DOFConfig_rules.md#constraining-global-deformation-modes)) add the members
+with p ∈ {0,1}, k ≤ 2. The IB chip-TY dipole of section 5 (span 76/48/26 µm for Lr0/1/2, i.e.
+∝ 1/r) is `radialPolar_r0t1`, Δr ∝ z/r. `bowing` (Δr = ε·z²) is not a null direction; its null
+counterpart is `radialPolar_r0t2`.
+
+### `doc/ITS_RB_v3.json`
+
+v2 plus DOFs distributed in z, with one representation per deformation:
+
+- **IB chips:** `TX, TZ, RY` (in-plane shift and rotation, measured directly), plus `TY` with a
+  5 µm prior. Normal positions are measured only at large |z|, through dz = Δn·tgλ.
+- **OB modules:** the same, with a 30 µm prior on `TY`.
+- **Tilt `RX` dropped** at the IB stave, the OB stave and the OB half-stave, and from the OB
+  half-barrel pin: a tilt is now a `TY` ramp of the children, and keeping both is the ITSBarFix
+  degeneracy.
+- **`globalModes`** over all of `ITS/.+`: the v2 set plus `zScaling` and the three polar families.
+
+MilleSteer on the all-free data:
+- NVGB = 10458;
+- 2010 constraints (1974 hierarchical + 36 global modes), numerically full rank, smallest
+  normalised singular value 0.024;
+- 2160 priors.
+
+OB chip `TX` (the chip-row offsets) is the next step; it is left out here to keep the matrix at a
+size `inversion` handles.
+
+### pede crash with long constraints (Millepede-II 4fd638f67f)
+
+pede aborted on the first v3 steering set with `free(): invalid next size` in LOOP1. A
+bounds-checked build of the same commit locates it in `grpcon` (`pede.f90:1902`, `globalParCons(0)`).
+
+**Why:** constraints are grouped in the order of their lowest parameter index. A constraint not yet
+grouped joins the first group found through a shared parameter, and relabels only its *direct*
+neighbours. When a constraint joins several groups formed before it, an earlier group can end up
+empty, and the redundancy check then indexes (and in the optimised build writes) out of bounds.
+
+**Seen in both runs:** a replica of the algorithm (pede's group count reproduced exactly) gives
+- v2: 436 groups, one of them empty (it survived by luck);
+- v3: 3 groups, two empty.
+
+**Workaround:** `Volume::writeGlobalModeConstraints` gives every mode equation the lowest label of
+any free rigid-body DOF of the tree, as an anchor term with coefficient 1e-12. The coefficient cannot
+be 0: pede's text reader (`addItem`) silently skips zero factors. pede then processes the mode
+equations first and nothing is merged afterwards (v3: 1 group, none empty). Against a largest
+coefficient of 1, the anchor term is negligible for the equation and its rank.
+
+### The v3 fit (`/data0/devAlg/tests/solA1Iv3`): the polar families are not enough
+
+**Fit statistics:**
+- NVGB = 10454, NFGB = 8444; constraint rank 2010/2010.
+- Objective at iteration 3 (same cuts in both runs): 3.328·10⁷ against 3.424·10⁷ for v2 (−2.8 %).
+- Final χ²/ndf: 1.025 against 1.12.
+
+**The corrections are much larger than v2's.** Sensor displacement RMS per layer:
+
+| | v2 | v3 |
+|---|---|---|
+| rφ, IB | 6-7 µm | 12-14 µm |
+| rφ, OB | 20-45 µm | 33-85 µm |
+| z, OB | 7-14 µm | 30-66 µm |
+
+Lr5 module `TX` goes up to 864 µm. Per-chip residuals in checkResid are 2-4 µm (IB), so most of
+this is in directions the tracks do not see.
+
+**It is a ray mode.** Sensors are binned in (φ, t = z/r) cells, and the displacement divided by r is
+compared between layers:
+- **dz/r:** 87 % of the per-cell variance is common to all seven layers (Lr0-Lr6 correlation 0.85;
+  70 % already in v2, at about a third of the amplitude). That is Δz = r·g(φ, t), a per-direction
+  change of tgλ, invisible to any track from the vertex.
+- **rφ/r:** common within the IB (correlation 0.99) and within the OB (0.97).
+
+The polar families constrain only the axisymmetric low orders of g (t^k, k ≤ 2), and `globalTilt`
+only cos φ, sin φ at t⁰. With DOFs distributed in z, the null space is effectively a function of
+(φ, t) per displacement component, not a short list of global modes.
+
+**Options, not yet tried:**
+- **Ray constraints:** Σ_layers w·Δz/r = 0 and Σ_layers w·Δ(rφ)/r = 0 per (φ, t) cell, i.e. the
+  general form of the polar/harmonic expansion.
+- **Priors:** `measurement` priors on module/chip `TX`, `TZ` at the mechanical placement tolerance.
+- **Data that breaks the ray degeneracy:** cosmics, tracks not from the vertex. The vertex z spread
+  already breaks it partly at the IB, much less at the OB.
+
+checkResid cannot arbitrate between these: by construction it is blind to the ray mode.
+
+### `ITS_RB_v4.json`: ray constraints + priors (`/data0/devAlg/tests/solA1Iv4`)
+
+What changed against v3:
+- **`rayModes` on `ITS`:** 24 φ × 16 t cells over |t| ≤ 4, all three components. That gives 720
+  equations; 120 cells hold a single layer only and are skipped. See
+  [DOFConfig_rules.md](DOFConfig_rules.md#constraining-ray-modes).
+- **Global modes reduced** to the ones outside the ray span: `twist` and the p = 0 polar members.
+- **Priors on the in-plane DOFs:** IB chips TX, TZ 10 µm (TY 5 µm), OB modules TX, TY, TZ 30 µm.
+  These are assumed tolerances, to be replaced by survey numbers if available.
+- **IB stave `RY` dropped.** With it free, the fit realised a common in-plane rotation of a stave's
+  chips about fixed centres as stave RY plus a compensating chip-TX ramp: the mean constraint forbids
+  the same thing through chip RY. The result was a chip-TX RMS of 32 µm in violation of its 10 µm
+  prior (chip TX vs RY·z correlation 0.88). Without stave RY the chip-TX RMS is 15 µm and chip RY
+  carries the rotation; the χ² is slightly lower with 48 fewer parameters. The OB shows no such
+  cancellation (module TX vs RY·z correlation −0.23).
+
+Constraint set: 2655 constraints, rank 2655, one pede group; NFGB = 7751.
+
+| | v2 | v3 | v4 |
+|---|---|---|---|
+| objective at iteration 3 (same cuts) | 3.424·10⁷ | 3.328·10⁷ | 3.348·10⁷ |
+| final χ²/ndf | 1.12 | 1.025 | 1.030 |
+| sensor displacement RMS, all ITS | 59 µm | 104 µm | 42 µm |
+| rφ RMS, IB / OB | 6-7 / 20-45 µm | 12-14 / 33-85 µm | 7-8 / 13-20 µm |
+| dz RMS, IB / OB | 1 / 7-14 µm | 7-9 / 30-66 µm | 7-10 / 17-24 µm |
+| ray-common dz/r: fraction, RMS | 0.70, 0.34·10⁻⁴ | 0.87, 1.01·10⁻⁴ | < 0, 0.19·10⁻⁴ |
+| OB module TX RMS (max) | fixed | 73 (864) µm | 22 (91) µm |
+
+The ray constraints and priors cost 0.6 % of the χ² that v3 gained over v2, against a factor 2.5
+smaller displacements: what they removed was nearly invisible to the tracks.
+
+**What is left:**
+- An anti-correlated Lr3 vs Lr6 pattern in rφ/r and dr (correlation −0.97, −0.80) at a small
+  amplitude (common part 0.7·10⁻⁴ and 2 µm). It has zero mean per cell, so it passes the ray
+  constraint: a sagitta-like (∝ r²) pattern per direction, absorbed by the curvature when B ≠ 0.
+  Like the twist, the B = 0 data should break it; worth watching.
+- The v4 geometry has not yet been run through checkResid.
+
+### checkResid on v4: the IB gets worse, from IB chip DOFs the residuals reject
+
+The OB improves, but several IB and vertex panels get worse than v2, the same in pp B0 and OO B+.
+RMS over bins of the truncated means, pp, in µm:
+
+| | v2 | v4 |
+|---|---|---|
+| Lr0 dy vs Z | 1.7 | 4.6 |
+| Lr2 dy vs Z | 1.2 | 2.8 |
+| Vtx dz vs φ | 1.8 | 5.4 |
+| Vtx dz vs tgλ | 3.0 | 7.8 |
+| IB dz vs φ, Lr0/1/2 | 1.4/0.8/1.2 | 2.1/1.4/2.0 |
+| Lr6 dz vs Z | 8.7 | 15.8 |
+
+What is established:
+- **The Lr0 dy-vs-Z sawtooth is the new IB chip `RY`** (in-plane rotation). The fit put a common
+  rotation per layer on the chips: +4.97, +1.15, −2.26·10⁻⁴ rad at Lr0/1/2, with errors of about
+  0.4·10⁻⁴. The V10n in-chip dy slope that checkResid measures for those layers is +0.09, +0.02,
+  −0.53 µm/cm, i.e. the reconstruction sees no such rotation. The chip-to-chip part of RY does
+  anticorrelate with the V10n slopes (−0.46/−0.48 at Lr1/2).
+- **The geometry is built as fitted.** `algdump.root` (pos0 = ideal) shows v4 − v2 in-plane chip
+  rotations of +4.94/+1.13/−2.20·10⁻⁴ rad. Chip centres hardly move with z (≤ 0.18 µm/cm against
+  5 µm/cm), so nothing compensates the rotation.
+- **Not a convention error.** `AlignParam` rotations are right-handed and active, as in
+  `RigidBodyDOFSet::fillDerivatives`; `computeJacobianL2T` moves the pivot correctly.
+- **Not the IB part of the ray cells.** That part is not a null direction (σ(z_v) = 4.9/5.4 cm in
+  pp/OO). But v5 (`ITS_RB_v5.json` = v4 with `rMin` 10 cm) gives the same χ² (3.3479 against
+  3.3478·10⁷ at iteration 3) and the same IB chip parameters (Lr0 RY mean +4.85, changes ≤ 4 µm).
+
+**Open:** the GBL fit on the Mille data and the KF of checkResid disagree at IB chip level. The fit
+sees an in-chip slope in V10n that the reconstruction does not; the same chip-level DOFs also
+failed in v1 (IB chip TX/TZ). Candidates:
+- the workflow's IB measurement frame: `SensorITS::defineMatrixL2G` (chip node + epitaxial shift)
+  and `getFlatChipAlpha` against the reconstruction's sensor matrix and tracking frame, together
+  with how the cluster coordinates are carried into it;
+- a difference between the Mille runs and the checkResid runs.
+
+The discriminating test is a per-point residual dump of the alignment workflow on V10n (the debug
+stream currently writes only `MisRes`), compared chip by chip with checkResid's in-chip dy-vs-z
+slopes.
+
+### `WeakModesDiag` fit B was void (also in v2)
+
+`fitModes` used `Eigen::BDCSVD` on a design matrix that is exactly rank deficient by construction
+(`curl` and `globalTilt` duplicate the rigid rotation columns). It returned NaN singular values:
+- v2: rank 12, `conditioning` null, and the RMS unchanged after the rigid part;
+- v3: rank 0.
+
+With `JacobiSVD` the v3 fit gives rank 42/45, the three missing being exactly those duplicates.
+Metric B values in earlier `weakModes.json` files should be disregarded; metric A was unaffected.
+
 ## Caveat / next step
 
 The half-stave and chip DOF sets determine which derivative columns exist in the Mille
