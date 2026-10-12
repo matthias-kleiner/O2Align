@@ -405,14 +405,10 @@ The outer-barrel hierarchy adds half-staves and modules between staves and chips
 | --- | --- |
 | ITS envelope | `ITS` |
 | Half-barrel | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]` |
-| Stave, one-digit ID | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]` |
-| Stave, two-digit ID | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9][0-9]` |
-| Half-stave, under one-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]/ITSUHalfStave[0-9]` |
-| Half-stave, under two-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9][0-9]/ITSUHalfStave[0-9]` |
-| Module, under one-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]/ITSUHalfStave[0-9]/ITSUModule[0-9]` |
-| Module, under two-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9][0-9]/ITSUHalfStave[0-9]/ITSUModule[0-9]` |
-| Chip, under one-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]/ITSUHalfStave[0-9]/ITSUModule[0-9]/ITSUChip[0-9]` |
-| Chip, under two-digit stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9][0-9]/ITSUHalfStave[0-9]/ITSUModule[0-9]/ITSUChip[0-9]` |
+| Stave, one or two digit ID | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]+` |
+| Half-stave | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]+/ITSUHalfStave[0-9]` |
+| Module | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]+/ITSUHalfStave[0-9]/ITSUModule[0-9]` |
+| Chip | `ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-9]/ITSUStave[0-9]+]/ITSUHalfStave[0-9]/ITSUModule[0-9]/ITSUChip[0-9]+` |
 
 For example, replace a `match` value with one of the strings above in a rule such as `{ "match": "...", "rigidBody": ["TX", "TY", "TZ"] }`. ITS3 uses different names, such as `ITS3CarbonForm`, and is not selected by these patterns.
 
@@ -423,8 +419,8 @@ TRD has a dummy `TRD_envelope` (not a geometry alignable), followed by alignable
 | Level | `match` string |
 | --- | --- |
 | O2Align envelope (not in geometry log) | `TRD_envelope` |
-| Supermodule | `TRD/sm[0-9][0-9]` |
-| Chamber | `TRD/sm[0-9][0-9]/st[0-9]/pl[0-9]` |
+| Supermodule | `TRD/sm[0-9]+` |
+| Chamber | `TRD/sm[0-9]+/st[0-9]/pl[0-9]` |
 
 ## TOF Alignable Match Strings
 
@@ -433,7 +429,7 @@ TOF has a dummy `TOF_envelope` (not a geometry alignable), followed by alignable
 | Level | `match` string |
 | --- | --- |
 | O2Align envelope (not in geometry log) | `TOF_envelope` |
-| Supermodule | `TOF/sm[0-9][0-9]` |
-| Strip | `TOF/sm[0-9][0-9]/strip[0-9][0-9]` |
+| Supermodule | `TOF/sm[0-9]+` |
+| Strip | `TOF/sm[0-9]+/strip[0-9]+` |
 
 The envelopes are not rigid-body alignable; rigid-body clauses on them are ignored. Calibration clauses can be configured on these synthetic volumes.
