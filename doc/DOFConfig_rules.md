@@ -1,6 +1,6 @@
 # DOF Configuration Rules
 
-`Volume::applyDOFConfig` traverses the hierarchy and applies matching rules to non-pseudo volumes. A `defaults` object, if present, is applied first to every volume; rules then run in order, and a later matching clause replaces the earlier DOF set of the same kind. Patterns are matched against symbolic volume names, as full-match ECMAScript regular expressions (not globs: `.` is any character, `?` and `*` are quantifiers), also retried with an implicit leading `.*`. Since `.*` can match `/`, use exact-depth patterns when targeting a hierarchy level.
+`Volume::applyDOFConfig` traverses the hierarchy and applies matching rules to non-pseudo volumes. A `defaults` object, if present, is applied first to every volume; rules then run in order, and a later matching clause replaces the earlier DOF set of the same kind. Patterns are matched against symbolic volume names, as regular expressions, also retried with an implicit leading `.*`. Since `.*` can match `/`, use exact-depth patterns when targeting a hierarchy level.
 
 ## Rigid-Body DOFs
 
