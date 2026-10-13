@@ -24,10 +24,6 @@ void SensorITS::defineMatrixL2G()
   // RS: using mPN for ITS2 is not correct since this provides the chip matrix rather than the embedded sensor layer
   // Use the same method as in GeometryTGeo::fillCache
   mL2G = o2::its::GeometryTGeo::Instance()->extractMatrixSensor(getSensorId());
-  // the chip volume is not the measurment plane, need to correct for the epitaxial layer   
-  double delta = itsmft::SegmentationAlpide::SensorLayerThickness - itsmft::SegmentationAlpide::SensorLayerThicknessEff;
-  TGeoTranslation tra(0., 0.5 * delta, 0.);
-  mL2G *= tra;
 }
 
 namespace
