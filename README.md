@@ -1,8 +1,8 @@
-# Simulate ITS3 misalignment and re-alignment
+# Simulate ITS/ITS3 misalignment and re-alignment
 
 
 ```bash
-o2-its3-alignment-workflow --track-sources ITS --output MilleData,MilleSteer --configKeyValues "AlignmentParams.minPt=0.1;AlignmentParams.doMisalignmentLeg=true;AlignmentParams.doMisalignmentRB=true;AlignmentParams.misAlgJson=test_closure.json;AlignmentParams.extraClsErrZ[0]=10e-4;AlignmentParams.extraClsErrY[0]=10e-4;AlignmentParams.extraClsErrZ[3]=10e-4;AlignmentParams.extraClsErrY[3]=10e-4;AlignmentParams.dofConfigJson=dofSet.json" -b --run
+o2-dev-alignment-workflow --track-sources ITS --output MilleData,MilleSteer --configKeyValues "AlignmentParams.minPt=0.1;AlignmentParams.doMisalignmentLeg=true;AlignmentParams.doMisalignmentRB=true;AlignmentParams.misAlgJson=test_closure.json;AlignmentParams.extraClsErrZ[0]=10e-4;AlignmentParams.extraClsErrY[0]=10e-4;AlignmentParams.extraClsErrZ[3]=10e-4;AlignmentParams.extraClsErrY[3]=10e-4;AlignmentParams.dofConfigJson=dofSet.json" -b --run
 ```
 
 test_closure.json:
