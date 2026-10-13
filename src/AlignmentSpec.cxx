@@ -1744,7 +1744,7 @@ DataProcessorSpec getAlignmentSpec(GTrackID::mask_t srcTracks, GTrackID::mask_t 
                                                            false,                             // GRPLHCIF
                                                            true,                              // GRPMagField
                                                            false,                             // askMatLUT
-                                                           o2::base::GRPGeomRequest::Alignments, // geometry + alignments
+                                                           o2::base::GRPGeomRequest::AlignmentsAndAligned, // aligned geometry + alignments
                                                            dataRequest->inputs,
                                                            true,                              // askOnce
                                                            false,                             // propagatorD
