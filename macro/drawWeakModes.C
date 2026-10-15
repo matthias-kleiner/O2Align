@@ -4,8 +4,9 @@
 //
 //   root -l -b -q 'drawWeakModes.C("weakModes.root", "weakModes.pdf")'
 //
-// Black points: fitted displacement of the sensor centres, red: the part of it the fitted mode
-// (plus, for the radial/phi components, the global shift/rotation) explains. um everywhere.
+// Profile panels, um everywhere. Black: total fitted displacement of the sensor centres. Red: the global
+// shift/rotation plus the mode(s) named in the panel title, from the fit of the displacements by the modes.
+// Last page: mean displacement of the sensors in (z, phi) bins.
 #if !defined(__CLING__) || defined(__ROOTCLING__)
 #include <TCanvas.h>
 #include <TFile.h>
@@ -91,7 +92,8 @@ std::unique_ptr<TGraph> graphOf(TTree* t, const std::string& yx, const std::stri
   return g;
 }
 
-// data and model points of one panel: yData and yModel in um vs x
+// One panel, um vs x: black = total displacement of the sensor centres, red = rigid part + the mode(s) of
+// the panel (yModel)
 void panel(TTree* t, const std::string& cut, const char* title, const char* xTitle, const char* xExpr, const std::string& yData, const std::string& yModel)
 {
   auto* mg = new TMultiGraph();
@@ -268,19 +270,21 @@ void mapPage(TTree* sens, int ib, const std::string& name, const std::string& pd
   auto* c = new TCanvas(Form("cm%d", ib), "map", 1200, 800);
   c->Divide(2, 1);
   c->cd(1);
-  auto* p = new TProfile2D(Form("pm%d", ib), Form("%s: #Deltar [#mum];z [cm];#phi [rad]", name.c_str()), 40, -40, 40, 36, -3.1416, 3.1416);
+  auto* p = new TProfile2D(Form("pm%d", ib), Form("%s: #Deltar [#mum];z [cm];#phi [rad]", name.c_str()), 40, -80, 80, 36, -3.1416, 3.1416);
   gPad->SetRightMargin(ColzRightMargin);
-  sens->Draw(Form("phi:z:1e4*dr>>pm%d", ib), Form("branch==%d", ib), "colz");
+  sens->Draw(Form("1e4*dr:phi:z>>pm%d", ib), Form("branch==%d", ib), "colz");
   gPad->SetGrid(1);
   p->SetStats(0);
+  p->SetTitle(Form("%s: #Deltar [#mum];z [cm];#phi [rad]", name.c_str()));
   p->GetYaxis()->SetTitleSize(YAxisSize);
   p->GetYaxis()->SetLabelSize(YAxisSize);
   c->cd(2);
-  auto* q = new TProfile2D(Form("pq%d", ib), Form("%s: r#Delta#phi [#mum];z [cm];#phi [rad]", name.c_str()), 40, -40, 40, 36, -3.1416, 3.1416);
+  auto* q = new TProfile2D(Form("pq%d", ib), Form("%s: r#Delta#phi [#mum];z [cm];#phi [rad]", name.c_str()), 40, -80, 80, 36, -3.1416, 3.1416);
   gPad->SetRightMargin(ColzRightMargin);
-  sens->Draw(Form("phi:z:1e4*rdphi>>pq%d", ib), Form("branch==%d", ib), "colz");
+  sens->Draw(Form("1e4*rdphi:phi:z>>pq%d", ib), Form("branch==%d", ib), "colz");
   gPad->SetGrid(1);
   q->SetStats(0);
+  q->SetTitle(Form("%s: r#Delta#phi [#mum];z [cm];#phi [rad]", name.c_str()));
   q->GetYaxis()->SetTitleSize(YAxisSize);
   q->GetYaxis()->SetLabelSize(YAxisSize);
   c->Print(pdf.c_str());

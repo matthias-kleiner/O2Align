@@ -99,16 +99,71 @@ matrix before reading a single bar. Values are absolute: an injected misalignmen
   the rigid shift/rotation). Bars summing to ≈1 mean that the displacement is made of these modes.
   The modes are correlated, so the individual bars are not strictly additive.
 
-The following pages show the sensor displacements (black) with the fitted mode, including the rigid
-part, overlaid (red), versus the variable the mode depends on, then the harmonic and polar families,
-and a 2D (z, φ) map of Δr and rΔφ where any structure that the modes do not describe is visible.
+The following pages show, versus the variable the mode depends on, two sets of points per sensor
+centre, in µm:
 
-**Do these histograms show the final sensor corrections? No.** They show the *component of the
-corrections that lies in the weak-mode subspace*. The sensor displacement they are built from is the
-full fitted correction, but only its projection onto a few smooth global fields is shown; the rest (the
-local, sensor-to-sensor part) is in the residual of the fit, `rmsAfterModes_um`. The corrections applied
-to the geometry are in `result.json`, and the displacement of the sensors per se is in the `sensors`
-tree. What the numbers mean:
+- **black**: the **total** displacement of the sensor centre (the composed effect of all fitted
+  corrections, not only of the weak modes);
+- **red**: the model of **this panel's mode** only, see below.
+
+### How red is built
+
+The fitted corrections enter only once, to build the black points: they are composed down the hierarchy
+into one displacement vector **d**ᵢ = (dx, dy, dz) per sensor centre i, at position **x**ᵢ. Red is then
+computed from a separate least-squares fit of these vectors, which uses only the sensor positions and the
+black displacements:
+
+**d**ᵢ ≈ **t** + **ω** × **x**ᵢ + Σₘ aₘ · **u**ₘ(**x**ᵢ)
+
+with 3 + 3 + `NGlobalEq` (39) = 45 unknowns:
+
+- **t**: a rigid shift of the whole branch (3 numbers).
+- **ω**: a rigid rotation of the whole branch (3 numbers). The rotation moves a sensor at **x**ᵢ by
+  **ω** × **x**ᵢ.
+- aₘ: the amplitude of mode (equation) m, one free number per mode (39 numbers).
+- **u**ₘ(**x**): the fixed displacement field of the mode of unit amplitude, given by the formulas of the
+  table above and the same as in the constraint equations. For `radialScaling`, **u** = (x, y, 0); for
+  `curl`, **u** = (−y, x, 0); for `elliptical_cos2phi`, **u** = cos2φ · r̂.
+
+All the sensors of the branch and all three components enter one fit, solved by SVD with normalised
+columns. Its result is the 45 fitted numbers; the aₘ are the amplitudes of metric B on the summary page.
+
+**Red** of a panel is the fitted rigid part **t** + **ω** × **x**ᵢ plus the field of the mode (or family)
+named in the panel title times its fitted amplitude, aₘ · **u**ₘ(**x**ᵢ), projected on the component of the
+panel (Δr, rΔφ or Δz). The amplitudes of all the other modes are left out. For example, on the
+`radialScaling` panel red is Δr = (**t** + **ω** × **x**ᵢ)·r̂ + a · r: the small rigid offsets plus a
+straight line in r whose slope is the fitted ε.
+
+The pads of one page show different projections and different x variables of the same black cloud; only
+red changes from pad to pad.
+
+Red is one term of one simultaneous fit, not a comparison of that mode with the data, so it can be far
+from black even when the data are well described. The modes are correlated and share the amplitude
+between them. A typical case is `elliptical` (Δr = ε·cos2φ with an r-independent amplitude): if the true
+shape is `radialHarmonic2` (Δr ∝ r·cos2φ), that mode takes most of the amplitude and red shows only the
+small leftover of `elliptical`. Red also includes the rigid part, so it can follow black on a pad where the
+mode itself contributes little. To rank the modes use the summary page (amplitudes and explained
+fractions), not the closeness of red to black. The harmonic and polar families come next, and finally the
+(z, φ) maps described below.
+
+### The last page: (z, φ) maps
+
+Two colour maps per branch: the **mean Δr** (left) and the **mean rΔφ** (right) of the sensor centres,
+in µm (colour scale), in bins of z (x axis, cm) and φ (y axis, rad); white bins contain no sensors. Each
+bin averages the displacement of all the sensors in it, over all layers. They show the displacement as
+a function of position, with no mode model overlaid: a uniform colour is a rigid or axisymmetric
+displacement, stripes along φ at fixed z are z-dependent (scaling, twist, bowing, polar) patterns, and
+stripes along z at fixed φ are the azimuthal harmonics (ℓ = 1, 2, …, tilt). Any structure that is
+not smooth, e.g. a step at the boundary of the two half-barrels (φ ≈ 0, ±π) or patches limited in z,
+is local and is not described by any of the global modes. Since the bins mix layers of different r, the
+displacement of a mode ∝ r is averaged over them.
+
+**Do these histograms show the final sensor corrections?** The black points do: they are the final
+fitted corrections expressed as the displacement of each sensor centre (sensor rotations are not
+shown). The summary bars (metric B) and the red curves do not: they are only the projection of those
+displacements onto a few smooth global fields. The rest (the local, sensor-to-sensor part) is the
+residual of the fit, `rmsAfterModes_um`. The corrections themselves are in `result.json`, the
+displacements in the `sensors` tree. What the numbers mean:
 
 - A large amplitude with a small χ² cost is the signature of a *weak-mode artefact*, not of a real
   misalignment: the data cannot distinguish it, so its value carries no information on the geometry
