@@ -128,9 +128,15 @@ with 3 + 3 + `NGlobalEq` (39) = 45 unknowns:
 All the sensors of the branch and all three components enter one fit, solved by SVD with normalised
 columns. Its result is the 45 fitted numbers; the aₘ are the amplitudes of metric B on the summary page.
 
-**Red** of a panel is the fitted rigid part **t** + **ω** × **x**ᵢ plus the field of the mode (or family)
-named in the panel title times its fitted amplitude, aₘ · **u**ₘ(**x**ᵢ), projected on the component of the
-panel (Δr, rΔφ or Δz). The amplitudes of all the other modes are left out. For example, on the
+The sum runs over all the modes because they are fitted together; fitting each mode alone would give
+different amplitudes, since the modes are correlated. Once the fit is done, **red** of a panel keeps only
+the mode m named in the panel title (for a family, the sum over its members):
+
+**red**ᵢ = **t** + **ω** × **x**ᵢ + aₘ · **u**ₘ(**x**ᵢ)
+
+with **t**, **ω** and aₘ taken from the full fit, projected on the component of the panel (Δr, rΔφ or
+Δz). The amplitudes of all the other modes are left out of this expression, but not out of the fit that
+determined aₘ. For example, on the
 `radialScaling` panel red is Δr = (**t** + **ω** × **x**ᵢ)·r̂ + a · r: the small rigid offsets plus a
 straight line in r whose slope is the fitted ε.
 
