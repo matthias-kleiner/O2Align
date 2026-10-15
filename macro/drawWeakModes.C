@@ -18,6 +18,9 @@
 #include <TProfile2D.h>
 #include <TStyle.h>
 #include <TTree.h>
+#include <TAxis.h>
+#include <TVirtualPad.h>
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -26,6 +29,9 @@
 
 namespace
 {
+constexpr double YAxisSize = 0.03;    // label and title size of every Y axis
+constexpr double ColzRightMargin = 0.15; // room for the colour scale of a colz plot
+
 // uMode[3*m+k] is the Cartesian contribution of mode column m. The column order follows
 // Volume::NGlobalEq, so it must never be hard-coded here: modeCols() reads the names from the
 // "modes" tree and colOf() resolves them, which keeps the macro valid when a mode is added.
@@ -77,6 +83,7 @@ std::string familySum(const char* family, bool radial) { return familySum(family
 std::unique_ptr<TGraph> graphOf(TTree* t, const std::string& yx, const std::string& cut, int color, int marker, double size)
 {
   const auto n = t->Draw(yx.c_str(), cut.c_str(), "goff");
+  gPad->SetGrid(1);
   auto g = std::make_unique<TGraph>(n > 0 ? n : 0, t->GetV2(), t->GetV1());
   g->SetMarkerColor(color);
   g->SetMarkerStyle(marker);
@@ -92,6 +99,41 @@ void panel(TTree* t, const std::string& cut, const char* title, const char* xTit
   mg->Add(graphOf(t, Form("1e4*(%s):%s", yData.c_str(), xExpr), cut, kBlack, 20, 0.35).release(), "p");
   mg->Add(graphOf(t, Form("1e4*(%s):%s", yModel.c_str(), xExpr), cut, kRed, 20, 0.35).release(), "p");
   mg->Draw("ap");
+  gPad->SetGrid(1);
+  mg->GetYaxis()->SetTitleSize(YAxisSize);
+  mg->GetYaxis()->SetLabelSize(YAxisSize);
+}
+
+// Vertical x-axis bin labels, each at most 0.8 of the bin width high, and a bottom margin that makes the
+// longest of them fully visible. Must be called after cd() into the pad and before the histogram is drawn.
+// ROOT sizes a label as a fraction of min(pad width, pad height) in pixels, so the size follows from the
+// bin width in pixels, and the margin from the pixel extent of the longest label.
+void verticalLabels(TH1* h, double maxFrac = 0.8, double minSize = 0.01, double maxSize = 0.035)
+{
+  auto* pad = gPad;
+  const int nb = h->GetNbinsX();
+  const double wPx = pad->GetWw() * pad->GetAbsWNDC(), hPx = pad->GetWh() * pad->GetAbsHNDC();
+  const double binPx = wPx * (1. - pad->GetLeftMargin() - pad->GetRightMargin()) / std::max(1, nb);
+  const double size = std::clamp(maxFrac * binPx / std::min(wPx, hPx), minSize, maxSize);
+  std::string longest;
+  for (int i = 1; i <= nb; ++i) {
+    const std::string l = h->GetXaxis()->GetBinLabel(i);
+    if (l.size() > longest.size()) {
+      longest = l;
+    }
+  }
+  TLatex tl;
+  tl.SetTextFont(h->GetXaxis()->GetLabelFont());
+  tl.SetTextSize(size);
+  UInt_t tw = 0, th = 0;
+  tl.GetTextExtent(tw, th, longest.c_str());
+  if (tw == 0) { // no font metrics available: ~0.6 of the character height per character
+    tw = static_cast<UInt_t>(0.6 * size * std::min(wPx, hPx) * longest.size());
+  }
+  const double offset = h->GetXaxis()->GetLabelOffset() * hPx; // gap between the axis and the labels
+  pad->SetBottomMargin(std::min(0.6, (tw + offset) / hPx + 0.03));
+  h->GetXaxis()->SetLabelSize(size);
+  h->GetXaxis()->LabelsOption("v");
 }
 
 void summaryPage(TTree* modes, int ib, const std::string& name, const std::string& pdf)
@@ -113,7 +155,7 @@ void summaryPage(TTree* modes, int ib, const std::string& name, const std::strin
     }
     modes->ResetBranchAddresses();
   }
-  auto* c = new TCanvas(Form("cs%d", ib), "summary", 1200, 800);
+  auto* c = new TCanvas(Form("cs%d", ib), "summary", 1800, 900);
   c->Divide(2, 1);
   auto* hB = new TH1F(Form("hB%d", ib), Form("%s: mode amplitude;;#mum", name.c_str()), n, 0, n);
   auto* hA = new TH1F(Form("hA%d", ib), "", n, 0, n);
@@ -127,20 +169,28 @@ void summaryPage(TTree* modes, int ib, const std::string& name, const std::strin
     hE->GetXaxis()->SetBinLabel(i + 1, labels[i].c_str());
   }
   c->cd(1);
+  verticalLabels(hB);
   hB->SetStats(0);
+  hB->GetYaxis()->SetTitleSize(0.02);
+  hB->GetYaxis()->SetLabelSize(0.02);
   hB->SetFillColorAlpha(kAzure + 1, 0.5);
   hB->Draw("bar e");
   hA->SetLineColor(kRed);
   hA->SetLineWidth(2);
   hA->Draw("hist same");
-  auto* leg = new TLegend(0.15, 0.78, 0.55, 0.88);
+  gPad->SetGrid(true);
+  auto* leg = new TLegend(0.15, 0.87, 0.75, 0.92);
   leg->AddEntry(hB, "B: fitted displacement field", "f");
   leg->AddEntry(hA, "A: constraint-equation projection", "l");
   leg->Draw();
   c->cd(2);
+  verticalLabels(hE);
   hE->SetStats(0);
   hE->SetFillColor(kGreen + 2);
+  hE->GetYaxis()->SetTitleSize(0.02);
+  hE->GetYaxis()->SetLabelSize(0.02);
   hE->Draw("bar");
+  gPad->SetGrid(true);
   c->Print(pdf.c_str());
 }
 
@@ -219,12 +269,20 @@ void mapPage(TTree* sens, int ib, const std::string& name, const std::string& pd
   c->Divide(2, 1);
   c->cd(1);
   auto* p = new TProfile2D(Form("pm%d", ib), Form("%s: #Deltar [#mum];z [cm];#phi [rad]", name.c_str()), 40, -40, 40, 36, -3.1416, 3.1416);
+  gPad->SetRightMargin(ColzRightMargin);
   sens->Draw(Form("phi:z:1e4*dr>>pm%d", ib), Form("branch==%d", ib), "colz");
+  gPad->SetGrid(1);
   p->SetStats(0);
+  p->GetYaxis()->SetTitleSize(YAxisSize);
+  p->GetYaxis()->SetLabelSize(YAxisSize);
   c->cd(2);
   auto* q = new TProfile2D(Form("pq%d", ib), Form("%s: r#Delta#phi [#mum];z [cm];#phi [rad]", name.c_str()), 40, -40, 40, 36, -3.1416, 3.1416);
+  gPad->SetRightMargin(ColzRightMargin);
   sens->Draw(Form("phi:z:1e4*rdphi>>pq%d", ib), Form("branch==%d", ib), "colz");
+  gPad->SetGrid(1);
   q->SetStats(0);
+  q->GetYaxis()->SetTitleSize(YAxisSize);
+  q->GetYaxis()->SetLabelSize(YAxisSize);
   c->Print(pdf.c_str());
 }
 } // namespace
@@ -243,6 +301,8 @@ void drawWeakModes(const char* inFile = "weakModes.root", const char* outPdf = "
     return;
   }
   gStyle->SetOptStat(0);
+  gStyle->SetTitleX(0.1);
+  gStyle->SetTitleW(0.6);
   gStyle->SetPalette(kBird);
   modeCols(modes); // the uMode column layout comes from the file, never hard-coded
   const std::string pdf = outPdf;

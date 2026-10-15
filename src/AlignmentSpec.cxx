@@ -1641,8 +1641,8 @@ void AlignmentSpec::endOfStream(EndOfStreamContext& /*ec*/)
     mDBGOut->Close();
     mDBGOut.reset();
   }
-  if (mOutOpt[o2::alignrs::OutputOpt::MilleRes]) {
-    return; // the output is written by the Millepede2 task, not here
+  if (!mOutOpt[o2::alignrs::OutputOpt::ProcessData]) {
+    return;
   }
   mMille.reset(); // flushes and closes the binary
 
