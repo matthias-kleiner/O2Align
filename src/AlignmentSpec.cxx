@@ -495,6 +495,9 @@ void AlignmentSpec::run(ProcessingContext& pc)
     if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
       diagnoseWeakModes(mHierarchy.get(), fitted, mParams->weakModesOutBase);
     }
+  } else if (mOutOpt[o2::alignrs::OutputOpt::InitialWeakModesDiag]) { // standalone: weak modes of the initial (CCDB) alignment, no millepede.res needed
+    updateTimeDependentParams(pc);
+    diagnoseInitialAlignment(mHierarchy.get(), mDetectors, mParams->weakModesOutBase + "_initial");
   } else if (mOutOpt[o2::alignrs::OutputOpt::MilleSteer] && !mOutOpt[o2::alignrs::OutputOpt::ProcessData]) { // just mille parameters/constraints extraction
     updateTimeDependentParams(pc);
   } else if (mOutOpt[o2::alignrs::OutputOpt::ProcessData]) { // produce mille data for pede input

@@ -14,6 +14,9 @@
 #include <TGeoMatrix.h>
 
 #include "Framework/Logger.h"
+#include "DetectorsBase/GRPGeomHelper.h"
+#include "O2Align/AlignGeomUtils.h"
+#include "O2Align/Detector.h"
 #include "O2Align/WeakModes.h"
 #include "O2Align/Volume.h"
 
@@ -93,6 +96,55 @@ std::vector<Branch> collectBranches(Volume* root, const std::map<uint32_t, doubl
     cumulative[vol] = pn;
     if (vol->isLeaf() && !vol->isRoot() && !vol->isVirtual() && !vol->isPseudo()) {
       branches[branchOf.at(vol)].sensors.push_back(makeSensorDisp(vol, pn));
+    }
+  });
+  return branches;
+}
+
+// Displacement caused by the initial (CCDB) alignment alone, relative to the ideal geometry. Pp
+// maps the ideal sensor-centre position to the loaded (pre-aligned) one, in the global frame (same
+// convention as Detector's P^p, see Detector.cxx).
+SensorDisp makeInitialSensorDisp(const Volume* vol, const TGeoHMatrix& Pp)
+{
+  SensorDisp s;
+  s.vol = vol;
+  s.layer = layerOf(vol->getSymName());
+  const double* posLoaded = vol->getMatrixL2G().GetTranslation();
+  double posIdeal[3];
+  Pp.Inverse().LocalToMaster(posLoaded, posIdeal);
+  const double* R = Pp.GetRotationMatrix();
+  for (int i = 0; i < 3; ++i) {
+    s.x[i] = posIdeal[i];
+    s.d[i] = posLoaded[i] - posIdeal[i];
+  }
+  s.w = {0.5 * (R[7] - R[5]), 0.5 * (R[2] - R[6]), 0.5 * (R[3] - R[1])};
+  return s;
+}
+
+// Same branch grouping as collectBranches, but Pp comes from each detector's CCDB initial
+// alignment (geomutils::collectInitialCumulativeDeltas) instead of from a millepede fit.
+std::vector<Branch> collectInitialBranches(Volume* root, const std::vector<Detector*>& detectors)
+{
+  std::vector<Branch> branches;
+  std::vector<geomutils::PathMatrices> iniCumPerBranch;
+  std::unordered_map<const Volume*, int> branchOf;
+  root->traverse([&](Volume* vol) {
+    if (vol->isRoot()) {
+      return;
+    }
+    if (vol->getParent()->isRoot()) {
+      branchOf[vol] = static_cast<int>(branches.size());
+      branches.push_back({vol, {}});
+      const auto it = std::find_if(detectors.begin(), detectors.end(), [vol](const Detector* d) { return d->getTopVolume() == vol; });
+      const auto* iniAlg = (it != detectors.end() && (*it)->getO2DetID() >= 0) ? o2::base::GRPGeomHelper::instance().getAlignment((*it)->getO2DetID()) : nullptr;
+      iniCumPerBranch.push_back(geomutils::collectInitialCumulativeDeltas(iniAlg));
+    } else {
+      branchOf[vol] = branchOf.at(vol->getParent());
+    }
+    if (vol->isLeaf() && !vol->isRoot() && !vol->isVirtual() && !vol->isPseudo()) {
+      const int ib = branchOf.at(vol);
+      const auto Pp = geomutils::getOnPath(iniCumPerBranch[ib], geomutils::getAlignablePath(vol->getSymName()), true);
+      branches[ib].sensors.push_back(makeInitialSensorDisp(vol, Pp));
     }
   });
   return branches;
@@ -306,7 +358,7 @@ ModeFit fitModes(const std::vector<SensorDisp>& sensors)
   return fit;
 }
 
-nlohmann::json branchToJSON(const Branch& br, const ModeFit& fit, const std::array<MetricA, NCols>& mA)
+nlohmann::json branchToJSON(const Branch& br, const ModeFit& fit, const std::array<MetricA, NCols>* mA)
 {
   nlohmann::json j;
   j["detector"] = br.top->getSymName();
@@ -321,14 +373,17 @@ nlohmann::json branchToJSON(const Branch& br, const ModeFit& fit, const std::arr
   auto modes = nlohmann::json::array();
   auto corr = nlohmann::json::array();
   for (int c = 0; c < NCols; ++c) {
-    modes.push_back({{"name", colName(c)},
+    nlohmann::json m{{"name", colName(c)},
                      {"metricB_um", CmToUm * fit.amp[c]},
                      {"metricBError_um", CmToUm * fit.err[c]},
                      {"explainedFraction", fit.explained[c]},
                      {"leverArm", fit.scale[c]},
-                     {"nativeAmplitude", fit.amp[c] / fit.scale[c]},
-                     {"metricA_um", mA[c].value},
-                     {"nTermsA", mA[c].nTerms}});
+                     {"nativeAmplitude", fit.amp[c] / fit.scale[c]}};
+    if (mA) {
+      m["metricA_um"] = (*mA)[c].value;
+      m["nTermsA"] = (*mA)[c].nTerms;
+    }
+    modes.push_back(std::move(m));
     std::vector<double> row(NCols);
     for (int d = 0; d < NCols; ++d) {
       row[d] = fit.corr(c, d);
@@ -340,18 +395,25 @@ nlohmann::json branchToJSON(const Branch& br, const ModeFit& fit, const std::arr
   return j;
 }
 
-void logBranch(const Branch& br, const ModeFit& fit, const std::array<MetricA, NCols>& mA)
+void logBranch(const Branch& br, const ModeFit& fit, const std::array<MetricA, NCols>* mA)
 {
   LOGP(info, "Weak modes of {}: {} sensors, displacement rms {:.1f} um -> {:.1f} um after rigid shift/rotation -> {:.1f} um after modes (rank {}/{}, cond {:.1e})",
        br.top->getSymName(), br.sensors.size(), CmToUm * fit.rmsRaw, CmToUm * fit.rmsRigid, CmToUm * fit.rmsModes, fit.rank, NPar, fit.condition);
-  LOGP(info, "  {:<20} {:>12} {:>10} {:>10} {:>14}", "mode", "B [um@lever]", "+-", "explained", "A [um] (nDOF)");
-  for (int c = 0; c < NCols; ++c) {
-    LOGP(info, "  {:<20} {:>12.2f} {:>10.2f} {:>9.1f}% {:>9.2f} ({})", colName(c), CmToUm * fit.amp[c], CmToUm * fit.err[c], 100. * fit.explained[c], mA[c].value, mA[c].nTerms);
+  if (mA) {
+    LOGP(info, "  {:<20} {:>12} {:>10} {:>10} {:>14}", "mode", "B [um@lever]", "+-", "explained", "A [um] (nDOF)");
+    for (int c = 0; c < NCols; ++c) {
+      LOGP(info, "  {:<20} {:>12.2f} {:>10.2f} {:>9.1f}% {:>9.2f} ({})", colName(c), CmToUm * fit.amp[c], CmToUm * fit.err[c], 100. * fit.explained[c], (*mA)[c].value, (*mA)[c].nTerms);
+    }
+  } else {
+    LOGP(info, "  {:<20} {:>12} {:>10} {:>10}", "mode", "B [um@lever]", "+-", "explained");
+    for (int c = 0; c < NCols; ++c) {
+      LOGP(info, "  {:<20} {:>12.2f} {:>10.2f} {:>9.1f}%", colName(c), CmToUm * fit.amp[c], CmToUm * fit.err[c], 100. * fit.explained[c]);
+    }
   }
 }
 
 // ROOT output: one row per sensor (all branches), and one per branch and mode
-void writeRoot(const std::string& fileName, const std::vector<Branch>& branches, const std::vector<ModeFit>& fits, const std::vector<std::array<MetricA, NCols>>& mA)
+void writeRoot(const std::string& fileName, const std::vector<Branch>& branches, const std::vector<ModeFit>& fits, const std::vector<std::array<MetricA, NCols>>* mA)
 {
   TFile fout(fileName.c_str(), "RECREATE");
   if (fout.IsZombie()) {
@@ -427,8 +489,8 @@ void writeRoot(const std::string& fileName, const std::vector<Branch>& branches,
       ampB = CmToUm * fits[ib].amp[c];
       errB = CmToUm * fits[ib].err[c];
       explained = fits[ib].explained[c];
-      ampA = mA[ib][c].value;
-      nTermsA = mA[ib][c].nTerms;
+      ampA = mA ? (*mA)[ib][c].value : 0.;
+      nTermsA = mA ? (*mA)[ib][c].nTerms : 0;
       lever = fits[ib].scale[c];
       tMode.Fill();
     }
@@ -451,8 +513,8 @@ void diagnoseWeakModes(Volume* root, const std::map<uint32_t, double>& labelToVa
     for (int c = 0; c < NCols; ++c) {
       a[c] = metricA(br.top, labelToValue, c);
     }
-    logBranch(br, fits.back(), a);
-    jsonOut.push_back(branchToJSON(br, fits.back(), a));
+    logBranch(br, fits.back(), &a);
+    jsonOut.push_back(branchToJSON(br, fits.back(), &a));
   }
   if (branches.empty()) {
     LOGP(warn, "No detector branch with enough sensors for the weak modes diagnostics");
@@ -460,8 +522,29 @@ void diagnoseWeakModes(Volume* root, const std::map<uint32_t, double>& labelToVa
   }
   std::ofstream fout(outBase + ".json");
   fout << jsonOut.dump(2) << '\n';
-  writeRoot(outBase + ".root", branches, fits, mA);
+  writeRoot(outBase + ".root", branches, fits, &mA);
   LOGP(info, "Wrote the weak modes diagnostics to {}.json and {}.root", outBase, outBase);
+}
+
+void diagnoseInitialAlignment(Volume* root, const std::vector<Detector*>& detectors, const std::string& outBase)
+{
+  auto branches = collectInitialBranches(root, detectors);
+  branches.erase(std::remove_if(branches.begin(), branches.end(), [](const Branch& b) { return b.sensors.size() < NPar; }), branches.end());
+  std::vector<ModeFit> fits;
+  auto jsonOut = nlohmann::json::array();
+  for (const auto& br : branches) {
+    fits.push_back(fitModes(br.sensors));
+    logBranch(br, fits.back(), nullptr);
+    jsonOut.push_back(branchToJSON(br, fits.back(), nullptr));
+  }
+  if (branches.empty()) {
+    LOGP(warn, "No detector branch with enough sensors for the initial alignment weak modes diagnostics");
+    return;
+  }
+  std::ofstream fout(outBase + ".json");
+  fout << jsonOut.dump(2) << '\n';
+  writeRoot(outBase + ".root", branches, fits, nullptr);
+  LOGP(info, "Wrote the initial alignment weak modes diagnostics to {}.json and {}.root", outBase, outBase);
 }
 
 } // namespace o2::alignrs

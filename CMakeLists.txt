@@ -37,6 +37,7 @@ add_library(O2Align SHARED
             src/Volume.cxx
             src/Constraint.cxx
             src/Params.cxx
+            src/AlignGeomUtils.cxx
             src/Detector.cxx
             src/DetectorPVT.cxx
             src/DetectorITS.cxx

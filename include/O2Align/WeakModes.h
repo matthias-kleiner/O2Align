@@ -5,10 +5,12 @@
 #include <map>
 #include <string>
 #include <cstdint>
+#include <vector>
 
 namespace o2::alignrs
 {
 class Volume;
+class Detector;
 
 /// Diagnose the global deformation modes of Volume::GlobalMode in the fitted rigid-body corrections.
 ///
@@ -58,6 +60,13 @@ class Volume;
 /// macro/drawWeakModes.C) and logs a summary table. The fitted values are absolute: an injected
 /// misalignment (misAlgJson) is not subtracted.
 void diagnoseWeakModes(Volume* root, const std::map<uint32_t, double>& labelToValue, const std::string& outBase);
+
+/// Diagnose the global deformation modes already present in the initial alignment itself, i.e. the
+/// CCDB o2::detectors::AlignParam objects baked into the loaded geometry (Detector::MP2AlignParams'
+/// "step 2"), relative to the ideal geometry. No millepede fit is involved: metric A (which needs a
+/// fit's free-DOF values) is not computed, only metric B (the sensor displacement decomposition).
+/// Same outputs as diagnoseWeakModes, minus the metricA_um/nTermsA fields.
+void diagnoseInitialAlignment(Volume* root, const std::vector<Detector*>& detectors, const std::string& outBase);
 
 } // namespace o2::alignrs
 

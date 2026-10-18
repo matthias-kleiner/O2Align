@@ -23,6 +23,7 @@
 #include "Framework/Logger.h"
 #include "DetectorsBase/GeometryManager.h"
 #include "DetectorsBase/GRPGeomHelper.h"
+#include "O2Align/AlignGeomUtils.h"
 #include "O2Align/Detector.h"
 
 namespace o2::alignrs
@@ -71,56 +72,8 @@ namespace o2::alignrs
 */
 namespace
 {
+using namespace o2::alignrs::geomutils;
 using AlgParVec = std::vector<o2::detectors::AlignParam>;
-/// matrices keyed by the TGeo path of the alignable volume they belong to
-using PathMatrices = std::unordered_map<std::string, TGeoHMatrix>;
-
-/// TGeo path of an alignable volume, used to navigate the TGeo hierarchy by path prefixes
-std::string getAlignablePath(const std::string& symName)
-{
-  const auto* pne = gGeoManager->GetAlignableEntry(symName.c_str());
-  if (pne == nullptr) {
-    LOGP(fatal, "Symbolic volume '{}' has no corresponding alignable entry!", symName);
-  }
-  return pne->GetTitle();
-}
-
-/// TGeo level of a path, used to order the volumes parents first
-int getPathDepth(const std::string& path)
-{
-  return static_cast<int>(std::count(path.begin(), path.end(), '/'));
-}
-
-/// L2G matrix of an alignable volume in the loaded (pre-aligned) geometry
-const TGeoHMatrix& getGeometryMatrix(const std::string& symName)
-{
-  const auto* m = o2::base::GeometryManager::getMatrix(symName.c_str());
-  if (m == nullptr) {
-    LOGP(fatal, "Cannot get the matrix of {}", symName);
-  }
-  return *m;
-}
-
-/// Matrix of the TGeo volume `path` (if includeSelf) or else of its nearest TGeo ancestor present in
-/// the map, the identity if there is none. Walks up the path component by component, which is
-/// O(depth) per lookup rather than a scan over all entries (the ITS alone has ~25k alignables).
-TGeoHMatrix getOnPath(const PathMatrices& matrices, std::string path, bool includeSelf)
-{
-  auto stripLast = [&path]() {
-    const auto pos = path.find_last_of('/');
-    path.resize(pos == std::string::npos ? 0 : pos);
-  };
-  if (!includeSelf) {
-    stripLast();
-  }
-  while (!path.empty()) {
-    if (auto it = matrices.find(path); it != matrices.end()) {
-      return it->second;
-    }
-    stripLast();
-  }
-  return {};
-}
 
 bool isSameMatrix(const TGeoHMatrix& a, const TGeoHMatrix& b, double eps = 1e-12)
 {
@@ -159,39 +112,6 @@ PathMatrices collectNewCumulativeDeltas(Volume* top, const std::map<uint32_t, do
     }
     cumulative[vol] = pn;
   });
-  return byPath;
-}
-
-/// global delta D^p equivalent to an initial object of either convention (step 2)
-TGeoHMatrix getInitialGlobalDelta(const o2::detectors::AlignParam& par)
-{
-  auto delta = par.createMatrix();
-  if (par.isGlobal()) {
-    return delta;
-  }
-  const auto& gp = getGeometryMatrix(par.getSymName());
-  return gp * delta * gp.Inverse();
-}
-
-/// Step 2: cumulative global delta P^p of the initial alignment for every volume it contains, the
-/// objects being accumulated parents first, like GeometryManager::applyAlignment applies them
-PathMatrices collectInitialCumulativeDeltas(const AlgParVec* initial)
-{
-  std::vector<std::pair<std::string, const o2::detectors::AlignParam*>> byDepth;
-  if (!initial) {
-    return {};
-  }
-  for (const auto& par : *initial) {
-    byDepth.emplace_back(getAlignablePath(par.getSymName()), &par);
-  }
-  std::stable_sort(byDepth.begin(), byDepth.end(), [](const auto& a, const auto& b) { return getPathDepth(a.first) < getPathDepth(b.first); });
-  PathMatrices byPath;
-  for (const auto& [path, par] : byDepth) {
-    if (byPath.contains(path)) {
-      LOGP(fatal, "Initial alignment contains {} more than once", par->getSymName());
-    }
-    byPath[path] = getInitialGlobalDelta(*par) * getOnPath(byPath, path, false);
-  }
   return byPath;
 }
 

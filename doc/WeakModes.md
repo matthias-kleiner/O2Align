@@ -88,6 +88,27 @@ logged and stored in the JSON) and neighbouring amplitudes can be correlated: ch
 matrix before reading a single bar. Values are absolute: an injected misalignment (`misAlgJson`) is
 *not* subtracted.
 
+## Standalone diagnostic of the initial (CCDB) alignment
+
+`--output InitialWeakModesDiag` diagnoses the weak modes already present in the *initial* alignment
+itself — the `o2::detectors::AlignParam` objects already baked into the loaded geometry via
+`GRPGeomHelper::getAlignment(detID)` (CCDB `<Det>/Calib/Align`) — relative to the ideal geometry.
+It needs no millepede.res and runs independently of `MilleRes`/`WeakModesDiag`: it rectifies
+`ProcessData` off like `MilleRes` does, so it only has to reach the first `run()` call of the DPL
+workflow (the same single dummy-triggered pass the standalone `MilleSteer` mode uses) for the CCDB
+alignment and the hierarchy to become available.
+
+The displacement composed per sensor is exactly the one `Detector::MP2AlignParams` calls `P^p_j`
+(see `Detector.cxx`), not the millepede fit's `P^n_j`: it is the cumulative global delta of the
+initial `AlignParam` objects alone, applied to the ideal sensor-centre position. Only **Metric B**
+is produced — there is no fit, hence no free-DOF values for Metric A, and `weakModes.json` simply
+omits `metricA_um`/`nTermsA` for every mode (the ROOT `modes` tree keeps the branches for schema
+compatibility with `macro/drawWeakModes.C`, filled with 0, which must not be read as "constrained").
+Everything else (RMS, rank, rigid shift/rotation, explained fractions, correlations, the per-sensor
+`sensors` tree) is produced exactly as for `diagnoseWeakModes`, written to the same
+`AlignParams.weakModesOutBase` files — point it elsewhere via `--configKeyValues` to avoid
+overwriting a fit-based `WeakModesDiag` run from the same output directory.
+
 ## How to read the histograms
 
 `macro/drawWeakModes.C` produces, per detector branch, a PDF page set. The first page is the summary:

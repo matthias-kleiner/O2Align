@@ -41,7 +41,10 @@ global mode, from the constraint projection (A) and from a fit of the sensor dis
 `macro/drawWeakModes.C` plots them.
 
 `--output` is a comma-separated `EnumFlags` list: `VerboseGBL, MilleData, MilleSteer, MilleRes,
-MisRes, WeakModesDiag, Debug` ([AlignmentSpec.h](include/O2Align/AlignmentSpec.h)).
+MisRes, WeakModesDiag, InitialWeakModesDiag, Debug` ([AlignmentSpec.h](include/O2Align/AlignmentSpec.h)).
+`InitialWeakModesDiag` is a standalone pass, independent of `MilleRes`: it diagnoses the weak modes
+already present in the initial (CCDB) alignment baked into the loaded geometry, relative to the
+ideal geometry, with no millepede.res involved (see [doc/WeakModes.md](doc/WeakModes.md)).
 
 If DPL workflow should be piped to a chain of shell comands, it has to have `--run` option before the 1st element not being a workflow, i.e. `... | o2-dev-alignment-workflow --run | tee my.log`.
 

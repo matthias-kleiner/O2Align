@@ -27,6 +27,7 @@ enum class OutputOpt : uint16_t {
   MilleRes,    // convert pede results to CCDB objects
   MisRes,
   WeakModesDiag, // with MilleRes: diagnose the global weak modes of the fitted corrections
+  InitialWeakModesDiag, // standalone: diagnose the global weak modes already in the initial (CCDB) alignment
   Debug,
 };
 using OutputEnum = utils::EnumFlags<OutputOpt>;
