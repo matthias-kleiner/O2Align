@@ -485,31 +485,31 @@ void AlignmentSpec::executeConfigMacro()
 
 void AlignmentSpec::run(ProcessingContext& pc)
 {
-  if (mOutOpt[o2::alignrs::OutputOpt::MilleRes]) { // conversion of pede results to alignment and calibration objects
-    updateTimeDependentParams(pc);
-    const auto fitted = Volume::readMillepedeResults(mParams->milleResFile);
-    Volume::writeMillepedeResults(mHierarchy.get(), fitted, mParams->milleResOutJson, mParams->misAlgJson);
-    if (!mParams->algParamsOutFile.empty()) {
-      writeAlignParams(fitted);
-    }
-    if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
-      diagnoseWeakModes(mHierarchy.get(), fitted, mParams->weakModesOutBase);
-    }
-  } else if (mOutOpt[o2::alignrs::OutputOpt::InitialWeakModesDiag]) { // standalone: weak modes of the initial (CCDB) alignment, no millepede.res needed
-    updateTimeDependentParams(pc);
-    diagnoseInitialAlignment(mHierarchy.get(), mDetectors, mParams->weakModesOutBase + "_initial");
-  } else if (mOutOpt[o2::alignrs::OutputOpt::MilleSteer] && !mOutOpt[o2::alignrs::OutputOpt::ProcessData]) { // just mille parameters/constraints extraction
-    updateTimeDependentParams(pc);
-  } else if (mOutOpt[o2::alignrs::OutputOpt::ProcessData]) { // produce mille data for pede input
+  if (mOutOpt[o2::alignrs::OutputOpt::ProcessData]) { // produce mille data for pede input
     o2::globaltracking::RecoContainer recoData;
     mRecoData = &recoData;
     mRecoData->collectData(pc, *mDataRequest); // call this before updateTimeDependentParams() as some calib CCDB objects are fetched there
     updateTimeDependentParams(pc);
     process();
+    mRecoData = nullptr;
   } else {
-    LOGP(fatal, "Failed to interpret requested output options");
+    updateTimeDependentParams(pc);
+    if (mOutOpt[o2::alignrs::OutputOpt::MilleRes] || mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
+      const auto fitted = Volume::readMillepedeResults(mParams->milleResFile);
+      if (mOutOpt[o2::alignrs::OutputOpt::MilleRes]) { // conversion of pede results to alignment and calibration objects
+        Volume::writeMillepedeResults(mHierarchy.get(), fitted, mParams->milleResOutJson, mParams->misAlgJson);
+        if (!mParams->algParamsOutFile.empty()) {
+          writeAlignParams(fitted);
+        }
+      }
+      if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
+        diagnoseWeakModes(mHierarchy.get(), fitted, mParams->weakModesOutBase);
+      }
+    }
+    if (mOutOpt[o2::alignrs::OutputOpt::InitialWeakModesDiag]) { // standalone: weak modes of the initial (CCDB) alignment, no millepede.res needed
+      diagnoseInitialAlignment(mHierarchy.get(), mDetectors, mParams->weakModesOutBase + "_initial");
+    }
   }
-  mRecoData = nullptr;
 }
 
 void AlignmentSpec::process() // collisions
