@@ -90,7 +90,7 @@ matrix before reading a single bar. Values are absolute: an injected misalignmen
 
 ## Standalone diagnostic of the initial (CCDB) alignment
 
-`--output InitialWeakModesDiag` diagnoses the weak modes already present in the *initial* alignment
+`--output WeakModesDiagIni` diagnoses the weak modes already present in the *initial* alignment
 itself — the `o2::detectors::AlignParam` objects already baked into the loaded geometry via
 `GRPGeomHelper::getAlignment(detID)` (CCDB `<Det>/Calib/Align`) — relative to the ideal geometry.
 It needs no millepede.res and runs independently of `MilleRes`/`WeakModesDiag`: it rectifies

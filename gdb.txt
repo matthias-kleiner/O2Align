@@ -239,3 +239,46 @@ Use `info auto-load python-scripts [REGEXP]' to list them.
 #27 0x00007bb560d14da3 in TRint::Run (this=this@entry=0x2cf1f600, retrn=retrn@entry=false) at /local/workspace/DailyBuilds/DailyO2-ubuntu2404/daily-tags.o3vA2tcf2Y/SOURCES/ROOT/v6-36-10-alice3/v6-36-10-alice3/core/rint/src/TRint.cxx:501
 #28 0x00000000004011bd in main (argc=<optimized out>, argv=0x7fffbeba10f8) at /local/workspace/DailyBuilds/DailyO2-ubuntu2404/daily-tags.o3vA2tcf2Y/SOURCES/ROOT/v6-36-10-alice3/v6-36-10-alice3/main/src/rmain.cxx:84
 [Inferior 1 (process 636955) detached]
+logging debugredirect:  off: Debug output will go to both the screen and the log file.
+logging enabled:  on: Logging is enabled.
+logging file:  The current logfile is "gdb.log".
+logging overwrite:  off: Logging appends to the log file.
+logging redirect:  off: Output will go to both the screen and the log file.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x0000703adc6ea3aa in wait4 () from /lib/x86_64-linux-gnu/libc.so.6
+warning: Unsupported auto-load script at offset 0 in section .debug_gdb_scripts
+of file /home/shahoian/alice/sw/ubuntu2204_x86-64/O2/dev-local2/lib/libO2TPCBaseRecSim.so.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+#0  0x0000703adc6ea3aa in wait4 () from /lib/x86_64-linux-gnu/libc.so.6
+#1  0x0000703adc650bdb in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+#2  0x0000703add16574a in TUnixSystem::Exec (this=0x3c40f400, shellcmd=<optimized out>) at /sw/SOURCES/ROOT/v6-36-10-alice4/v6-36-10-alice4/core/unix/src/TUnixSystem.cxx:2157
+#3  TUnixSystem::StackTrace (this=0x3c40f400) at /sw/SOURCES/ROOT/v6-36-10-alice4/v6-36-10-alice4/core/unix/src/TUnixSystem.cxx:2448
+#4  0x0000703add165094 in TUnixSystem::DispatchSignals (this=0x3c40f400, sig=kSigSegmentationViolation) at /sw/SOURCES/ROOT/v6-36-10-alice4/v6-36-10-alice4/core/unix/src/TUnixSystem.cxx:3668
+#5  <signal handler called>
+#6  0x0000703ad907d5d3 in clang::BaseUsingDecl::removeShadowDecl(clang::UsingShadowDecl*) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#7  0x0000703ad5bfbcf6 in cling::DeclUnloader::VisitDeclContext(clang::DeclContext*) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#8  0x0000703ad5bfbf63 in cling::DeclUnloader::VisitFunctionDecl(clang::FunctionDecl*, bool) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#9  0x0000703ad5bbfb25 in cling::TransactionUnloader::unloadDeserializedDeclarations(cling::Transaction*, cling::DeclUnloader&) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#10 0x0000703ad5bbfe23 in cling::TransactionUnloader::RevertTransaction(cling::Transaction*) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#11 0x0000703ad5b9ecab in cling::Interpreter::unload(cling::Transaction&) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#12 0x0000703ad5bbf7f3 in cling::TransactionUnloader::unloadDeclarations(cling::Transaction*, cling::DeclUnloader&) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#13 0x0000703ad5bbfe12 in cling::TransactionUnloader::RevertTransaction(cling::Transaction*) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#14 0x0000703ad5b9ecab in cling::Interpreter::unload(cling::Transaction&) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#15 0x0000703ad5c37798 in cling::IncrementalParser::commitTransaction(llvm::PointerIntPair<cling::Transaction*, 2u, cling::IncrementalParser::EParseResult, llvm::PointerLikeTypeTraits<cling::Transaction*>, llvm::PointerIntPairInfo<cling::Transaction*, 2u, llvm::PointerLikeTypeTraits<cling::Transaction*> > >&, bool) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#16 0x0000703ad5c38f98 in cling::IncrementalParser::Compile(llvm::StringRef, cling::CompilationOptions const&) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#17 0x0000703ad5ba004c in cling::Interpreter::DeclareInternal(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, cling::CompilationOptions const&, cling::Transaction**) const () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#18 0x0000703ad5ba1c6a in cling::Interpreter::loadHeader(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, cling::Transaction**) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#19 0x0000703ad5c98d3a in cling::MetaSema::actOnLCommand(llvm::StringRef, cling::Transaction**) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#20 0x0000703ad5c98f79 in cling::MetaSema::actOnxCommand(llvm::StringRef, llvm::StringRef, cling::Value*) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#21 0x0000703ad5cac824 in cling::MetaParser::isXCommand(cling::MetaSema::ActionResult&, cling::Value*) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#22 0x0000703ad5caddf5 in cling::MetaParser::isCommand(cling::MetaSema::ActionResult&, cling::Value*) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#23 0x0000703ad5c912e0 in cling::MetaProcessor::process(llvm::StringRef, cling::Interpreter::CompilationResult&, cling::Value*, bool) () from /home/shahoian/alice/sw/ubuntu2204_x86-64/ROOT/v6-36-10-alice4-5/lib/libCling.so
+#24 0x0000703ad5a8befa in HandleInterpreterException (metaProcessor=0x3cdba030, input_line=0x43185e30 ".X  /tmp/claude-1000/-home-shahoian-alice-O2Align/e7a24e76-634f-4668-b1f8-ced9d96f90eb/scratchpad/clx.C(\"/data0/ALG25/Pede_v10n/GLO/Config/GeometryAligned/snapshot.root\")", compRes=@0x7ffdee72e024: cling::Interpreter::kSuccess, result=result@entry=0x7ffdee72e150) at /sw/SOURCES/ROOT/v6-36-10-alice4/v6-36-10-alice4/core/metacling/src/TCling.cxx:2477
+#25 0x0000703ad5aa496f in TCling::ProcessLine (this=this@entry=0x3c487230, line=line@entry=0x43037be0 ".X  /tmp/claude-1000/-home-shahoian-alice-O2Align/e7a24e76-634f-4668-b1f8-ced9d96f90eb/scratchpad/clx.C(\"/data0/ALG25/Pede_v10n/GLO/Config/GeometryAligned/snapshot.root\")", error=error@entry=0x7ffdee72f02c) at /sw/ubuntu2204_x86-64/GCC-Toolchain/v14.2.0-alice2-1/include/c++/14.2.0/bits/unique_ptr.h:193
+#26 0x0000703ad5aa4eb6 in TCling::ProcessLineSynch (this=0x3c487230, line=0x43037be0 ".X  /tmp/claude-1000/-home-shahoian-alice-O2Align/e7a24e76-634f-4668-b1f8-ced9d96f90eb/scratchpad/clx.C(\"/data0/ALG25/Pede_v10n/GLO/Config/GeometryAligned/snapshot.root\")", error=0x7ffdee72f02c) at /sw/SOURCES/ROOT/v6-36-10-alice4/v6-36-10-alice4/core/metacling/src/TCling.cxx:3628
+#27 0x0000703add00aa97 in TApplication::ExecuteFile (file=<optimized out>, error=0x7ffdee72f02c, keep=false) at /sw/SOURCES/ROOT/v6-36-10-alice4/v6-36-10-alice4/core/base/src/TApplication.cxx:1880
+#28 0x0000703add4d381b in TRint::ProcessLineNr (this=this@entry=0x3c44db20, filestem=filestem@entry=0x703add4e3306 "ROOT_cli_", line=line@entry=0x7ffdee72f040 ".x /tmp/claude-1000/-home-shahoian-alice-O2Align/e7a24e76-634f-4668-b1f8-ced9d96f90eb/scratchpad/clx.C(\"/data0/ALG25/Pede_v10n/GLO/Config/GeometryAligned/snapshot.root\")", error=error@entry=0x7ffdee72f02c) at /sw/SOURCES/ROOT/v6-36-10-alice4/v6-36-10-alice4/core/rint/src/TRint.cxx:813
+#29 0x0000703add4d4c70 in TRint::Run (this=this@entry=0x3c44db20, retrn=retrn@entry=false) at /sw/SOURCES/ROOT/v6-36-10-alice4/v6-36-10-alice4/core/rint/src/TRint.cxx:461
+#30 0x00000000004011bd in main (argc=<optimized out>, argv=0x7ffdee7311f8) at /sw/SOURCES/ROOT/v6-36-10-alice4/v6-36-10-alice4/main/src/rmain.cxx:84
+[Inferior 1 (process 2939950) detached]

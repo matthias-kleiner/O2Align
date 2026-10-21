@@ -97,7 +97,7 @@ void DetectorITS::prepareData(o2::globaltracking::RecoContainer* recoData)
       const auto gloXYZ = geom->getMatrixL2G(sensID) * locXYZ;
       auto trkXYZ = geom->getMatrixT2L(sensID) ^ locXYZ;
       double alpha = geom->getSensorRefAlpha(sensID);
-      double x = geom->getSensorRefX(sensID);
+      double x = trkXYZ.X();
       if (mIsITS3 && o2::its3::constants::detID::isDetITS3(sensID)) {
         trkXYZ.SetY(0.f);
         x = std::hypot(gloXYZ.x(), gloXYZ.y());

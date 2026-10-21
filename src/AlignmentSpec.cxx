@@ -506,7 +506,7 @@ void AlignmentSpec::run(ProcessingContext& pc)
         diagnoseWeakModes(mHierarchy.get(), fitted, mParams->weakModesOutBase);
       }
     }
-    if (mOutOpt[o2::alignrs::OutputOpt::InitialWeakModesDiag]) { // standalone: weak modes of the initial (CCDB) alignment, no millepede.res needed
+    if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiagIni]) { // standalone: weak modes of the initial (CCDB) alignment, no millepede.res needed
       diagnoseInitialAlignment(mHierarchy.get(), mDetectors, mParams->weakModesOutBase + "_initial");
     }
   }

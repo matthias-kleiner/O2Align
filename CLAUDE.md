@@ -41,8 +41,8 @@ global mode, from the constraint projection (A) and from a fit of the sensor dis
 `macro/drawWeakModes.C` plots them.
 
 `--output` is a comma-separated `EnumFlags` list: `VerboseGBL, MilleData, MilleSteer, MilleRes,
-MisRes, WeakModesDiag, InitialWeakModesDiag, Debug` ([AlignmentSpec.h](include/O2Align/AlignmentSpec.h)).
-`InitialWeakModesDiag` is a standalone pass, independent of `MilleRes`: it diagnoses the weak modes
+MisRes, WeakModesDiag, WeakModesDiagIni, Debug` ([AlignmentSpec.h](include/O2Align/AlignmentSpec.h)).
+`WeakModesDiagIni` is a standalone pass, independent of `MilleRes`: it diagnoses the weak modes
 already present in the initial (CCDB) alignment baked into the loaded geometry, relative to the
 ideal geometry, with no millepede.res involved (see [doc/WeakModes.md](doc/WeakModes.md)).
 

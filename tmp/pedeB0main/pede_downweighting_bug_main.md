@@ -1,6 +1,6 @@
 Subject: pede: outlier down-weighting breaks the gradient along directions absorbed by local parameters
 
-Version: V04-17-06 (HEAD 2f0f8a2, main); also seen in 4fd638f. The relevant code in pede.f90 is unchanged between the two.
+Version: originally fixed for V04-17-06; The relevant code in pede.f90 is unchanged, the patch was adapted to 7e3f4f57
 
 Summary
 -------

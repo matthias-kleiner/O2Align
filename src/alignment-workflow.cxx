@@ -58,9 +58,8 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfg)
   const auto withITS3 = cfg.options().get<bool>("with-its3");
   o2::alignrs::OutputEnum output(cfg.options().get<std::string>("output"));
   // rectify options
-  if (output[o2::alignrs::OutputOpt::MilleRes] || output[o2::alignrs::OutputOpt::WeakModesDiag] || output[o2::alignrs::OutputOpt::InitialWeakModesDiag]) {
+  if (output[o2::alignrs::OutputOpt::MilleRes] || output[o2::alignrs::OutputOpt::WeakModesDiag] || output[o2::alignrs::OutputOpt::WeakModesDiagIni]) {
     output.reset(o2::alignrs::OutputOpt::ProcessData);
-    output.reset(o2::alignrs::OutputOpt::MilleRes);
   }
   if (output[o2::alignrs::OutputOpt::MilleData] || output[o2::alignrs::OutputOpt::VerboseGBL]) {
     output.set(o2::alignrs::OutputOpt::ProcessData);
