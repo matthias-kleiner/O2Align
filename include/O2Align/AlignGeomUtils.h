@@ -16,6 +16,7 @@
 #define O2ALIGN_ALIGNGEOMUTILS_H
 
 #include <string>
+#include <regex>
 #include <unordered_map>
 #include <vector>
 
@@ -25,6 +26,19 @@
 
 namespace o2::alignrs::geomutils
 {
+
+/// A DOF-config-style symbolic-volume pattern: std::regex_match against either the full name or
+/// the name with an implicit arbitrary prefix (so a suffix pattern can match at any hierarchy depth).
+class VolumePattern
+{
+ public:
+  explicit VolumePattern(const std::string& pattern);
+  bool matches(const std::string& symName) const;
+
+ private:
+  std::regex mDirect;
+  std::regex mAnyPrefix;
+};
 
 /// matrices keyed by the TGeo path of the alignable volume they belong to
 using PathMatrices = std::unordered_map<std::string, TGeoHMatrix>;

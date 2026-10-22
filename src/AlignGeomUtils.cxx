@@ -20,6 +20,16 @@
 namespace o2::alignrs::geomutils
 {
 
+VolumePattern::VolumePattern(const std::string& pattern)
+  : mDirect(pattern), mAnyPrefix(".*(?:" + pattern + ")")
+{
+}
+
+bool VolumePattern::matches(const std::string& symName) const
+{
+  return std::regex_match(symName, mDirect) || std::regex_match(symName, mAnyPrefix);
+}
+
 std::string getAlignablePath(const std::string& symName)
 {
   const auto* pne = gGeoManager->GetAlignableEntry(symName.c_str());

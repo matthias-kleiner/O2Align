@@ -24,6 +24,7 @@
 #include <nlohmann/json.hpp>
 
 #include "O2Align/Volume.h"
+#include "O2Align/AlignGeomUtils.h"
 #include "O2Align/Constraint.h"
 #include "O2Align/TimeSlotsSet.h"
 #include "ITSBase/GeometryTGeo.h"
@@ -1443,15 +1444,13 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
   // bare "ITSUStave3" still matches regardless of its ancestors. Compiled once per rule here,
   // rather than once per (rule, volume) pair in the traversal below.
   std::vector<std::string> patterns;
-  std::vector<std::regex> reDirect, reAnyPrefix;
+  std::vector<geomutils::VolumePattern> compiledPatterns;
   patterns.reserve(rules.size());
-  reDirect.reserve(rules.size());
-  reAnyPrefix.reserve(rules.size());
+  compiledPatterns.reserve(rules.size());
   for (const auto& rule : rules) {
     const auto pattern = rule["match"].get<std::string>();
     try {
-      reDirect.emplace_back(pattern);
-      reAnyPrefix.emplace_back(".*(?:" + pattern + ")");
+      compiledPatterns.emplace_back(pattern);
     } catch (const std::regex_error& e) {
       LOGP(fatal, "Invalid regex in the rule match '{}': {}", pattern, e.what());
     }
@@ -1464,7 +1463,7 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
     }
     const std::string& sym = vol->getSymName();
     for (size_t i = 0; i < rules.size(); ++i) { // in order: a later matching rule replaces the DOF set of an earlier one
-      if (!std::regex_match(sym, reDirect[i]) && !std::regex_match(sym, reAnyPrefix[i])) {
+      if (!compiledPatterns[i].matches(sym)) {
         continue;
       }
       const auto& rule = rules[i];

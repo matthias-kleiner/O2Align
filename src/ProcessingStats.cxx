@@ -1,18 +1,17 @@
 #include <iostream>
-#include <fnmatch.h>
 
 #include <TCollection.h>
 #include <Framework/Logger.h>
 #include "O2Align/ProcessingStats.h"
+#include "O2Align/AlignGeomUtils.h"
 
 namespace o2::alignrs
 {
 namespace
 {
-bool matchesVolumePattern(const std::string& pattern, const std::string& symName)
+bool matchesVolumePattern(const geomutils::VolumePattern& pattern, const std::string& symName)
 {
-  return pattern.empty() || fnmatch(pattern.c_str(), symName.c_str(), 0) == 0 ||
-         fnmatch(("*" + pattern).c_str(), symName.c_str(), 0) == 0;
+  return pattern.matches(symName);
 }
 } // namespace
 
@@ -64,12 +63,13 @@ std::string ProcessingStats::asString() const
 
 TH1F ProcessingStats::createStatHisto(const std::string& pattern) const
 {
+  const geomutils::VolumePattern volumePattern(pattern);
   constexpr int nBaseCounters = 8;
   constexpr int nDetectorCounters = 7 + 7 + 6 + 2;
   int nVolumeCounters{0};
   for (const auto& [label, count] : nTrcByLabel) {
     const auto nameIt = labelToSymName.find(label);
-    if (nameIt != labelToSymName.end() && matchesVolumePattern(pattern, nameIt->second)) {
+    if (nameIt != labelToSymName.end() && matchesVolumePattern(volumePattern, nameIt->second)) {
       ++nVolumeCounters;
     }
   }
@@ -101,7 +101,7 @@ TH1F ProcessingStats::createStatHisto(const std::string& pattern) const
   histogram.GetXaxis()->SetBinLabel(bin++, "nTOFPoints");
   for (const auto& [label, count] : nTrcByLabel) {
     const auto nameIt = labelToSymName.find(label);
-    if (nameIt == labelToSymName.end() || !matchesVolumePattern(pattern, nameIt->second)) {
+    if (nameIt == labelToSymName.end() || !matchesVolumePattern(volumePattern, nameIt->second)) {
       continue;
     }
     histogram.SetBinContent(bin, count);
@@ -123,10 +123,11 @@ void ProcessingStats::Print(Option_t* option) const
   }
   const std::string pattern = option == nullptr ? std::string{} : std::string{option};
   if (!pattern.empty()) {
+    const geomutils::VolumePattern volumePattern(pattern);
     LOGP(info, "Volume statistics for pattern '{}':", pattern);
     for (const auto& [label, count] : nTrcByLabel) {
       const auto nameIt = labelToSymName.find(label);
-      if (nameIt != labelToSymName.end() && matchesVolumePattern(pattern, nameIt->second)) {
+      if (nameIt != labelToSymName.end() && matchesVolumePattern(volumePattern, nameIt->second)) {
         LOGP(info, "\t{}: {}", nameIt->second, count);
       }
     }
