@@ -174,6 +174,87 @@ Two things it deliberately cannot do, because they are not collective *drifts* o
 A pinned DOF that no descendant has free is skipped with a warning, which is the expected message
 when, say, the stave RZ below an OB half-barrel is fixed.
 
+## Weighting the Mean by Statistics
+
+Both forms above split the mean equally (`1/N`) over the contributors, regardless of how much data
+actually constrains each one. That is usually harmless, but not when the contributors' own statistics
+differ by an order of magnitude or more — e.g. an ITS IB end chip (chip0/chip8 of a stave) sees far
+fewer hits than the chips in the middle, since only the high-|tgλ| tail of tracks reaches that far
+along the stave. The equal-weight mean still ties that chip's DOF to its well-determined siblings on
+exactly the same footing as if it had just as much data, which can leave its own, genuinely different
+correction under-applied: the DOF's formal pede error looks deceptively small (set mostly by its
+high-statistics neighbours through the shared constraint) while its best-fit value only partially
+reflects what its own, scarce hits call for.
+
+`AlignParams.useStatWeightedMeanConstraints` (default `false`) switches every mean-of-children
+equation — automatic or `pinChildrenMean`/`pinChildrenMeanNoCross`, transported or cross-term-free —
+from the equal `1/N` split to one weighted by each contributor's own accumulated statistics
+(`Volume::getDataCounter()`, the number of tracks that actually contributed to that volume), normalised
+to sum to 1 within that equation. It requires per-volume track counts from an actual data pass. The
+steering files (`mp2tree.txt`/`mp2con.txt`/`mp2param.txt`) are always written from `endOfStream`
+(never from `init`), precisely so these counts — whichever of the two ways below they come from — are
+available by the time `mp2con.txt` is written:
+- With `ProcessData` (i.e. `MilleData,MilleSteer`), the counts are this run's own, accumulated as its
+  TFs are processed and final once `endOfStream` is reached.
+- With `MilleSteer` requested standalone (no data at all — the usual way to try a more restricted
+  `dofConfigJson` against mille data already recorded with a wider-open one, reusing the same
+  `mp2data.bin`), there is no data pass of its own. Point `AlignParams.statInFile` at the
+  `ProcessingStats` ROOT file (`AlignParams.statFile`) a *previous* `ProcessData` run wrote (needs
+  `AlignParams.volumeStatistics=true`, the default) to load its counts back instead. `statInFile` is
+  consulted whenever it is needed — either `AlignParams.useStatWeightedMeanConstraints` is `true`, *or*
+  `dofConfigJson` has at least one `weightedMean` rule asking for `true` on some DOF, since that
+  per-rule override takes effect regardless of the global switch and would otherwise silently fall back
+  to an equal split for lack of counts. Without a usable `statInFile` in either case, the write falls
+  back to an equal split, with a warning.
+
+Pipelined (`--pipeline`) runs use lane 0's own counts only, not summed with the other lanes': every
+weight is normalised within its own equation, so a common scale across all its contributors cancels
+out, and lane 0 alone is already equivalent to the full dataset for this purpose, given the TFs are
+evenly distributed across lanes.
+
+The `weightedMean` clause overrides this global default per volume and per DOF, the same "replace,
+don't merge" way as the other clauses — a bool (all DOFs), `"all"`, or an array of DOF names (every
+other DOF of that volume is then explicitly *not* weighted, like `pinChildrenMean`'s array form):
+
+```json
+{ "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUChip[0-9]+", "weightedMean": ["RY"] }
+```
+
+A DOF never touched by any matching `weightedMean` rule keeps falling back to
+`AlignParams.useStatWeightedMeanConstraints`.
+
+**Prefer the per-rule `weightedMean` clause over the global switch.** The global switch changes the
+default for *every* mean-of-children equation in the hierarchy at once, including ones whose
+contributors are not comparable in the way the feature was designed for. A mean-of-children equation
+sums contributors that are siblings under the same parent, and the statistics-weighted split is only
+meaningful when those siblings' track counts are proportional to how well each one's own correction is
+determined — true for same-size, same-role volumes like the chips of one stave (the motivating case:
+an IB end chip's far fewer hits versus its middle-chip siblings). It stops being meaningful once a
+single equation mixes contributors of different granularity or role, which the global switch
+reaches just as readily as the intended ones:
+- `ITS`'s own `pinChildrenMeanNoCross` sums the two IB half-barrels *and* the six OB half-barrels in
+  one equation. Their track counts differ by detector-geometry, not by alignment-quality, reasons
+  (far more OB sensors/hits than IB) — weighting by them does not express "trust the better-determined
+  side more," just "trust whichever side happens to have more silicon."
+- A `pinChildrenMeanNoCross` whose matched contributors span deliberately asymmetric roles (e.g. a
+  config giving one branch much coarser segmentation than its sibling) has the same problem: counts
+  there differ by design, not by how well-determined the correction is.
+- Even a structurally uniform equation can be swayed by something unrelated to alignment precision —
+  e.g. instantaneous luminosity or trigger-selection differences slicing an otherwise symmetric
+  detector's track yield unevenly run-by-run — silently shifting which contributor the mean constraint
+  trusts, in a way that has nothing to do with this run's alignment quality.
+
+None of this is diagnosed or validated end-to-end; the feature was designed and tested against the
+specific IB-chip-in-a-stave case. Turning on `AlignParams.useStatWeightedMeanConstraints=true` applies
+the same reasoning everywhere at once, including to equations where it hasn't been checked and may do
+the opposite of what's intended. Scope it instead with a `weightedMean` rule matched only to the
+volume(s) actually diagnosed (e.g. the IB stave's mean-of-chips equation), leaving every other
+equation's default untouched; `statInFile` is consulted whenever any rule anywhere needs it (see
+above), so a scoped rule gets the same track-count loading as the global switch without its reach.
+Since it changes only the *weights* of an existing equation, not which DOFs are free or how many
+equations are written, it can't by itself turn a
+rank-deficient or missing constraint into a valid one, or vice versa.
+
 ## Constraining Global Deformation Modes
 
 `pinChildrenMean` and the automatic mean constraint are both *rigid-body* constraints: 6 scalar

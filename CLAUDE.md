@@ -29,7 +29,16 @@ that the fit recovers it.
 Three-stage workflow, the same executable each time:
 1. `--output MilleData,MilleSteer` over reconstructed data — writes `mp2data.bin` and the steering
    files `mp2tree.txt` / `mp2con.txt` / `mp2param.txt`. The `gbl::MilleBinary` is opened at the 1st
-   TF and kept open until `endOfStream`, the trajectories of every TF being appended.
+   TF and kept open until `endOfStream`, the trajectories of every TF being appended. The steering
+   files are likewise always written from `endOfStream` (not at `init()`), after this lane's
+   per-volume track counts (`Volume::getDataCounter()`) are final, so `AlignParams.useStatWeightedMeanConstraints=true`
+   (see [doc/DOFConfig_rules.md](doc/DOFConfig_rules.md#weighting-the-mean-by-statistics)) can weight
+   `mp2con.txt`'s hierarchical mean constraints by them instead of splitting equally. The common
+   pattern of recording `mp2data.bin` once with a wide-open `dofConfigJson` and then regenerating just
+   the steering files (`--output MilleSteer`, no data — reached via `endOfStream` just the same, after
+   the single `run()` call of the `NoInpDummyOutSpec` companion) against a more restricted one still
+   works with stat-weighting on, via `AlignParams.statInFile` pointing at a previous run's saved
+   `ProcessingStats` (`AlignParams.statFile`).
 2. `pede` (external, from Millepede-II) → `millepede.res`.
 3. `--output MilleRes` — reads no data at all (the workflow inserts `NoInpDummyOutSpec`), only
    rebuilds the hierarchy and translates `millepede.res` into `result.json`, subtracting the

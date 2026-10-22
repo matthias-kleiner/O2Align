@@ -274,6 +274,18 @@ class AlignmentSpec final : public Task
   void updateTimeDependentParams(ProcessingContext& pc);
   void buildHierarchy();
 
+  // write mp2tree.txt/mp2con.txt/mp2param.txt. statWeighted is forwarded to
+  // Volume::writeRigidBodyConstraints: false for the immediate, data-independent write done from
+  // init() when stat-weighting was not requested (or could not be, for lack of usable statistics);
+  // true for the deferred write done from endOfStream() once this lane's per-volume track counts are
+  // accumulated, or for the standalone case once they are loaded back from Params::statInFile.
+  void writeMilleSteerFiles(bool statWeighted);
+
+  // load each volume's getDataCounter() from a ProcessingStats ROOT file written by a previous
+  // ProcessData run (Params::statFile) -- see Params::statInFile. Returns
+  // false (nothing is set) if the file or the object inside it can't be read.
+  bool loadVolumeStatistics(const std::string& fname);
+
   // calculate the transport jacobian for points FROM and TO numerically via ridder's method
   // this assumes the track is already at point FROM and will be extrapolated to TO's x (xTo)
   // method does not modify the original track
@@ -493,22 +505,7 @@ void AlignmentSpec::run(ProcessingContext& pc)
     process();
     mRecoData = nullptr;
   } else {
-    updateTimeDependentParams(pc);
-    if (mOutOpt[o2::alignrs::OutputOpt::MilleRes] || mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
-      const auto fitted = Volume::readMillepedeResults(mParams->milleResFile);
-      if (mOutOpt[o2::alignrs::OutputOpt::MilleRes]) { // conversion of pede results to alignment and calibration objects
-        Volume::writeMillepedeResults(mHierarchy.get(), fitted, mParams->milleResOutJson, mParams->misAlgJson);
-        if (!mParams->algParamsOutFile.empty()) {
-          writeAlignParams(fitted);
-        }
-      }
-      if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
-        diagnoseWeakModes(mHierarchy.get(), fitted, mParams->weakModesOutBase);
-      }
-    }
-    if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiagIni]) { // standalone: weak modes of the initial (CCDB) alignment, no millepede.res needed
-      diagnoseInitialAlignment(mHierarchy.get(), mDetectors, mParams->weakModesOutBase + "_initial");
-    }
+    updateTimeDependentParams(pc); // still needed: triggers buildHierarchy() on the first call, sets mFieldOFF/detector timestamps
   }
 }
 
@@ -928,14 +925,53 @@ void AlignmentSpec::buildHierarchy()
       LOGP(info, "Mean vertex position and slope are fixed, they are imposed as a prior w/o being aligned");
     }
   }
-  if (mOutOpt[o2::alignrs::OutputOpt::MilleSteer] && mLane == 0) {
-    std::ofstream tree(mParams->milleTreeFile);
-    mHierarchy->writeTree(tree);
-    std::ofstream cons(mParams->milleConFile);
-    mHierarchy->writeRigidBodyConstraints(cons);
-    std::ofstream par(mParams->milleParamFile);
-    mHierarchy->writeParameters(par);
+  // the steering files (mp2tree.txt/mp2con.txt/mp2param.txt) are written from endOfStream(), not here:
+  // with ProcessData, Volume::getDataCounter() is only final once every TF of this lane is processed;
+  // without it (standalone MilleSteer), endOfStream() is reached after the single, guaranteed run()
+  // call of the NoInpDummyOutSpec companion, so there is no need to write them already at this point.
+}
+
+void AlignmentSpec::writeMilleSteerFiles(bool statWeighted)
+{
+  std::ofstream tree(mParams->milleTreeFile);
+  mHierarchy->writeTree(tree);
+  std::ofstream cons(mParams->milleConFile);
+  mHierarchy->writeRigidBodyConstraints(cons, statWeighted);
+  std::ofstream par(mParams->milleParamFile);
+  mHierarchy->writeParameters(par);
+}
+
+bool AlignmentSpec::loadVolumeStatistics(const std::string& fname)
+{
+  TFile statIn(fname.c_str());
+  if (statIn.IsZombie()) {
+    LOGP(warn, "useStatWeightedMeanConstraints: cannot open statInFile '{}'", fname);
+    return false;
   }
+  auto* stats = statIn.Get<o2::alignrs::ProcessingStats>("ProcessingStats");
+  if (!stats) {
+    LOGP(warn, "useStatWeightedMeanConstraints: no ProcessingStats object in statInFile '{}'", fname);
+    return false;
+  }
+  int nSet = 0, nTot = 0;
+  mHierarchy->traverse([&](Volume* volume) {
+    ++nTot;
+    const auto it = stats->nTrcByLabel.find(static_cast<int>(volume->getLabel().raw(0)));
+    if (it != stats->nTrcByLabel.end()) {
+      volume->setDataCounter(it->second);
+      ++nSet;
+    }
+  });
+  if (nSet != nTot) {
+    // a mean-of-children equation normalises by the sum of its contributors' counts: a volume missing
+    // from statInFile is indistinguishable from one that genuinely saw zero tracks, so it would be
+    // given zero weight instead of being excluded from the weighting altogether, silently skewing the
+    // equation towards whichever contributors happened to be covered. Treat any gap as unusable.
+    LOGP(warn, "useStatWeightedMeanConstraints: statInFile '{}' covers only {} of this hierarchy's {} volumes; treating its counts as unusable and falling back to an equal split", fname, nSet, nTot);
+    return false;
+  }
+  LOGP(info, "useStatWeightedMeanConstraints: loaded per-volume track counts for all {} volumes from '{}'", nSet, fname);
+  return true;
 }
 
 bool AlignmentSpec::getTransportJacobian(const TrackD& track, double xTo, double alphaTo, gbl::Matrix5d& jac, gbl::Matrix5d& err)
@@ -1645,11 +1681,57 @@ void AlignmentSpec::endOfStream(EndOfStreamContext& /*ec*/)
     mDBGOut.reset();
   }
   if (!mOutOpt[o2::alignrs::OutputOpt::ProcessData]) {
+    // standalone MilleSteer/MilleRes/WeakModesDiag/WeakModesDiagIni (run() only called
+    // updateTimeDependentParams, which already triggered buildHierarchy() on its first, guaranteed
+    // call): no track data is read, only millepede.res and the geometry/hierarchy already built are
+    // needed, so this can wait until here, after any run() invocation (there is at most one, from the
+    // NoInpDummyOutSpec companion).
+    if (mOutOpt[o2::alignrs::OutputOpt::MilleSteer] && mLane == 0) {
+      // the typical use of a standalone MilleSteer is to try a more restricted dofConfigJson against
+      // mille data already recorded with a wider-open one: there is no data pass of its own, so
+      // stat-weighting can only come from a previous ProcessData run's saved counts (statInFile).
+      // Needed not only when the global switch is on, but also when the dofConfigJson itself requests
+      // stat weighting for some volume via an explicit "weightedMean" rule: that per-DOF override takes
+      // effect regardless of the global switch, so without loading statInFile it would silently fall
+      // back to an equal split (Volume::writeChildrenMeanConstraints has no counts to work with).
+      const bool needStats = mParams->useStatWeightedMeanConstraints || mHierarchy->hasAnyWeightedMean();
+      if (needStats && !mParams->statInFile.empty() && loadVolumeStatistics(mParams->statInFile)) {
+        writeMilleSteerFiles(mParams->useStatWeightedMeanConstraints);
+      } else {
+        if (needStats) {
+          LOGP(warn, "stat-weighted mean constraints requested (globally or via a 'weightedMean' rule) without ProcessData and without a usable statInFile: no data to weight by, writing the steering files with an equal-split fallback now");
+        }
+        writeMilleSteerFiles(mParams->useStatWeightedMeanConstraints);
+      }
+    }
+    if (mOutOpt[o2::alignrs::OutputOpt::MilleRes] || mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
+      const auto fitted = Volume::readMillepedeResults(mParams->milleResFile);
+      if (mOutOpt[o2::alignrs::OutputOpt::MilleRes]) { // conversion of pede results to alignment and calibration objects
+        Volume::writeMillepedeResults(mHierarchy.get(), fitted, mParams->milleResOutJson, mParams->misAlgJson);
+        if (!mParams->algParamsOutFile.empty()) {
+          writeAlignParams(fitted);
+        }
+      }
+      if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
+        diagnoseWeakModes(mHierarchy.get(), fitted, mParams->weakModesOutBase);
+      }
+    }
+    if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiagIni]) { // standalone: weak modes of the initial (CCDB) alignment, no millepede.res needed
+      diagnoseInitialAlignment(mHierarchy.get(), mDetectors, mParams->weakModesOutBase + "_initial");
+    }
     return;
   }
   mMille.reset(); // flushes and closes the binary
 
-  if (mParams->volumeStatistics && mHierarchy) {
+  if (mOutOpt[o2::alignrs::OutputOpt::MilleSteer] && mLane == 0) {
+    // all per-volume track counts for this lane (Volume::getDataCounter) are now final. With several
+    // DPL lanes, only lane 0's own counts are used (not summed with the other lanes'): since every DOF
+    // weight is normalised within its own equation, a common scale across all contributors to that
+    // equation cancels out, so lane 0 alone is already equivalent to the full dataset for this purpose.
+    writeMilleSteerFiles(mParams->useStatWeightedMeanConstraints);
+  }
+
+  if (mHierarchy) {
     mHierarchy->traverse([this](Volume* volume) {
       const int label = static_cast<int>(volume->getLabel().raw(0));
       const std::string& name = volume->getSymName();

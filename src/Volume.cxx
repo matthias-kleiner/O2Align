@@ -184,7 +184,22 @@ void Volume::finalise(uint8_t level)
   }
 }
 
-void Volume::writeRigidBodyConstraints(std::ostream& os) const
+bool Volume::hasAnyWeightedMean() const
+{
+  for (auto f : mWeightedMean) {
+    if (f == WeightedMeanFlag::True) {
+      return true;
+    }
+  }
+  for (const auto& c : mChildren) {
+    if (c->hasAnyWeightedMean()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void Volume::writeRigidBodyConstraints(std::ostream& os, bool statWeighted) const
 {
   if (isRoot()) {
     // a global deformation mode spans the whole tree, so its equation is written once here and not
@@ -195,12 +210,12 @@ void Volume::writeRigidBodyConstraints(std::ostream& os) const
   // a volume which is not rigid-body alignable (the root of the hierarchy, a detector envelope)
   // imposes no constraint on its branches, but these may still constrain their own children
   if (!isLeaf() && mRBAllowed) {
-    writeChildrenMeanConstraints(os);
+    writeChildrenMeanConstraints(os, statWeighted);
   }
   writeRigidBodyDOFMeasurements(os); // a sensor may be measured too
   writeCalibDOFMeasurements(os);     // a calibration DOF (e.g. the mean vertex) may be measured too
   for (const auto& c : mChildren) {
-    c->writeRigidBodyConstraints(os);
+    c->writeRigidBodyConstraints(os, statWeighted);
   }
 }
 
@@ -214,20 +229,43 @@ void Volume::writeRigidBodyConstraints(std::ostream& os) const
 // pins the common mode of the children, there being no parameter of this volume to absorb it.
 // A DOF flagged by mPinChildrenMeanNoCross ("pinChildrenMeanNoCross") gets, in addition, the
 // cross-term-free variant of the same equation -- see addChildrenMeanTerms for why that matters.
-void Volume::writeChildrenMeanConstraints(std::ostream& os) const
+void Volume::writeChildrenMeanConstraints(std::ostream& os, bool statWeighted) const
 {
   // the degeneracy is with the nearest free level below, which needs not be the direct children
   std::vector<MeanContributor> contributors;
   collectMeanContributors(Matrix66::Identity(), contributors);
-  const double weight = contributors.empty() ? 0. : 1.0 / static_cast<double>(contributors.size());
+  const size_t n = contributors.size();
+  const std::vector<double> equalWeights(n, n ? 1.0 / static_cast<double>(n) : 0.);
+  // the per-DOF choice (statWeighted default or a "weightedMean" override) only selects between this
+  // and equalWeights below: the underlying statistics do not depend on iDOF, so they are computed once
+  std::vector<double> statWeights;
+  bool haveStatWeights = false;
+  if (n) {
+    statWeights.resize(n);
+    double sum = 0.;
+    for (size_t i = 0; i < n; ++i) {
+      sum += (statWeights[i] = static_cast<double>(contributors[i].vol->getDataCounter()));
+    }
+    if (sum > 0.) {
+      for (auto& w : statWeights) {
+        w /= sum;
+      }
+      haveStatWeights = true;
+    }
+  }
   for (int iDOF = 0; iDOF < RigidBodyDOFSet::NDOF; ++iDOF) {
     const bool free = mRigidBody && mRigidBody->isFree(iDOF);
     const char* dofName = RigidBodyDOFSet::RigidBodyDOFNames[iDOF];
+    const bool wantStat = mWeightedMean[iDOF] == WeightedMeanFlag::Unset ? statWeighted : (mWeightedMean[iDOF] == WeightedMeanFlag::True);
+    if (wantStat && n && !haveStatWeights) {
+      LOGP(warn, "weightedMean of DOF {} for {}: every contributor has zero accumulated statistics, falling back to an equal split", dofName, mSymName);
+    }
+    const std::vector<double>& weights = (wantStat && haveStatWeights) ? statWeights : equalWeights;
     // the transported (cross-term) equation, for a free or pinChildrenMean-flagged DOF
     if (free || mPinChildrenMean[iDOF]) {
       Constraint con(std::format("DOF {} for {}{}", dofName, mSymName, free ? "" : " (pinned)"), 0.);
       if (!contributors.empty()) {
-        addChildrenMeanTerms(con, iDOF, contributors, weight, false);
+        addChildrenMeanTerms(con, iDOF, contributors, weights, false);
       }
       // a single term is a legitimate constraint as well: e.g. for a parent with a single active
       // child it removes the degeneracy of their common rotation
@@ -241,7 +279,7 @@ void Volume::writeChildrenMeanConstraints(std::ostream& os) const
     if (mPinChildrenMeanNoCross[iDOF]) {
       Constraint con(std::format("DOF {} for {} (pinned, no cross-terms)", dofName, mSymName), 0.);
       if (!contributors.empty()) {
-        addChildrenMeanTerms(con, iDOF, contributors, weight, true);
+        addChildrenMeanTerms(con, iDOF, contributors, weights, true);
       }
       if (con.getSize() > 0) {
         con.write(os);
@@ -314,9 +352,11 @@ void Volume::collectMeanContributors(const Matrix66& jToThis, std::vector<MeanCo
   }
 }
 
-void Volume::addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<MeanContributor>& contributors, double weight, bool noCross)
+void Volume::addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<MeanContributor>& contributors, const std::vector<double>& weights, bool noCross)
 {
-  for (const auto& [vol, j] : contributors) {
+  for (size_t ic = 0; ic < contributors.size(); ++ic) {
+    const auto& [vol, j] = contributors[ic];
+    const double weight = weights[ic];
     if (noCross) {
       // only the contributor's own iDOF, with no transport: the equation then says that the plain mean
       // of that one DOF vanishes, which no other DOF of the contributor can pay for
@@ -1201,6 +1241,41 @@ void Volume::applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::st
   }
 }
 
+// Apply the "weightedMean" clause of a rule: a bool (all DOFs), "all", or an array of DOF names.
+// Unlike pinChildrenMean's flags (which are meaningless without a separate "on" switch), each DOF
+// here is tri-state: Unset (no matching rule yet) falls back to the statWeighted default passed to
+// writeRigidBodyConstraints, while a matching rule always sets every DOF explicitly (True or False),
+// "all" or a bool touching every DOF and an array touching only the named ones -- false for the rest,
+// mirroring pinChildrenMean's "replace, don't merge" reset of the whole array on every match.
+void Volume::applyWeightedMeanConfig(const nlohmann::json& cfg, const std::string& pattern)
+{
+  if (!isRigidBodyAllowed()) {
+    if (isLiteralPattern(pattern)) {
+      LOGP(warn, "Ignoring the weightedMean rule '{}': {} is not rigid-body alignable", pattern, mSymName);
+    }
+    return;
+  }
+  if (cfg.is_boolean()) {
+    mWeightedMean.fill(cfg.get<bool>() ? WeightedMeanFlag::True : WeightedMeanFlag::False);
+    return;
+  }
+  if (cfg.is_string() && cfg.get<std::string>() == "all") {
+    mWeightedMean.fill(WeightedMeanFlag::True);
+    return;
+  }
+  if (!cfg.is_array()) {
+    LOGP(fatal, "Invalid weightedMean clause in the rule '{}', allowed are a bool, \"all\" or a list of DOF names", pattern);
+  }
+  mWeightedMean.fill(WeightedMeanFlag::False);
+  for (const auto& name : cfg) {
+    const auto idx = RigidBodyDOFSet::dofIndex(name.get<std::string>());
+    if (idx < 0) {
+      LOGP(fatal, "Unknown rigid-body DOF '{}' in the weightedMean rule '{}', allowed are TX,TY,TZ,RX,RY,RZ", name.get<std::string>(), pattern);
+    }
+    mWeightedMean[idx] = WeightedMeanFlag::True;
+  }
+}
+
 // Apply the "globalModes" clause of a rule: a bool (all equations), "all", or an array of names, each
 // of which may be a mode name (radialScaling, zScaling, curl, twist, elliptical, bowing,
 // radialHarmonic, tangentialHarmonic, globalTilt, radialPolar, tangentialPolar, longitudinalPolar),
@@ -1414,6 +1489,9 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
       }
       if (rule.contains("pinChildrenMeanNoCross")) {
         vol->applyPinChildrenMeanConfig(rule["pinChildrenMeanNoCross"], pattern, true);
+      }
+      if (rule.contains("weightedMean")) {
+        vol->applyWeightedMeanConfig(rule["weightedMean"], pattern);
       }
       if (rule.contains("globalModes")) {
         vol->applyGlobalModesConfig(rule["globalModes"], pattern);

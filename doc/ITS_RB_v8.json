@@ -16,6 +16,7 @@
 
   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+", "rigidBody": ["TX", "TY", "TZ", "RY"] },
   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+", "measurement": { "TX": [0.0, 0.0005] } },
+  { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+", "weightedMean": ["TX", "TY", "TZ", "RY"] },
 
   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUChip[0-9]+", "rigidBody": ["TX", "TY", "TZ", "RY"] },
   { "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUChip[0-9]+", "measurement": { "TX": [0.0, 0.001], "TY": [0.0, 0.0005], "TZ": [0.0, 0.001] } },

@@ -88,7 +88,10 @@ class Volume
   void finalise(uint8_t level = 0);
 
   // steering file output
-  void writeRigidBodyConstraints(std::ostream& os) const;
+  /// statWeighted: default weighting of the hierarchical mean-of-children constraint (see
+  /// writeChildrenMeanConstraints) for every DOF of every volume whose own "weightedMean" clause did
+  /// not override it.
+  void writeRigidBodyConstraints(std::ostream& os, bool statWeighted = false) const;
   void writeParameters(std::ostream& os) const;
   void writeTree(std::ostream& os, int indent = 0) const;
 
@@ -359,6 +362,13 @@ class Volume
   void incDataCounter() noexcept { ++mStat; }
   void setDataCounter(uint32_t c) noexcept { mStat = c; }
 
+  /// true if this volume or any descendant has an explicit "weightedMean" rule requesting statistics
+  /// weighting for at least one DOF, regardless of the statWeighted default passed to
+  /// writeRigidBodyConstraints. Used to decide whether per-volume statistics must be available (loaded
+  /// from Params::statInFile in the standalone MilleSteer case) even if Params::useStatWeightedMeanConstraints
+  /// itself is off.
+  bool hasAnyWeightedMean() const;
+
  protected:
   /// matrices
   Volume* mParent{nullptr}; // parent
@@ -391,6 +401,15 @@ class Volume
   /// "replace, don't merge" semantics of the rigidBody/calib clauses. The two clauses have independent
   /// flags and may both be set on the same volume (they are different equations).
   void applyPinChildrenMeanConfig(const nlohmann::json& pin, const std::string& pattern, bool noCross);
+  /// apply the "weightedMean" clause of a rule: a bool (all DOFs), "all", or an array of DOF names.
+  /// Per DOF of this volume, overrides whether its mean-of-children constraint (the automatic one for
+  /// a free DOF, or the one written for pinChildrenMean/pinChildrenMeanNoCross) weights each
+  /// contributor by its accumulated getDataCounter() instead of splitting the mean equally (1/N) --
+  /// see writeChildrenMeanConstraints. A DOF never touched by any matching "weightedMean" rule keeps
+  /// falling back to the statWeighted default passed to writeRigidBodyConstraints; once a rule does
+  /// match, that DOF is set explicitly (true or false) and no longer falls back, exactly as the other
+  /// clauses "replace, don't merge" on a later match.
+  void applyWeightedMeanConfig(const nlohmann::json& cfg, const std::string& pattern);
   /// apply the "measurement" clause of a rule: {"TX": [value, sigma], "SlopeX": {"value": v, "sigma": s}, ...}
   /// external measurements of rigid-body AND/OR calibration DOFs of this volume, resolved by name
   /// against whichever of mRigidBody/mCalib has a matching dofName() (the two never share a name),
@@ -420,7 +439,7 @@ class Volume
   void writeCalibDOFMeasurements(std::ostream& os) const;
   /// constraints of this volume over its children: the vanishing mean movement of the children in
   /// every free or pinned rigid-body DOF of this volume, see writeRigidBodyConstraints
-  void writeChildrenMeanConstraints(std::ostream& os) const;
+  void writeChildrenMeanConstraints(std::ostream& os, bool statWeighted) const;
   /// a free-DOF descendant contributing to the mean constraints of this volume, with the jacobian
   /// transporting its DOFs to the frame of this volume
   struct MeanContributor {
@@ -438,7 +457,9 @@ class Volume
   /// collective drift: the transported form mixes translations and rotations with lever arms of up to
   /// tens of cm, so it is cheaply satisfied by a weakly-observable rotation (an ITS half-stave RZ of
   /// 7.5 mrad cancelling a 97 um mean TY) instead of by the displacement one meant to constrain.
-  static void addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<MeanContributor>& contributors, double weight, bool noCross);
+  /// weights has one entry per contributor, in the same order, already normalised (e.g. equal 1/N, or
+  /// each contributor's share of the accumulated statistics) -- see writeChildrenMeanConstraints.
+  static void addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<MeanContributor>& contributors, const std::vector<double>& weights, bool noCross);
 
   std::string mSymName;
   Label mLabel;
@@ -458,6 +479,13 @@ class Volume
   /// as mPinChildrenMean, but the equation sums only the children's *same-named* DOF, without the
   /// jacobian cross-terms. Set by the "pinChildrenMeanNoCross" clause; see addChildrenMeanTerms.
   std::array<bool, RigidBodyDOFSet::NDOF> mPinChildrenMeanNoCross{};
+  /// per rigid-body DOF: whether this volume's mean-of-children constraint is weighted by each
+  /// contributor's accumulated statistics instead of an equal split; Unset (the default) falls back to
+  /// the statWeighted argument of writeRigidBodyConstraints. Set by the "weightedMean" clause.
+  enum class WeightedMeanFlag : uint8_t { Unset = 0,
+                                           False,
+                                           True };
+  std::array<WeightedMeanFlag, RigidBodyDOFSet::NDOF> mWeightedMean{};
   /// per global deformation-mode equation (flat index, see NGlobalEq): this volume's free rigid-body
   /// DOFs take part in it. Set by the "globalModes" clause; see writeGlobalModeConstraints.
   std::array<bool, NGlobalEq> mGlobalModes{};

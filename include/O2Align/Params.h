@@ -120,7 +120,23 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   double ridderEps = 1e-16;
 
   // MillePede output
-  bool volumeStatistics = true; // include per-volume accepted-track counters in the statistics output
+  // weight the hierarchical mean-of-children constraint (Volume::writeChildrenMeanConstraints) by each
+  // contributor's accumulated track count instead of an equal 1/N split, so a low-statistics edge
+  // volume (e.g. an IB end chip) isn't pulled to match higher-statistics siblings in that equation.
+  // A per-volume/per-DOF "weightedMean" rule in dofConfigJson overrides this default and, on its own,
+  // requests the same statistics regardless of this switch. The steering files are always written from
+  // endOfStream(), not init(), so the counts are available by then either way:
+  // - with ProcessData, they are this run's own, accumulated as its TFs are processed;
+  // - without it (steering files regenerated standalone), see statInFile below.
+  bool useStatWeightedMeanConstraints = false;
+  // when regenerating the steering files standalone (MilleSteer w/o ProcessData, e.g. to try a more
+  // restricted dofConfigJson against mille data already recorded with a wider-open one), there is no
+  // data pass of its own to accumulate statistics from: if useStatWeightedMeanConstraints is set, or
+  // dofConfigJson has at least one "weightedMean" rule asking for true, give here the path of a
+  // ProcessingStats ROOT file (statFile of a previous ProcessData run) to load each volume's track
+  // count from instead. Left empty, or if the file can't be read or doesn't cover every contributor of
+  // a weighted equation, falls back to an equal-split write for that equation, with a warning.
+  std::string statInFile = "";
   std::string statFile = "procStat";
   std::string milleBinFile = "mp2data";
   std::string milleConFile = "mp2con.txt";
