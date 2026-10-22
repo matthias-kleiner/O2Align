@@ -264,16 +264,22 @@ void Volume::writeChildrenMeanConstraints(std::ostream& os, bool statWeighted) c
     const std::vector<double>& weights = (wantStat && haveStatWeights) ? statWeights : equalWeights;
     // the transported (cross-term) equation, for a free or pinChildrenMean-flagged DOF
     if (free || mPinChildrenMean[iDOF]) {
-      Constraint con(std::format("DOF {} for {}{}", dofName, mSymName, free ? "" : " (pinned)"), 0.);
-      if (!contributors.empty()) {
+      // w/o a free descendant DOF realising it, a free parent DOF has no degeneracy to break. A merely
+      // nonzero coupling is not enough: e.g. for OB chips with only TX free under a module with TX,TY,TZ
+      // free, the module TY/TZ equations would be the TX one scaled by the chip/module misrotation,
+      // making the constraint matrix singular.
+      if (maxChildrenCoupling(iDOF, contributors) < MinChildrenCoupling) {
+        if (free) {
+          LOGP(debug, "No mean constraint of DOF {} for {}: no free descendant DOF realises it", dofName, mSymName);
+        } else {
+          LOGP(warn, "Ignoring pinChildrenMean of DOF {} for {}: no free descendant DOF realises it", dofName, mSymName);
+        }
+      } else {
+        // a single term is a legitimate constraint as well: e.g. for a parent with a single active
+        // child it removes the degeneracy of their common rotation
+        Constraint con(std::format("DOF {} for {}{}", dofName, mSymName, free ? "" : " (pinned)"), 0.);
         addChildrenMeanTerms(con, iDOF, contributors, weights, false);
-      }
-      // a single term is a legitimate constraint as well: e.g. for a parent with a single active
-      // child it removes the degeneracy of their common rotation
-      if (con.getSize() > 0) {
         con.write(os);
-      } else if (!free) { // w/o any free descendant DOF feeding it, a free parent DOF has no degeneracy to break
-        LOGP(warn, "Ignoring pinChildrenMean of DOF {} for {}: no free descendant DOF contributes to it", dofName, mSymName);
       }
     }
     // the cross-term-free equation, an independent one: the plain mean of the children's own iDOF
@@ -376,6 +382,19 @@ void Volume::addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<M
       }
     }
   }
+}
+
+double Volume::maxChildrenCoupling(int iDOF, const std::vector<MeanContributor>& contributors)
+{
+  double maxCoupling = 0.;
+  for (const auto& [vol, j] : contributors) {
+    for (int jDOF = 0; jDOF < vol->mRigidBody->nDOFs(); ++jDOF) {
+      if (vol->mRigidBody->isFree(jDOF)) {
+        maxCoupling = std::max(maxCoupling, std::abs(j(iDOF, jDOF)));
+      }
+    }
+  }
+  return maxCoupling;
 }
 
 // Displacement field u(x) of a global deformation mode of unit amplitude, in the GLOBAL frame,

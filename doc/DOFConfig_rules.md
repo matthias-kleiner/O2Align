@@ -74,6 +74,13 @@ two cases that matter in practice:
    Here the half-barrel's `TY` and the mean `TY` of its staves are tied together automatically; a stave
    free only in, say, `RZ` instead would still contribute to that same constraint via `j(TY, RZ)`.
 
+   The equation is written only if some contributor really realises the parent DOF, i.e. the largest
+   `|j(iDOF, jDOF)|` over the contributors' free DOFs is at least `Volume::MinChildrenCoupling` (1e-2).
+   Otherwise the parent DOF is not degenerate with the children (case 3 below) and the equation would
+   consist only of the leakage of small frame misrotations. Example: OB chips free only in `TX` under a
+   module free in `TX,TY,TZ`. The module `TY`/`TZ` equations would be its `TX` equation scaled by
+   10⁻⁷–10⁻⁵, and pede stops on the singular constraint matrix. The same cut applies to `pinChildrenMean`.
+
 2. **Parent DOF fixed, descendants' DOF free.** There is no parameter at the parent level to be
    degenerate with, so **no constraint is written by default**: the children (and the hierarchy below
    them) are free to drift together in that DOF, which may be a genuinely unconstrained or only
@@ -89,7 +96,7 @@ two cases that matter in practice:
    Without the `pinChildrenMean` clause, this configuration leaves the mean `TY` of the staves
    unconstrained; with it, the mean is pinned to the (fixed) half-barrel position.
 
-A third, unproblematic case is a free parent DOF with **no** free descendant DOF below it at all (see
+A third, unproblematic case is a free parent DOF with **no** free descendant DOF realising it (see
 [Aligning a Subtree as One Rigid Body](#aligning-a-subtree-as-one-rigid-body)): there is nothing to be
 degenerate with, so no constraint is needed or written, automatically or otherwise, and the parent
 DOF is still fully observable from the leaf measurements.

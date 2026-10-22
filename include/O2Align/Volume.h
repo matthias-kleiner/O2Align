@@ -460,6 +460,11 @@ class Volume
   /// weights has one entry per contributor, in the same order, already normalised (e.g. equal 1/N, or
   /// each contributor's share of the accumulated statistics) -- see writeChildrenMeanConstraints.
   static void addChildrenMeanTerms(Constraint& con, int iDOF, const std::vector<MeanContributor>& contributors, const std::vector<double>& weights, bool noCross);
+  /// Largest |jacobian element| coupling the DOF iDOF of this volume to a free DOF of any contributor.
+  static double maxChildrenCoupling(int iDOF, const std::vector<MeanContributor>& contributors);
+  /// Below this coupling the contributors cannot realise the parent DOF (only frame misrotations
+  /// leak into it), so its transported mean equation is a rescaled copy of another one.
+  static constexpr double MinChildrenCoupling = 1e-2;
 
   std::string mSymName;
   Label mLabel;
