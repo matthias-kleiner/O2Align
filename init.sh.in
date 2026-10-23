@@ -17,3 +17,8 @@ fi
 if [[ ":$LD_LIBRARY_PATH:" != *":@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_LIBDIR@:"* ]]; then
     export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_LIBDIR@"
 fi
+
+# GBL is a runtime dependency of libO2AlignRS and must also be visible to ROOT/Cling.
+if [[ -n "@GBL_LIBRARY_DIR@" && ":$LD_LIBRARY_PATH:" != *":@GBL_LIBRARY_DIR@:"* ]]; then
+    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}@GBL_LIBRARY_DIR@"
+fi

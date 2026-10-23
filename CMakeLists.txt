@@ -14,6 +14,17 @@ find_package(OpenMP)
 
 include(AddRootDictionary)
 
+# GBL is loaded both by the executable and by ROOT's dictionary autoloading.
+# Keep its library directory available to runtime consumers through init.sh.
+if(GBL_LIB_GBL)
+  get_filename_component(GBL_LIBRARY_DIR "${GBL_LIB_GBL}" DIRECTORY)
+else()
+  get_target_property(GBL_LIBRARY_FILE GBL::GBL IMPORTED_LOCATION)
+  if(GBL_LIBRARY_FILE)
+    get_filename_component(GBL_LIBRARY_DIR "${GBL_LIBRARY_FILE}" DIRECTORY)
+  endif()
+endif()
+
 set(O2_ALIGN_PUBLIC_LIBRARIES
     O2::MathUtils
     O2::Steer
