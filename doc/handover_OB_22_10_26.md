@@ -4,6 +4,7 @@ Written for: the person continuing the ITS alignment tuning (knows O2Align, Mill
 State: 2026-10-22. Everything below is read from `/data/devAlg/solA2v10` (config `doc/ITS_RB_v10.json`), compared
 with `/data/devAlg/solA2v8ns` and with the older `res` trees in `/data/devAlg/tests/ITSBarFix` and
 `/data/devAlg/tests/StavesOnly`. Nothing was re-run except checkResid post-processing and tree reading.
+Sections 6–8 were added on 2026-10-23: the `solA2v11` result, the OB half-barrel weak mode, and the v12 config.
 
 ## 1. What v10 tried, and why it did nothing
 
@@ -110,7 +111,123 @@ What to check after the run:
 4. The fitted chip TX show the row structure (≈ ±7 µm between rows); if they do, report the half-pitch coincidence to
    the O2 ITS geometry/segmentation side.
 
-## 6. Tools
+## 6. v11 result (`/data0/devAlg/tests/solA2v11`, 2026-10-23)
+
+pede ran on all 45 `milleB0/BPlus/BMinus` files (`mpSteerV11.txt`), while v10 used only `mp2data_0.bin` of each, so
+v10 → v11 mixes config and data. The steering keyword `minresqlp` is not one of pede's method names
+(`sparseMINRES`, `sparseMINRES-QLP`, …; pede accepts an 80 % fuzzy match). pede therefore ran its default, plain MINRES
+with sparse storage (`METSOL = 4`, `MATSTO = 2` in `millepede.log`). MINRES reached its iteration limit of 2000
+(`istop = 5`) in the last 4 pede iterations. The limit `itnlim=2000` is hard-coded in `pede.f90` and cannot be set from the steering file.
+
+The checks of section 5:
+
+| check | v10 | v11 |
+|---|---|---|
+| 1. checkResid row gap (pp) | 16–25 µm | 3–7 µm, same sign |
+| 2. OB dy vs φ RMS of medians (OO / pp) | 9–21 µm | 3–6 µm |
+| 2. harmonics n = 40 / 48 | 7–19 µm | ≤ 1.5 µm |
+| 3. end-module dy spikes, e.g. Lr6 m6 chip 3 (pp / OO) | +46 / +42 µm | +4.5 / +6 µm, i.e. geometry |
+| per-chip dy rms (n ≥ 150) | 15–34 µm | 7–16 µm |
+
+4. Fitted chip TX:
+   - In the geometry, row A (chips 0–6) has local x = −φ̂ and local z = −Z. Row B is flipped by 180° about the
+     normal.
+   - The children-mean constraint is written in local coordinates. It therefore gives mean(TX_A) = mean(TX_B) exactly,
+     in every module.
+   - Both rows fit the same local TX of about +4…+10 µm (median per layer). The row gap is thus a constant offset in
+     the chip's own frame of about a quarter pitch, which appears as about half a pitch between the rows.
+   - This points at a sensor/segmentation convention rather than at mounting. `SegmentationAlpide` has deliberately
+     asymmetric edges (`PassiveEdgeReadOut` 1.2 mm, `PassiveEdgeTop` 37 µm), and `detectorToLocal` accounts for them.
+     No bug was found there. This is the item to report to the O2 ITS geometry/segmentation side.
+
+Problems left by v11:
+- **TX gradient vs module RY.** A linear chip-TX gradient inside a module is degenerate with module RY (correlation
+  −0.66…−0.88 in Lr4–6).
+- **Stave-end chips.** These are Module0 chips 0/13, plus Module3 chips 6/7 in Lr3–4 and Module6 chips 6/7 in Lr5–6
+  (|z| ≈ 40.7 / 72 cm). They take unphysical TX values up to 770 µm. The counts of chips with |TX| > 60 µm are
+  Lr3 221, Lr5 112 and Lr6 463, all in the end modules. These chips are outside the checkResid acceptance.
+- **dz vs Z, small-scale pattern (p.4).** These are random chip z offsets, because OB chip TZ is still fixed:
+  - The within-module scatter is 5–17 µm MAD, with no common chip-in-module pattern (< 1.5 µm).
+  - The offsets reproduce between pp and OO (r ≈ 0.75) and between v10 and v11 (r ≈ 0.93).
+- **dz vs tgλ at large |tgλ| (p.8).** This is not a radial shift:
+  - At fixed cluster Z (3 cm bins), Lr3 has d(dz)/d(tgλ) = +10…+29 µm per unit tgλ at |Z| > 22 cm, with the same sign at
+    both ends, while dz/tgλ ≈ 0. A radial offset would make the two equal.
+  - It is the same with V10n.
+  - It is a nonlinear incidence (or z_v) effect, not alignment.
+- **B+ vs B0 gap in dy vs φ (p.1).** In pp B0 only, there is an n = 2 term in every OB layer, with the same phase
+  (cos ≈ +2…+3, sin ≈ −2.5…−4.7, i.e. 3–5.6 µm). It is absent in OO B+ and in the IB, and identical in v10 and v11. It
+  depends on the dataset (field or period), not on the iteration. The test is separate pede fits on B0 and on B±. Lr4 OO
+  also has an n = 1 term of about 4 µm.
+
+Re-recording Mille data with the v11 alignment is not needed yet:
+- Every open item above can be addressed on the existing data. The OB chip TZ derivatives are already in the
+  `ITS_RB_all` recording.
+- Linearization is not a limit at these sizes (tens of µm, ≲ 0.4 mrad).
+- An incremental recording would turn the chip priors into priors on the increment, letting the badly constrained end
+  chips drift further.
+- Record once with the final alignment, as a convergence check; a converged fit should then return near-zero
+  corrections.
+
+## 7. The OB half-barrel "scissor" weak mode
+
+The user's B=0 test extrapolates a 3-IB-point track to the OB clusters (lab X / Y vs φ). For v11 it shows a top/bottom
+half-barrel pattern; for V10n it is flat.
+
+The geometry diff vs V10n (mean shift of the OB sensor centres per layer and half-barrel; HB0 = top, y > 0) shows a
+Y "scissor":
+
+| v11 − V10n, dY (µm) | Lr3 | Lr4 | Lr5 | Lr6 |
+|---|---|---|---|---|
+| HB0 (top) | +5.3 | +4.0 | −0.9 | −4.5 |
+| HB1 (bottom) | −6.2 | −2.8 | +1.0 | +4.0 |
+
+- **Shape.** Top and bottom move in opposite directions, roughly linearly in R, with the sign changing at Lr5. The
+  Lr3/4 halves open by about 10 µm while the Lr6 halves close by about 8.5 µm. X has a weaker version of the same
+  pattern.
+- **Growth.** The same pattern is about ±2.5 µm in v8ns, ±3–4 µm in v10 and ±4.5–6 µm in v11. It grows as more OB DOFs
+  are freed.
+- **Why `rayModes` misses it.** With `rMin` = 10, each (φ, t) cell equation only fixes Σ_s (e·d_s)/r_s over all OB
+  layers together. For this pattern the sum is about 1% of Σ|·| (e.g. −13 against 1291 for dY on the top HB).
+- **Why NoCross misses it.** `pinChildrenMeanNoCross` is blind to it by construction: a half-barrel translation is a
+  cos φ / sin φ pattern of the stave DOFs (see `DOFConfig_rules.md`).
+- **Why the data barely constrain it.** An OB-only rφ field a + b·R is absorbed by each track's d0 and φ. Only the IB
+  plus vertex lever constrains it, and that lever carries little weight in the global fit. It is exactly what the B=0
+  test measures.
+- **Possible link to section 6.** A top/bottom-opposite Y shift projects mostly onto n = 2 in dy vs φ. It may be related
+  to the B0-only n = 2 term of section 6; not verified.
+- **Caveat.** Projecting the geometry diffs through an exact 3-point IB line gives changes of tens of µm, larger than
+  the user's plots show. The IB's own 1–3 µm rφ changes between versions are amplified about 10× at Lr6. The user's
+  test probably includes the vertex or weights the points; get its definition before comparing quantitatively.
+
+## 8. Next step: `doc/ITS_RB_v12.json`
+
+v12 = v11 plus the following changes. No new Mille data is needed; use the same 45 files (`mpSteerV11.txt`).
+
+| change | rule |
+|---|---|
+| OB half-barrels: transported pin for the translations (section 7) | `"pinChildrenMean": ["TX","TY"]` + `"pinChildrenMeanNoCross": ["TZ","RY"]` |
+| OB module RY fixed (TX-gradient degeneracy) | module `rigidBody: ["TX","TY","TZ"]` |
+| OB chip TZ freed (dz pattern, p.4) | chip `rigidBody: ["TX","TZ"]`, priors TX and TZ 20 µm |
+| stave-end chips: tighter priors | TX and TZ 5 µm on Module0 chips 0/13, Module3 chips 6/7 (Lr3–4), Module6 chips 6/7 (Lr5–6) |
+
+- Using the transported pin is safe here. OB stave RZ is fixed and the staves are centred at z = 0. In the generated
+  equations the stave TZ and RY coefficients are about 1e-5 and 5e-4, so no cheap DOF can pay for a half-barrel shift.
+- `DOFConfig_rules.md` warns that putting both pin forms on one volume can make the constraints rank-deficient. Here
+  they cover different DOFs, but check `pede.log` for a reported rank.
+- A later `measurement` rule replaces all earlier priors of a volume, so the end-chip rules repeat TX and TZ.
+- Generated steering, checked:
+  - free parameters 34 146 → 56 142 (+23 688 chip TZ, −1 692 module RY);
+  - RY constraints 488 → 200 (no module RY below the half-staves);
+  - TZ constraints 495 → 2 187 (each module's TZ is now the mean of its chips).
+- Expect pede to need about 25 GB (v11 peaked at 8.25 GB for about 28.6k parameters).
+
+What to check after the run:
+1. The section 7 scissor is gone from the geometry diff vs V10n, and the B=0 IB-extrapolation test is flat again.
+2. Per-chip dz scatter in the OB drops; the small-scale dz vs Z pattern (p.4) disappears.
+3. The stave-end chip TX/TZ stay within a few × 5 µm.
+4. The row gap and the dy vs φ improvements of section 6 survive.
+
+## 9. Tools
 
 Per-chip grouping of the `res` tree (compiled with ACLiC in the O2 env; `CheckResidTypes.h` lacks the
 `GlobalTrackID.h` include, add it before including the header):
@@ -127,3 +244,9 @@ for (auto& p : tr->points) {
 
 Use medians (`TH1::GetQuantiles`), not means; ignore bins with < 150 entries. The full pp tree (2 M tracks) takes a few
 minutes. Harmonic analysis of the medians: a plain DFT of the 100 φ-bin medians of `checkResidMedians.C` output.
+
+The scripts for sections 6–7 were kept only in a session scratchpad and are probably gone. They are easy to redo:
+- per-sensor median dy/dz: `TTree::Draw("points.dy:points.sens")` into a TH2F, then per-bin quantiles;
+- chip frames and centres: `getMatrixL2G(s)` applied to (0,0,0) and to the unit axes, for each geometry;
+- geometry diffs: differences of those dumps between two `o2sim_geometry-aligned.root` files;
+- labeled chip TX: parsed from `millepede_labeled.res`.

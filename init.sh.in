@@ -13,7 +13,7 @@ if [[ ":$PATH:" != *":@CMAKE_INSTALL_PREFIX@/bin:"* ]]; then
     export PATH="${PATH:+$PATH:}@CMAKE_INSTALL_PREFIX@/bin"
 fi
 
-# Add lib directory to LD_LIBRARY_PATH if not already present
-if [[ ":$LD_LIBRARY_PATH:" != *":@CMAKE_INSTALL_PREFIX@/lib:"* ]]; then
-    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}@CMAKE_INSTALL_PREFIX@/lib"
+# Add the configured library directory to LD_LIBRARY_PATH if not already present
+if [[ ":$LD_LIBRARY_PATH:" != *":@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_LIBDIR@:"* ]]; then
+    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_LIBDIR@"
 fi
