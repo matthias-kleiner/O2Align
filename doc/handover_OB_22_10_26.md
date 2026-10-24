@@ -6,6 +6,7 @@ with `/data/devAlg/solA2v8ns` and with the older `res` trees in `/data/devAlg/te
 `/data/devAlg/tests/StavesOnly`. Nothing was re-run except checkResid post-processing and tree reading.
 Sections 6–8 were added on 2026-10-23: the `solA2v11` result, the OB half-barrel weak mode, and the v12 config.
 Sections 9–10 were added on 2026-10-24: why v12 failed (`/data/devAlg/solA2v12`), and the v14 config that replaces it.
+Section 12 was added later on 2026-10-24: the v14 and v11re results, and how the scissor escapes the v14 pin.
 
 ## 1. What v10 tried, and why it did nothing
 
@@ -269,7 +270,7 @@ The total χ² is only 0.2 % lower (432.4 M vs 433.4 M). There were four causes.
   cause 2.
 - They add 23.7 k poorly constrained parameters. Lr3 chip TZ have an RMS of 31 µm against a 20 µm prior.
 
-**4. The two runs used different solvers.**
+**4. The two runs used different solvers (not a cause, see section 12).**
 
 | | v11 | v12 |
 |---|---|---|
@@ -278,10 +279,8 @@ The total χ² is only 0.2 % lower (432.4 M vs 433.4 M). There were four causes.
 | Acond | ≈ 40 | 2.4e4, growing to 9.3e4 |
 | expected dF at the end | 5.5e3 | 1.6e4 |
 
-- v11's MINRES did not converge. For a singular system, stopping early keeps the solution near zero along the weak
-  directions: an accidental regularisation.
-- v12's MINRES-QLP converged, and so exposes every freedom the constraints leave open.
-- Part of v11's clean weak-mode picture is therefore due to the solver, not to the configuration.
+- **Refuted by the v11 refit (section 12).** v11 refitted with MINRES-QLP (`solA2v11re`) gives the same result as
+  v11, so the solver is not a confound. The v12 weak modes come from causes 1–3 alone.
 - v12 reports Arnorm = ‖A·r‖ ≈ 1e19–1e21. This cannot be right, since Arnorm ≤ Anorm·rnorm ≈ 600. It points to a
   numerical problem in the preconditioned singular system; not investigated.
 - Neither fit converged in the outer iterations: dF_exp is still 5.5e3 for v11 and 1.6e4 for v12.
@@ -314,7 +313,6 @@ Steering checks:
 Run and comparison:
 - Use the same 45 Mille files (`mpSteerV11.txt`).
 - Use the same `method` as v12, MINRES-QLP, so that pede converges. Judge v14 on its own weak-mode PDF and checkResid.
-- A strict comparison with v11 needs v11 refitted with the same solver.
 
 What to check after the run:
 1. The radialScaling / bowing / longitudinalPolar amplitudes stay at the v11 level, and the mean stave TX/TY per
@@ -347,3 +345,55 @@ The scripts for sections 6–7 were kept only in a session scratchpad and are pr
 - chip frames and centres: `getMatrixL2G(s)` applied to (0,0,0) and to the unit axes, for each geometry;
 - geometry diffs: differences of those dumps between two `o2sim_geometry-aligned.root` files;
 - labeled chip TX: parsed from `millepede_labeled.res`.
+
+## 12. v14 and v11re results: the scissor escapes through the modules
+
+Runs, both with MINRES-QLP on the same 45 files:
+- `/data/devAlg/solA2v11re`: v11 refitted. The result is the same as v11 (χ² 433.57 M vs 433.39 M; per half-barrel
+  shifts within 1 µm).
+- `/data/devAlg/solA2v14`: the large v12 weak modes are gone, but checkResid is the same as v11.
+
+Displacement per layer and half-barrel, relative to V10n:
+- It was fitted from the sensor centres (`pos` of `algdump.root`, which is the full aligned geometry; `pos0` is the
+  ideal one) as a translation (Tx, Ty), a radial shift dr and a rotation ω.
+- It was then split by hierarchy level, mapping each ancestor's fitted TX/TY/TZ to the global frame.
+- The sum over the levels reproduces the geometry difference to < 0.5 µm.
+
+| Ty top / bottom (µm) | Lr3 | Lr4 | Lr5 | Lr6 |
+|---|---|---|---|---|
+| v11, staves | +29.4 / −31.3 | +18.8 / −31.1 | +28.5 / −19.5 | +35.2 / +5.1 |
+| v11, modules | −21.2 / +22.7 | −12.7 / +27.0 | −33.4 / +23.9 | −46.3 / +4.5 |
+| v11, total | +9.0 / −10.3 | +6.9 / −4.8 | −1.7 / +1.9 | −7.6 / +6.9 |
+| v14, staves | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 |
+| v14, modules | +5.1 / −6.0 | +5.7 / −1.4 | −2.8 / +2.3 | −9.9 / +6.5 |
+| v14, total | +6.4 / −7.7 | +7.1 / −2.6 | −1.2 / +1.2 | −7.2 / +5.0 |
+| v12 (module RY fixed), modules | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 |
+
+- **The v14 pin works on what it sees.** It removes the large, mutually cancelling stave and module translations of
+  v11 and zeroes the stave part.
+- **The total scissor is nearly unchanged (−0…30 %).** The modules now carry it.
+- **The escape route is the module RY cross-term.**
+  - The half-stave children-mean constraint is transported, so it reads Σ_m t_m = Σ_m ω_m × c_m. With module RY (about
+    the sensor normal) free and the modules spread in z, the mean module TX (rφ) of a half-stave is paid by a fan of
+    module RY ∝ z.
+  - In v14, per half-stave, mean module TX = −mean(RY·z) with correlation −1.00. Its RMS is 30 µm (Lr3) and 65 µm (Lr6).
+  - This is the "TX gradient vs module RY" degeneracy of section 6, seen from the half-stave side.
+  - The pin's contributor walk stops at the staves (the documented `collectMeanContributors` limitation), so it cannot
+    see the module part.
+- **Fixing module RY closes the route.** In v12, where module RY was fixed, the module translations are exactly 0.
+- **Common to every version is a radial expansion relative to V10n,** about the same in all of them: OB dr +15
+  (Lr3) … +26 µm (Lr6), IB −6 … −8 µm. It is not part of the scissor.
+
+Next step: v15 = v14 with the OB module `rigidBody` set to `["TX","TY","TZ"]`. The fit then cannot shift a
+half-barrel layer through any level.
+- If the B=0 IB-extrapolation test becomes flat at about the same χ², the scissor was a weak mode.
+- If χ² rises noticeably, or new dy patterns appear in checkResid, the data really want the scissor. Then look for its
+  source (e.g. the B0-only n = 2 term of section 6) rather than constraining it.
+
+v15 steering (`doc/ITS_RB_v15.json`, in `/data/devAlg/solA2v15`, same 6-slot MV setup as v14):
+- Free parameters: 32 454, i.e. 1692 fewer than v14 (the OB module RY).
+- Constraints: 4125, i.e. 288 fewer (the half-stave RY mean equations, with no free RY below them any more). The 16
+  half-barrel TX/TY pins and the 1632 stave-end chip priors are unchanged.
+- The constraint matrix has full rank. The smallest eigenvalue of the row-normalised C·Cᵀ is 4.9e-6 (v14: 1.8e-5).
+  The softest direction is now a set of `rdphi` ray cells at |t| ≈ 1.5, which fewer OB DOFs realise once module RY is
+  fixed. Check pede's reported rank.
