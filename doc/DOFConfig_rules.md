@@ -224,7 +224,7 @@ don't merge" way as the other clauses — a bool (all DOFs), `"all"`, or an arra
 other DOF of that volume is then explicitly *not* weighted, like `pinChildrenMean`'s array form):
 
 ```json
-{ "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUChip[0-9]+", "weightedMean": ["RY"] }
+{ "match": "ITS/ITSULayer[0-2]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+", "weightedMean": ["RY"] }
 ```
 
 A DOF never touched by any matching `weightedMean` rule keeps falling back to
