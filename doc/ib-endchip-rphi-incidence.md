@@ -1,23 +1,33 @@
-# IB end-chip dy-vs-Z pattern: origin and proposed fix
+# IB end chips and chip bowing: dy-vs-Z and dz-vs-Z patterns
 
 Written for: whoever continues the ITS alignment tuning (knows O2Align, Millepede-II and checkResid).
-State: 2026-10-24. Supersedes the conclusion "rphi-only, non-rigid term" of the 2026-10-22/23 version:
-that term was an artefact of the offline Mille fit (section 5).
+State: 2026-10-25. Supersedes the versions of 2026-10-22/23 ("rphi-only, non-rigid term", which was an
+artefact, section 5) and of 2026-10-24 ("the end-chip priors block the fit", which was wrong, section 6).
 
 ## 1. Summary
 
-- The Lr0 end-chip excess in dy vs Z (page 3 of the checkResid PDF) is reproduced by rigid motions of the
-  IB chips. The IB Mille data are consistent with rigid chips: there is no rφ-only term.
-- **Two ingredients are missing from v8ns/v10/v11:**
-  - chip **RX**, a tilt about the chip's rφ axis, so that the normal displacement grows along z. Those
-    configurations keep it fixed.
-  - large **end-chip shifts**. On Lr0 chip0, the data want TY ≈ −37 µm (stave rms 24 µm) and TX ≈ +11 µm.
-    The chip priors inherited from v8 (TY 5 µm, TX 10 µm) forbid this.
-- **v13** freed RX and RZ but kept those priors. Pede then compensated on the end chips with an RX of the
-  wrong sign, and the dy-vs-Z pattern did not improve.
-- **v13b** (`doc/ITS_RB_v13b.json`) relaxes the end-chip priors. It is not tested yet.
-- The pooled RY "endChipTilt" of `handout_endchip_dy_vs_z.md` rotates about the wrong axis: in the local
-  frame RY is the in-plane rotation.
+- **End chips (dy vs Z, Lr0 |Z| > 10 cm).** The pattern is a rigid displacement of the IB end chips:
+  - a normal shift plus a tilt about the chip's rφ axis (RX);
+  - strongest on Lr0 chip0, the z>0 end; on chip8 the shift varies from stave to stave without a coherent
+    pattern.
+
+  The IB Mille data are consistent with rigid chips.
+- **Why earlier fits missed it.**
+  - v8ns, v10 and v11 kept chip RX fixed.
+  - Freeing it (v13) was not enough: pede's `globalModes` constraints, written once "over ALICE" with the
+    IB layers included, forbid the corresponding IB deformation.
+  - The chip priors and pede's outlier treatment were tested and are not the cause.
+- **Fix.** `doc/ITS_RB_IBv0.json` (= v13b with `globalModes` restricted to the OB) moves the end chips, and
+  the dy-vs-Z residuals improve (`/data/devAlg/solA2IBv0`, section 7). The changes are confined to the end
+  chips, apart from a common ~9 µm translation of the IB plus mean vertex relative to the OB.
+- **Chip bowing (dz vs Z "V" shapes).** The remaining V shape inside each chip comes from chips bent out of
+  plane along z:
+  - normal displacement ∝ w², sagitta about −1…−3 µm;
+  - chip-to-chip spread 2–6 µm.
+
+  No rigid DOF can absorb it; it needs a new per-chip deformation DOF (section 8).
+- **The handout.** The pooled RY "endChipTilt" of `handout_endchip_dy_vs_z.md` rotates about the wrong
+  axis: in the local frame RY is the in-plane rotation.
 
 ## 2. checkResid with cluster size and snp (v8ns trees)
 
@@ -47,7 +57,7 @@ vertex, which gives no direction.
    combinations of charge and pT (< 0.8 / > 0.8 GeV/c).
    - This excludes a bias from curvature or from the field model, and an offset that differs between Lr1
      and Lr2: the weight of such an offset at Lr0 changes about 2× between the pT bins.
-   - It does **not** exclude a common shift of Lr1 and Lr2 relative to Lr0. That reaches Lr0 with a weight
+   - It does not exclude a common shift of Lr1 and Lr2 relative to Lr0. That reaches Lr0 with a weight
      of about −1 at any momentum (−1.03 at 0.6 GeV/c, −1.07 at 3 GeV/c in the toy).
 2. **The OB has almost no weight.** A toy of the checkResid leave-one-out Kalman combination (straight
    lines, or a helix with a loose curvature prior for B≠0, with multiple scattering and approximate
@@ -61,16 +71,17 @@ vertex, which gives no direction.
      after averaging over all 12 staves. No PV translation can do that.
 
 The vertex "vortex" for |zv| > 11 cm tracks (a φ-independent dyv of −20…−97 µm) is the same effect seen
-from the vertex. The Mille fit of section 4, which uses the vertex, attributes the effect to the end chips
-themselves.
+from the vertex. The Mille fit (section 4), which uses the vertex, attributes it to the end chips, and the
+IBv0 result confirms that (section 7).
 
 ## 4. Mille fit (mean vertex free)
 
 Data: `/data/devAlg/mille{B0,BPlus,BMinus}/mp2data_0.bin`, recorded with all six chip DOFs; the same files
-as the v13 pede run.
-- **Parameters:** the extended accumulator adds per-chip columns beyond the rigid y/z copies. The
-  mean-vertex calibration of every time slot is free; it comes out at (+0.32, −1.82) mm, as in pede.
-- **Other globals:** the other non-IB parameters stay at their recorded reference values.
+as the v13…IBv0 pede runs.
+- **Parameters:** the IB chips with all six DOFs (y and z rows tied), the IB staves and half barrels, and
+  the mean vertex of every time slot. The mean vertex comes out at (+0.32, −1.82) mm, as in pede.
+- **Other globals:** all other globals stay at their recorded reference, or at the v13b values where
+  stated.
 - **Locals:** the local parameters are profiled out per record.
 
 Δχ² (B0 / B+ / B−). The gain expected by chance equals the number of parameters.
@@ -89,9 +100,11 @@ as the v13 pede run.
 | RZ, all chips | 432 | 19.3k | 36.1k | 36.6k |
 | RX + RZ | 864 | 48.2k | 101k | 103k |
 
-- **Rigid chips are enough.** Only a modest out-of-plane bow remains beyond them.
+- **Rigid chips are enough,** apart from the bow (section 8).
 - **The RZ pattern.** RZ shows a coherent twist along Lr0, from +1.5 mrad on chip0 to −1.3 mrad on chip8.
-  Pede finds it too (section 6).
+  Pede finds the same in every run.
+- **Staves and half barrels are exactly redundant with the chips.** Adding all 324 of their parameters to
+  the chip-only fit gains Δχ² = 0, as it should.
 
 Lr0 chip0, stave mean (rms), all six chip DOFs free, B+:
 
@@ -99,18 +112,10 @@ Lr0 chip0, stave mean (rms), all six chip DOFs free, B+:
 |---|---|---|---|---|---|
 | +11 (13) µm | −37 (24) µm | +1 (5) µm | −28 (15) µm | −6.5 (5) µm | +1.5 (1.1) mrad |
 
-RX, as the stave mean of the normal displacement at w = 1.5 cm. The pattern is the same in all three
-fields:
+The pattern is the same in all three fields. Chip8 has a large stave-to-stave scatter instead of a
+coherent shift (TY rms 34 µm, TZ rms 24 µm).
 
-| | chip0 | chip1 | chip2 | chips 3–7 | chip8 |
-|---|---|---|---|---|---|
-| Lr0 | −30 µm | −14.5 µm | −7 µm | −1…+5 µm | ~0 to +1.5 µm |
-| Lr1 / Lr2 | −10 / −7 µm | | | | −6 / −3 µm |
-
-Chip8 has a large stave-to-stave scatter instead of a coherent shift (TY rms 34 µm, TZ rms 24 µm). The
-direction (towards or away from the beam) has not been checked against the sign conventions.
-
-## 5. The artefact: y-only normal term with the mean vertex fixed
+## 5. Artefact: the y-only normal term with the mean vertex fixed
 
 A first version of the accumulator kept every non-IB global fixed, including the mean vertex. The vertex
 records measure the mean vertex relative to a reference at (0, 0), so each vertex was pulled by about
@@ -123,11 +128,9 @@ only with a y-only chip term, and produced:
 All of this disappears with the mean vertex free (section 4). `macro/milleSplit.cxx` now frees the mean
 vertex, and the rule is noted in `CLAUDE.md`.
 
-## 6. Configurations tested and proposed
+## 6. Why v13 and v13b did not move the end chips
 
-### v13 (`doc/ITS_RB_v13.json`, result in `/data/devAlg/solA2v13`)
-
-Changes from v8 / v8ns:
+**v13** (`doc/ITS_RB_v13.json`, `/data/devAlg/solA2v13`) is v8/v8ns with these changes:
 
 | level | change |
 |---|---|
@@ -136,51 +139,154 @@ Changes from v8 / v8ns:
 | IB half barrels | `pinChildrenMeanNoCross: ["RX"]` |
 | removed | the stave `weightedMean` rule (v8ns used equal-weight constraints) |
 
-**Result.**
-- dz vs Z of Lr1/Lr2 and the vertex dy at Z > 6 cm improved.
-- The Lr0 dy vs Z did not improve: per-bin medians at the z>0 end went +13 → +10 µm, at the z<0 end
-  +6 → +10 µm (worse), and the sawtooth remains.
+- **Result.** dz vs Z of Lr1/Lr2 and the vertex dy at Z > 6 cm improved. The Lr0 dy vs Z did not: per-bin
+  medians at the z>0 end went +13 → +10 µm, at the z<0 end +6 → +10 µm, and the sawtooth remained.
+- **What pede did.** On Lr0 chips 1–7, pede agrees with the free Mille fit in every DOF to within a few µm.
+  On chip0 it gives TY +0.7 µm and RX +12.8 µm, against −37 / −28 µm in the free fit.
 
-**Why.** For Lr0 chips 1–7, the v13 values agree with the free Mille fit in every DOF to within a few µm,
-including the RZ twist. On chip0, the priors block the shift the data want, and pede compensates with an
-RX of the wrong sign:
+**Hypotheses tested and rejected:**
 
-| Lr0 chip0, stave mean | TX | TY | RX (at 1.5 cm) | RY (at 1.5 cm) |
-|---|---|---|---|---|
-| Mille fit, mean vertex free, no priors | +11 µm | −37 µm | −28 µm | −6.5 µm |
-| pede v13 | −2 µm | +0.6 µm | +13 µm | +3 µm |
+| test | outcome |
+|---|---|
+| v13b: end-chip priors relaxed to TX 30, TY 50, TZ 30 µm | values unchanged within 0.5 µm; χ² −3k out of 29.2M |
+| `solA2v13bNOCHI`: no record cut, no down-weighting (0 rejected records) | values unchanged |
+| my fit with all records kept (no χ²/ndf cut) | still wants the end-chip shift |
+| my fit with the OB and all other globals at the v13b values | still wants the end-chip shift |
 
-### v13b (`doc/ITS_RB_v13b.json`, not tested)
+For the last row the χ² cost of pede's end chips stays at Δχ² 8–16k per field.
 
-It is v13 plus one rule after the chip prior rule. The rule relaxes the priors of IB chips 0 and 8 to
-TX 30, TY 50 and TZ 30 µm, keeping RX and RZ at 3 mrad.
+**Direct check of the objective.** A record-level evaluator applies a parameter set, refits the locals of
+each Mille record and sums the χ²:
+- **Same objective as pede.** At pede's v13b solution it gives 3.9751×10⁷ for the three files, against
+  pede's reported 3.9753×10⁷.
+- **Pede is not at the data minimum.** With my chip solution, the total is 54k lower (B0 −9.8k,
+  B+ −24.6k, B− −20.0k).
 
-Checks when it is run:
-- the Lr0 dy vs Z at both ends and the per-chip sawtooth;
-- whether Lr0 chip0 TY comes out near −37 µm and RX near −28 µm (at 1.5 cm);
-- the constraint rank in `millepede.log` and the weak modes, since the end-chip shifts are now loosely
-  constrained.
+So pede's v13b solution is not the χ² minimum of the data. Pede solves by matrix inversion, so the
+difference must come from what it adds to the data: priors or constraints.
 
-The Mille data above carry all derivatives: regenerate the steering files with `--output MilleSteer` and
-rerun pede.
+**The constraints are the cause.**
+- **They reproduce pede.** Imposing pede's constraints from `mp2con.txt` exactly (via a null-space
+  projection) reproduces pede's end chips: chip0 TY +3 µm, RX +11 µm.
+- **Without the priors** they still hold chip0 at TY −3 µm, RX +10 µm, at a real data cost of 2.9k in B0.
+  So the priors are not the cause.
+- **Each hierarchical constraint type alone is a pure gauge fix.** This holds for Σ chip RZ = 0 per stave
+  and for the transported stave TX/TY/TZ and RX/RY means. Each can be satisfied inside the data null space.
+- **The combination is not.** Combined, the constraints have rank 328, of which only 324 lie in the data
+  null space. So 4 equations restrict directions that the data measure.
+- **Where the 4 come from.** The excess appears when the 11 `globalModes` equations "over ALICE" (twist,
+  bowing, zScaling, radial/tangential/longitudinal polar) are combined with the stave, half-barrel and
+  ITS-level pins. It is a collective dependence, not one bad equation: removing any single global mode,
+  any of the ITS-level NoCross pins, or one of many IB half-barrel equations lowers the excess by 1.
+- **Ray modes reach the IB too.** The `rayModes` equations touching the IB are "r-range 0" cells (18–127
+  sensors each). They are part of the same constraint set.
 
-## 7. Open points
+Each `globalModes` equation forces one pattern to zero over the whole flagged set. With `ITS/.+` and the
+per-layer IB rules, the IB layers sit in the same equations as the OB. An IB deformation that the vertex
+and the IB tracks measure is then forbidden, unless the OB pays for it with the opposite one.
 
-- **Lr0 sawtooth.** The per-chip sawtooth seen in checkResid should be removed by chip RX/RY. If it
-  survives v13b, compare checkResid with a residual computed from the full vertex + Lr1..Lr6 fit, which is
-  what pede effectively sees.
-- **Out-of-plane bow.** The bow ∝ w² (Δχ² 10–19k for 432 parameters) is the only non-rigid shape with a
-  significant gain. It cannot be fitted with the current DOF sets.
+All other constraints kept and no priors, B0, cost relative to the free optimum:
 
-## 8. Tools
+| global modes dropped | χ² cost | Lr0 chip0 TY / RX |
+|---|---|---|
+| none (as pede) | 2886 | −3 / +10 µm |
+| any single mode | 1.6k–2.8k | mostly little change |
+| `radialPolar_r0t2` + `tangentialPolar_r0t2` | 875 | −39 / −6 µm |
+| the four r0t1/r0t2 radial and tangential modes | 538 | −29 / −13 µm |
+| all | 127 | −51 / −23 µm |
+
+Two caveats on this test. My first KKT solve with `lstsq` silently dropped the constraints, because the
+normal-equation entries (~10¹⁰) swamp the constraint coefficients (~1). Only the null-space projection is
+reliable. And dropping every mode also frees directions that really are unconstrained: chip0 drifts beyond
+the free-fit value. Hence the IBv0 choice: keep the modes for the OB only.
+
+## 7. IBv0: global modes for the OB only (`doc/ITS_RB_IBv0.json`, `/data/devAlg/solA2IBv0`)
+
+**Config.** IBv0 = v13b with two changes:
+- `ITS/.+` replaced by `ITS/ITSULayer[3-6]/.+`, with the same 10-mode list;
+- the three per-layer IB `globalModes` rules deleted.
+
+**Pede.** It used the standard cuts and down-weighting. There is no rank defect, and the final χ² is
+29.203M against 29.216M for v13b (−13k). The dy-vs-Z residuals of the IB end chips improve.
+
+**Chip positions, IBv0 − v13b.** These come from `algdump.root` (`pos` is the full aligned geometry), after
+removing one common IB translation:
+
+| stave mean | normal shift at centre / outer end | rφ shift |
+|---|---|---|
+| Lr0 chip0 | +12.0 / +19.5 µm | −8.2 µm |
+| Lr0 chip8 | +7.5 / +14.6 µm | −5.6 µm |
+| Lr1 chip0, Lr2 chip0 | +4.7 / +4.5 µm | −6.1 / −4.3 µm |
+| Lr1 chip8, Lr2 chip8 | below 1 µm | −4.5 / −4.3 µm |
+| Lr0–Lr2 chips 1–7 | ≤ 1.6 µm (≤ 0.7 µm on chips 2–6) | ≤ 2 µm |
+
+- **Common translation.** The whole IB moved by (−7.3, −4.9, +0.6) µm, the same in all layers and half
+  barrels. The mean vertex moved by (−8.2, −5.5) µm in X, Y in every slot. The IB and the vertex thus moved
+  together by about 9 µm relative to the OB, whose sensors moved 2 µm on average. Relaxing the IB global
+  modes allows this. Watch it in later iterations.
+- **Tilts, z scale, twist** per layer and half barrel: changes ≲ 1.3 µm at the stave ends.
+- **Chip-level parameters** look very different: all Lr0 chip TY shifted by −12…−30 µm, the staves by
+  +13 µm. This is bookkeeping between hierarchy levels: the transported stave constraint ties the mean chip
+  TY to the chips' RX·z lever, and it cancels in the positions. Compare chip positions, not
+  `millepede.res` values.
+
+## 8. Chip bowing: the dz-vs-Z "V" shapes
+
+In the IBv0 PDF, page 4, the IB dz vs Z has a 3 cm periodic structure (one chip) of 1–3 µm, with maxima
+near the chip boundaries. It is the same in V10n and MP2 and in both datasets. The checks below use the
+v8ns trees, because `solA2IBv0` has only the PDFs.
+
+**It depends on the track angle.** On the middle chips (2–6), dz inside the chip:
+- is flat for |tanλ| < 0.5;
+- has a U or Λ shape for |tanλ| > 0.5 that roughly flips sign with tanλ. On Lr1, for example, one sign
+  gives +1.4 … −0.5 … +2.5 µm across the chip, and the other the inverted shape, +0.7 … −2.0 µm.
+
+That is dz = δX(w)·tanλ with a normal displacement δX ∝ w²: a chip bent out of plane along its length. An
+in-plane z effect (pitch, segmentation, cluster position) would not depend on tanλ, and an incidence
+effect alone would not repeat with the chip period.
+
+**Fit per chip.** The fit uses dz = a + b·w + tanλ·(c0 + c1·w + c2·w²) and the same form in dy with tanφ.
+The table gives the sagitta, the normal shift at the chip ends minus that at the centre (c2·1.5²), for
+chips 1–7:
+
+| | from dz, B0 | from dz, B+ | corr(dz-, dy-based) over chips |
+|---|---|---|---|
+| Lr0 | −2.3 ± 0.5 µm | −1.8 ± 0.5 µm | +0.45 / +0.64 |
+| Lr1 | −2.6 ± 0.6 µm | −2.5 ± 0.6 µm | +0.85 / +0.81 |
+| Lr2 | −1.3 ± 0.5 µm | −1.2 ± 0.4 µm | +0.44 / +0.50 |
+
+- **Spread.** The chip-to-chip rms is 2–6 µm.
+- **dy partner.** dy sees the same per-chip pattern, with a weaker lever (⟨tanφ⟩ ≈ 0.25).
+- **Mille.** The Mille fit finds the bow as the only significant non-rigid shape: Δχ² 10k / 19k / 18k for
+  432 parameters.
+- **Sign.** Which way the chips bend has not been checked against the sign conventions.
+
+**What it would take to fit.** No rigid DOF can absorb a w² shape. It needs a per-chip deformation
+parameter: a normal displacement ∝ P₂(w) along the chip, entering both the y and z derivatives. The
+deformation DOF sets (`LegendreDOFSet`) exist only for ITS3. Calibration-type derivatives are taken only
+from the direct parent of the measurement leaf, so an IB chip bow needs a code change, not a config rule.
+
+## 9. Open points
+
+- **IB end chips with the OB of v15.** IBv0 has the v8 OB. Merge it with v15 (`doc/ITS_RB_v16.json` =
+  v15 + the v13 IB block, to be updated with the IBv0 `globalModes` change) and run on the 45-file set.
+- **IB–OB translation.** Watch the common 9 µm IB + mean-vertex translation relative to the OB, and the IB
+  weak modes in `weakModes.pdf`, now that the IB is outside the global-mode equations.
+- **Chip bow DOF.** Implement it (section 8); the expected gain is Δχ² ≈ 10–19k per field.
+- **Lr0 sawtooth.** Check it in the IBv0 checkResid trees, which were not available for this analysis.
+
+## 10. Tools
 
 - **In the repository:** `macro/milleSplit.cxx`, `macro/milleSplitModels.py` and `macro/sensDump.C`,
   documented in `doc/milleSplit.md`. The mean vertex is free since 2026-10-24.
 - **Session scratchpad only:**
-  - the extended accumulator with bow/twist/shear columns and a free mean vertex (`milleSplit3.cxx`) and
-    its fits (`fit6.py` – `fit8.py`);
-  - the checkResid flattener with clSize/snp (`flatIB2.C`);
-  - the Kalman response toys (`toy.py`, `toyB.py`);
-  - the vertex-anchored inversions (`c1.py` – `c4.py`).
+  - the accumulators: `milleSplit3.cxx` (mean vertex free), `milleSplit4.cxx` (+ IB staves and half
+    barrels), `milleSplit5/6.cxx` (non-target globals fixed at a pede solution, optional χ² cut);
+  - `milleEval.cxx`: the record-level χ² evaluator for a given parameter set;
+  - the fits: `fit6.py` – `fit16.py`, including `fit12.py` (pede's constraints imposed by null-space
+    projection, with or without priors, selectable by constraint type or global mode) and `fit15/16.py`
+    (constraint ranks inside the data null space);
+  - the checkResid scripts: `flatIB2.C`, `d1.py`/`d2.py` (chip bow), `toy.py`/`toyB.py` (Kalman response
+    toys), `c1.py` – `c4.py` (vertex-anchored inversions).
 
   Copy them into `macro/` if they are needed again.
