@@ -9,12 +9,16 @@ Models: rigid (6 DOFs per chip, shared by its y and z rows), rigid + a y-only TY
 tan(phi_inc) on the y rows only) grouped per sensor / layer x chip index / layer / layer x (end, middle),
 and the full y/z split (12 per chip). The chi2 gains are exact (pseudo-inverse); the quoted parameter values
 use a 50 um / 5 mrad prior, needed for the weak modes of a fit in which every chip is free.
-The per-sensor beta is correlated with the chip RZ (free in the rigid model)."""
+The mean-vertex calibration (X,Y,Z,SlopeX,SlopeY of 8 time slots, accumulated after the chip parameters) is free in
+every model: the records measure it relative to a reference at (0,0), ~1.8 mm from the beam, and fixing it fakes a
+large rphi-only (y-only) term."""
 import re, sys
 import numpy as np
 
 NS, NPS = 432, 12
-NP = NS * NPS
+NPIB = NS * NPS
+NMV = 8 * 5  # mean-vertex calibration, always free
+NP = NPIB + NMV
 
 
 def writeLabels(treef, outf):
@@ -34,6 +38,8 @@ def writeLabels(treef, outf):
 def read(fn):
     with open(fn, 'rb') as f:
         n = np.frombuffer(f.read(4), np.int32)[0]
+        if n != NP:
+            sys.exit(f"{fn}: {n} parameters, {NP} expected; re-accumulate with the current milleSplit.cxx (mean vertex free)")
         N = np.frombuffer(f.read(8 * n * n), np.float64).reshape(n, n).copy()
         B = np.frombuffer(f.read(8 * n), np.float64).copy()
     return N, B
@@ -50,17 +56,21 @@ def fit(sensf, files):
     lay = sd[:, 1].astype(int)
     reg = 1 / 0.005**2
 
-    def solve(P):
+    def solve(Pc):
+        P = np.zeros((NP, Pc.shape[1] + NMV))
+        P[:NPIB, :Pc.shape[1]] = Pc
+        P[NPIB:, Pc.shape[1]:] = np.eye(NMV)
         Nu = P.T @ N @ P
         Br = P.T @ B
-        x = np.linalg.solve(Nu + reg * np.eye(P.shape[1]), Br)
-        err = np.sqrt(np.diag(np.linalg.inv(Nu + reg * np.eye(P.shape[1]))))
+        R = np.diag(np.r_[np.full(Pc.shape[1], reg), np.ones(NMV)])  # no real prior on the mean vertex (~1.8 mm off)
+        x = np.linalg.solve(Nu + R, Br)
+        err = np.sqrt(np.diag(np.linalg.inv(Nu + R)))
         w, V = np.linalg.eigh(Nu)
         k = w > w.max() * 1e-12
         gain = ((V[:, k].T @ Br)**2 / w[k]).sum()  # exact chi2 decrease
-        return x, err, gain
+        return x[:Pc.shape[1]], err[:Pc.shape[1]], gain
 
-    P0 = np.zeros((NP, NS * 6))  # rigid: y and z copies tied
+    P0 = np.zeros((NPIB, NS * 6))  # rigid: y and z copies tied
     for s in range(NS):
         for k in range(6):
             P0[s * NPS + k, s * 6 + k] = P0[s * NPS + 6 + k, s * 6 + k] = 1
@@ -68,7 +78,7 @@ def fit(sensf, files):
     print(f"rigid (6/chip): gain {g0:.0f}")
 
     def extra(groups, ng):  # y-only TY, i.e. the TY copy of the y rows
-        E = np.zeros((NP, ng))
+        E = np.zeros((NPIB, ng))
         for s in range(NS):
             E[s * NPS + 1, groups[s]] = 1
         return E
@@ -84,8 +94,8 @@ def fit(sensf, files):
         x, e, gn = solve(np.hstack([P0, extra(g, ng)]))
         res[nm] = (x[NS * 6:], e[NS * 6:])
         print(f"rigid + {nm:28s}: extra gain {gn - g0:8.0f} for {ng} params")
-    _, _, gs = solve(np.eye(NP))
-    print(f"full split (12/chip): extra gain {gs - g0:.0f} for {NP - NS * 6} params")
+    _, _, gs = solve(np.eye(NPIB))
+    print(f"full split (12/chip): extra gain {gs - g0:.0f} for {NPIB - NS * 6} params")
     b, e = res["beta per layer x chipidx"]
     for L in range(3):
         print(f" Lr{L} beta (y-only TY, um) per chip:  " + "  ".join(f"c{c}:{1e4 * b[L * 9 + c]:+5.1f}+-{1e4 * e[L * 9 + c]:.1f}" for c in range(9)))

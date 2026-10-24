@@ -6,7 +6,10 @@
 //   python3 -I milleSplitModels.py labels mp2tree.txt iblabels.txt   # chip TX label -> sensor ID
 //   ./milleSplit mp2data_0.bin iblabels.txt ms_B0.bin [maxrec]          # ~20 min per 6 GB, ~215 MB output
 // Records with > 600 locals or chi2/ndf > 6 after the local fit are skipped.
-// Parameter index: sens*12 + (isZrow ? 6 : 0) + dof   (dof = TX,TY,TZ,RX,RY,RZ)
+// Parameter index: sens*12 + (isZrow ? 6 : 0) + dof   (dof = TX,TY,TZ,RX,RY,RZ), then the mean-vertex calibration
+// (X,Y,Z,SlopeX,SlopeY of up to 8 time slots) at NPIB + slot*5 + dof. The mean vertex must be fitted as well: the
+// records measure it relative to a reference at (0,0), while the beam is ~1.8 mm away; fixing it fakes rphi-only terms.
+// All the other non-IB globals are kept at their recorded reference values.
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -15,7 +18,8 @@
 #include <map>
 #include <fstream>
 #include <algorithm>
-static const int NS = 432, NPS = 12, NP = NS * NPS;
+static const int NS = 432, NPS = 12, NPIB = NS * NPS, NMVSLOT = 8, NMV = NMVSLOT * 5, NP = NPIB + NMV;
+static const int MVBASE = 134218112; // label of PVT/meanVertex X, slot 0; slots are 256 apart
 struct Row { double meas, sig; std::vector<std::pair<int,double>> loc, glo; };
 bool cholInv(std::vector<double>& A, int n) { // in-place inverse of SPD matrix (row-major)
   std::vector<double> L(n*n, 0.);
@@ -67,6 +71,7 @@ int main(int argc, char** argv) {
     std::map<int, std::vector<double>> u;   // param -> local cross vector (sum w*g*dloc)
     std::vector<std::vector<std::pair<int,double>>> rg(rows.size());
     for (size_t ir = 0; ir < rows.size(); ir++) { auto& r = rows[ir]; if (r.sig <= 0) continue;
+      for (auto& g : r.glo) { int o = g.first - MVBASE; if (o >= 0 && o < NMVSLOT * 256 && o % 256 < 5) rg[ir].push_back({NPIB + (o / 256) * 5 + o % 256, g.second}); }
       std::unordered_map<int, double[6]> per; per.reserve(4);
       for (auto& g : r.glo) { int base = g.first & ~7, d = g.first & 7; auto it = base2sens.find(base); if (it == base2sens.end() || d > 5) continue;
         per[it->second][d] = g.second; }

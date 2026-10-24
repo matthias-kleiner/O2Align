@@ -5,6 +5,7 @@ State: 2026-10-22. Everything below is read from `/data/devAlg/solA2v10` (config
 with `/data/devAlg/solA2v8ns` and with the older `res` trees in `/data/devAlg/tests/ITSBarFix` and
 `/data/devAlg/tests/StavesOnly`. Nothing was re-run except checkResid post-processing and tree reading.
 Sections 6–8 were added on 2026-10-23: the `solA2v11` result, the OB half-barrel weak mode, and the v12 config.
+Sections 9–10 were added on 2026-10-24: why v12 failed (`/data/devAlg/solA2v12`), and the v14 config that replaces it.
 
 ## 1. What v10 tried, and why it did nothing
 
@@ -201,6 +202,9 @@ Y "scissor":
 
 ## 8. Next step: `doc/ITS_RB_v12.json`
 
+**Superseded.** The first row of the table below was a configuration error, and v12 made things worse. See
+section 9, and section 10 for the replacement.
+
 v12 = v11 plus the following changes. No new Mille data is needed; use the same 45 files (`mpSteerV11.txt`).
 
 | change | rule |
@@ -227,7 +231,100 @@ What to check after the run:
 3. The stave-end chip TX/TZ stay within a few × 5 µm.
 4. The row gap and the dy vs φ improvements of section 6 survive.
 
-## 9. Tools
+## 9. v12 post-mortem (`/data/devAlg/solA2v12`)
+
+v12 did not improve the checkResid results. Its `weakModes.pdf` has large global-mode amplitudes that v11 does
+not have: bowing −77 µm, radialPolar_r1t2 +70 µm, radialScaling +33 µm, longitudinalPolar_r0t1 +33 µm,
+globalTilt_y −25 µm, zScaling −16 µm. The bowing and r1t2 modes are nearly collinear and cancel each other, so the
+B-fit amplitudes are inflated, but the fraction of displacement power they explain rises from ≈ 0.02 to 0.3–0.45.
+The total χ² is only 0.2 % lower (432.4 M vs 433.4 M). There were four causes.
+
+**1. The OB half-barrel NoCross TX/TY were replaced instead of complemented.**
+- The NoCross TX and TY equations of v11 set the plain mean of the staves' local TX (rφ) and local TY (radial) to
+  zero. Per layer and half-barrel, they pin the rotation about z and the radial breathing.
+- The transported `pinChildrenMean` TX/TY pins the translation instead (section 7). Neither form covers the other.
+  v12 lost the rotation and breathing pins.
+- Mean stave DOF per half-barrel, L3h0 … L6h1 (µm):
+
+  | | v11 | v12 |
+  |---|---|---|
+  | stave TY (radial) | 0.00 in all | −2.3, +0.9, +6.1, +7.9, +2.0, +0.4, −4.2, −5.6 |
+  | stave TX (rφ) | 0.00 in all | +4.8, +1.7, 0.0, +1.0, −2.8, −2.0, 0.0, +0.6 |
+
+**2. The OB modules move along the ray from the vertex.**
+- For a track from the vertex, a module shifted radially by δr at z is equivalent to one shifted by δz = δr·z/r.
+  A sensor moved along its own ray leaves the hit at the same local position, so this holds per sensor, not
+  only per (φ, t) cell.
+- `rayModes` removes only the cell mean, summed over the OB layers. Only the vertex-z spread breaks the rest.
+- In v12 the OB module TY acquire a z pattern common to all staves of a layer, and the module TZ follow TY·z/r:
+  - Lr3, modules at z ≈ −31, −10, +10, +31 cm: mean TY −7.6, +7.9, +8.6, −8.9 µm; TY·z/r = +12, −4, +4.4, −14 µm;
+    fitted TZ +16, −5, +3.6, −15 µm.
+  - Lr6, module 4 (z ≈ +21 cm): TY −18 µm, TY·z/r −9.7 µm, TZ −10.5 µm. Modules 0, 2 and 6 agree as well.
+- v11 shows module TY of ±5 µm with no common z pattern.
+- A likely driver is the incidence-dependent dz bias of section 6 (dz vs tgλ at large |tgλ|), which a radial
+  offset mimics.
+
+**3. Chip TZ and module RY fixed gave nothing.**
+- The chip-TZ gradient inside a module is uncorrelated with the module TY (|r| < 0.2), so the chip TZ do not drive
+  cause 2.
+- They add 23.7 k poorly constrained parameters. Lr3 chip TZ have an RMS of 31 µm against a 20 µm prior.
+
+**4. The two runs used different solvers.**
+
+| | v11 | v12 |
+|---|---|---|
+| method | MINRES, sparse | MINRES-QLP, full |
+| solver stop | 2000-iteration limit (`istop = 5`) in 4 of 5 iterations | converged (`istop = 4`) in 490–650 iterations |
+| Acond | ≈ 40 | 2.4e4, growing to 9.3e4 |
+| expected dF at the end | 5.5e3 | 1.6e4 |
+
+- v11's MINRES did not converge. For a singular system, stopping early keeps the solution near zero along the weak
+  directions: an accidental regularisation.
+- v12's MINRES-QLP converged, and so exposes every freedom the constraints leave open.
+- Part of v11's clean weak-mode picture is therefore due to the solver, not to the configuration.
+- v12 reports Arnorm = ‖A·r‖ ≈ 1e19–1e21. This cannot be right, since Arnorm ≤ Anorm·rnorm ≈ 600. It points to a
+  numerical problem in the preconditioned singular system; not investigated.
+- Neither fit converged in the outer iterations: dF_exp is still 5.5e3 for v11 and 1.6e4 for v12.
+
+## 10. Next step: `doc/ITS_RB_v14.json`
+
+v14 = v11 plus:
+
+| change | rule |
+|---|---|
+| OB half-barrels: transported pin added on top of the v11 NoCross pins | `"pinChildrenMean": ["TX","TY"]` + `"pinChildrenMeanNoCross": ["TX","TY","TZ","RY"]` |
+| stave-end chips (section 6, TX up to 770 µm) | TX prior 5 µm on Module0 chips 0/13, Module3 chips 6/7 (Lr3–4), Module6 chips 6/7 (Lr5–6) |
+
+The other v12 changes are dropped: the OB chip TZ stay fixed and the OB module RY stay free.
+
+Steering checks:
+- The steering is in `/data/devAlg/solA2v14`. It was generated with a 6-slot copy of `MV_B0BPBM.json` (slots 0–5,
+  as in the v11 production steering).
+- `mp2param.txt` and `mp2tree.txt` are byte-identical to those of v11.
+- `mp2con.txt` differs from v11's only by the 16 pinned TX/TY equations and the 1152 end-chip TX priors
+  (4 chips × 288 half-staves).
+- Rank of the constraint matrix, from the eigenvalues of the row-normalised C·Cᵀ:
+  - full rank: 4413 equations;
+  - the six smallest eigenvalues are 1.8e-5, 3.8e-5, 7.7e-5, 2.4e-4, 2.6e-4, 2.8e-4;
+  - v11 has the same three smallest, and 2.5e-4, 3.2e-4, 3.2e-4 for the next three;
+  - the softest direction in both is the OB half-barrel NoCross RY.
+  - So combining both pin forms on TX/TY creates no near-degeneracy here. The staves have only TX, TY, TZ, RY free,
+    and the two forms weight them by const and by cos φ / sin φ.
+
+Run and comparison:
+- Use the same 45 Mille files (`mpSteerV11.txt`).
+- Use the same `method` as v12, MINRES-QLP, so that pede converges. Judge v14 on its own weak-mode PDF and checkResid.
+- A strict comparison with v11 needs v11 refitted with the same solver.
+
+What to check after the run:
+1. The radialScaling / bowing / longitudinalPolar amplitudes stay at the v11 level, and the mean stave TX/TY per
+   half-barrel stay at 0.
+2. The section 7 scissor shrinks in the geometry diff vs V10n.
+3. The stave-end chip TX stay within a few × 5 µm.
+4. The module TY/TZ do not develop the section 9 along-ray pattern. If they do with a converged solver, the module TY
+   prior (30 µm) is the next lever.
+
+## 11. Tools
 
 Per-chip grouping of the `res` tree (compiled with ACLiC in the O2 env; `CheckResidTypes.h` lacks the
 `GlobalTrackID.h` include, add it before including the header):

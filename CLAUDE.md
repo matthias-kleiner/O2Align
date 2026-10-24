@@ -114,6 +114,11 @@ time-sliced, while calibration DOFs get one label per time slot ([TimeSlotsSet](
 `Volume::setCalibSlots` / `setActiveCalibSlot`), so each mean-vertex slot is aligned independently,
 like the TPC drift.
 
+Consequence for any fit of `mp2data.bin` outside pede (e.g. `macro/milleSplit.cxx`): the vertex records
+measure the mean vertex relative to its reference (typically (0,0)), which can be far from the real beam
+(~1.8 mm in Y for the 2025 runs). The mean-vertex calibration labels must then be free parameters of
+such a fit; keeping them fixed injects a large transverse vertex pull that fakes rphi-only chip terms.
+
 ### From a measurement to global derivatives
 
 In [AlignmentSpec.cxx](src/AlignmentSpec.cxx) the per-point globals are built by walking from the

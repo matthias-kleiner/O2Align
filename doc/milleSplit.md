@@ -53,8 +53,14 @@ python3 -I milleSplitModels.py fit sens.txt ms_B0.bin [ms_BPlus.bin ...]       #
 - **Skipped records:** more than 600 local parameters, a singular local system, or χ²/ndf > 6 after the
   local fit (an outlier guard). The last log line gives the used and rejected record counts and ⟨χ²/ndf⟩.
 - **y/z rows:** a row is a "z row" of a chip when |∂/∂TZ| > |∂/∂TX|, otherwise a "y row".
+- **Mean vertex:** its calibration globals (X, Y, Z, SlopeX, SlopeY of up to 8 time slots) are accumulated as
+  free parameters, after the chip ones, and `fit` frees them in every model. The vertex records measure the
+  mean vertex relative to its reference at (0, 0), while the 2025 beam sits at about (+0.3, −1.8) mm. Keeping
+  it fixed pulls every vertex by ~40σ, transversely only, and fakes a large rφ-only chip term. This
+  happened in the first version of this tool (see section 5).
 - **Other rows:** OB, TPC, vertex and every other row help determine the local parameters, but carry no
-  parameters of their own.
+  parameters of their own: these globals stay at their recorded reference values. Check that this is
+  acceptable (compare with `millepede_labeled.res`) before trusting a result.
 
 ## 4. Output of `fit`
 
@@ -74,6 +80,11 @@ with a 50 µm / 5 mrad prior; the gains do not use it. Only y/z differences and 
 meaningful: the absolute values are not.
 
 ## 5. Result on the 2026-10-21 data (`/data/devAlg/mille{B0,BPlus,BMinus}`)
+
+> **Invalid, kept for the record.** These numbers come from the first version of the tool, which kept the
+> mean vertex fixed at (0, 0). The β term below is that artefact: per stave it is a first harmonic in the
+> stave azimuth, ∝ R·cos α, about twice as large in B0. Rerun with the current version before using any
+> number of this section. See `doc/ib-endchip-rphi-incidence.md` for the status.
 
 | field | used records | split − rigid, Δχ² (2592 extra) | β per sensor, Δχ² (432) | β per layer × chip index, Δχ² (27) | β per layer, Δχ² (3) |
 |---|---|---|---|---|---|

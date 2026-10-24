@@ -126,6 +126,12 @@ direction (lift outwards or inwards) has not been checked against the sign conve
 
 ## 6. Open item: the y-only normal term β
 
+> **Most likely an artefact of the accumulator.** It kept the mean vertex fixed at the (0, 0) reference,
+> while the beam sits at (+0.3, −1.8) mm. Per stave, β is a first harmonic in the stave azimuth
+> (∝ R·cos α), about twice as large in B0 as in B±. A rerun with the mean vertex free is in progress. The
+> Mille numbers of section 4 come from the same accumulator and need the same recheck. The RX pattern is
+> also seen independently in checkResid.
+
 - **Size:** it is the largest single gain: 118–151k over the v8ns set, 80–95k over a fully rigid set.
 - **Degeneracy:** it is exactly degenerate with an in-plane rφ scale across each chip, because v is
   equivalent to tanφ_inc for primaries.
