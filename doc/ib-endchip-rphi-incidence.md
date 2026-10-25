@@ -3,7 +3,7 @@
 Written for: whoever continues the ITS alignment tuning (knows O2Align, Millepede-II and checkResid).
 State: 2026-10-25. Supersedes the versions of 2026-10-22/23 ("rphi-only, non-rigid term", which was an
 artefact, section 5) and of 2026-10-24 ("the end-chip priors block the fit", which was wrong, section 6).
-Sections 9–10 (restart test from IBv0, IBv1, other checkResid features) added on 2026-10-25.
+Sections 9–10 (restart test from IBv0, IBv1–IBv3, v16, other checkResid features) added on 2026-10-25.
 
 ## 1. Summary
 
@@ -23,10 +23,16 @@ Sections 9–10 (restart test from IBv0, IBv1, other checkResid features) added 
   to the end chips, apart from a common ~9 µm translation of the IB plus mean vertex relative to the OB.
 - **Still constrained in IBv0.** A pede restart from the IBv0 solution with only the 96 end chips free gains
   Δχ² −14k (Lr0 c0: TY ≈ −25 µm, RX −30…−40 µm at the edge), and checkResid confirms the move (section 9).
-  Two things blocked it: the IB half-barrel `pinChildrenMeanNoCross: ["RX"]`, which forbids a cone
-  (removing it in IBv1 gave −5.9k), and the σ 5 µm chip TY priors acting on gauge-dependent chip-level
-  values (relaxing them in IBv2 gave −3.8k more). `doc/ITS_RB_IBv2.json` recovers two thirds of the gain,
-  with the beam slopes free and the meaningless mean-vertex prior removed.
+  Three things blocked it:
+  - the IB half-barrel `pinChildrenMeanNoCross: ["RX"]`, which forbids a cone (removing it in IBv1 gave
+    −5.9k);
+  - the σ 5 µm chip TY priors acting on gauge-dependent chip-level values (relaxing them in IBv2 gave −3.8k
+    more);
+  - the stave `pinChildrenMeanNoCross: ["RZ"]` (removing it in IBv3 gave −7.4k more).
+
+  `doc/ITS_RB_IBv3.json` reaches the restart-test level on the end chips, with the beam slopes free and the
+  meaningless mean-vertex prior removed. It introduces stave rolls of ±0.3–0.9 mrad that checkResid does not
+  see. `doc/ITS_RB_v16.json` merges it with the v15 OB.
 - **Chip bowing (dz vs Z "V" shapes).** The remaining V shape inside each chip comes from chips bent out of
   plane along z:
   - normal displacement ∝ w², sagitta about −1…−3 µm;
@@ -403,6 +409,66 @@ comparable with the restart test:
   their cost. Pede also stops at its 5-iteration limit with an expected ΔF of ~380 in the last iteration,
   so it is not fully converged; that is worth well under 1k.
 
+**IBv3: stave RZ pin removed (`doc/ITS_RB_IBv3.json`, `/data/devAlg/solA2IBv3`).** IBv3 = IBv2 without
+the IB stave `pinChildrenMeanNoCross: ["RZ"]`. The stave RZ stays fixed, so the common RZ of a stave's
+chips, a roll of the stave about its long axis, becomes a fit parameter constrained only by the data and
+the chip RZ priors. The constraint rank is full (2752 of 2752).
+
+- **χ².** Total 29 170 192, prior 4 088, data **29 166 104**: −7.4k against IBv2 and −17.0k against IBv0.
+  That is 2.7k below the restart-test bound, which is possible because IBv3 also moves DOFs the restart
+  test kept fixed. The prior χ² rises mainly through the Lr0 HB0 stave TX prior (σ 5 µm), from 145 to 505.
+- **checkResid per chip** (from the `_hman` 2D histograms) is now at the `endsslope` level, and Lr2
+  improves where IBv2 stalled:
+
+  | RMS over chips (µm) | IBv2 | IBv3 | `endsslope` |
+  |---|---|---|---|
+  | Lr2 c8 dz, pp | 1.2 | 1.0 | 0.9 |
+  | Lr2 c0 dy, OO | 1.3 | 1.0 | 1.0 |
+  | Lr2 c8 dy, OO | 1.1 | 0.8 | 0.7 |
+  | Lr0 c8 dy, OO | 1.1 | 0.9 | 0.9 |
+
+  Chips 351 and 413 are fixed (pp dz −2.4/−2.5 → −1.1/−1.3 µm). Chips 297, 360 and 378 keep −2.7…−2.9 µm
+  in pp while they are normal in OO (−1.0…−1.5 µm). One geometry for both datasets cannot remove such a
+  pp-only offset, so it is probably not alignment.
+- **IBv3 introduces stave rolls.**
+  - In `millepede.res` the stave-mean chip RZ goes from exactly 0 (IBv2, pinned) to 1.6 mrad rms on Lr0
+    (HB0 −0.9…−2.3, HB1 +0.3…+1.9 mrad), 0.6 on Lr1 and 0.45 on Lr2. The errors are 0.08–0.12 mrad.
+  - In the aligned geometry (`algdump.root`, IBv3 − IBv0; IBv1 has none) the real per-stave rolls are
+    smaller: ±0.3–0.9 mrad, alternating in sign from stave to stave. The difference is hierarchy
+    bookkeeping, as for the chip TY.
+  - checkResid does not see them. dy vs the position across the stave changes by ≤ 0.4 µm per stave, even
+    on the strongest rolls (Lr0 st2/st9/st11 +0.8, Lr1 st3 +0.95 mrad), in pp and OO, split by charge and
+    pT as well. A 0.8 mrad roll alone should give an edge-to-centre change of ~1.5 µm on Lr0. The pooled
+    profiles, the vertex jigsaw and the stave-edge excesses are unchanged.
+  - So the rolls neither improve nor spoil checkResid. Mille fits them from data checkResid does not
+    contain (the B− sample, tracks that are not vertex contributors, low pT), or they are weakly determined.
+    Keep them under observation.
+- **IB–OB translation.** In `algdump`, IBv3 − IBv0 moves the IB sensor centres by (0, −3.0, −4.5…−5.1) µm.
+  The OB moves by y −0.8…+0.5 µm and z 0.0 µm, and the mean-vertex Y follows the IB (−3.7 µm). This adds to
+  IBv0's ~9 µm. The checkResid IB–OB comparisons hardly see it: IBv3 − IBv0 dPar1 (Z at 12 cm) changes by
+  −0.9 µm (pp) / −1.2 µm (OO), dPar0 has no first harmonic (≤ 1 µm), and `dyIOB`/`dzIOB` change by
+  < 0.5 µm. The IB+PV sub-track carries the event vertex, which moves with the IB. The relative IB–OB(–mean
+  vertex) position is thus close to a weak mode for these observables, which is consistent with its drift
+  from config to config. It does not affect the tracking residuals, but it matters for the absolute geometry
+  (e.g. TPC matching).
+
+**Conclusion and next step.** IBv3 is the IB baseline. `doc/ITS_RB_v16.json` = v15 with the IBv3 IB block
+and mean-vertex treatment, global modes for the OB only (`ITS/ITSULayer[3-6]/.+`); the OB rules are those
+of v15 unchanged. Run it on the existing Mille data (all 45 files):
+- the `ITS_RB_all.json` recording already holds every derivative v16 uses (IB chip RX/RZ, mean-vertex
+  slopes);
+- the linearisation is not a limit at these sizes (tens of µm, ≲ 1 mrad);
+- a recording against a new reference would turn every prior into a prior on the increment.
+
+Record once more at the end, against the final geometry and again with the wide-open `ITS_RB_all.json`,
+as a convergence check (near-zero corrections expected). That run also tests whether the recording-time
+selection made with the v10 geometry (GBL χ² cut, vertex refit) biased the tracks through the end chips.
+For the v16 run:
+- **Solver.** With ~32k free OB parameters pede needs MINRES, which hit its 2000-iteration limit in v11.
+  Check `istop`, and that the IB end chips match IBv3 (chip positions, per-chip checkResid).
+- **OB module priors** (30 µm) also act on gauge-dependent values below free staves and half-staves.
+  Check the prior χ² per group; relax them as in IBv2 if they cost thousands.
+
 **`MilleRes` bug found on the way (fixed in `f9ae6ee`).** `Volume::readMillepedeResults` kept only labels
 with presigma ≥ 0, so parameters fixed at a non-zero preset value were dropped. For the restart test this
 gave the reference geometry plus the freed chips instead of IBv0 plus the freed chips. All labels are kept
@@ -426,17 +492,21 @@ fit that produced the values), and the calibration JSON writes only calibration 
 
 ## 11. Open points
 
-- **IB baseline.** IBv2 (section 9) is the current IB config: no IB half-barrel RX pin, relaxed chip
-  priors, no mean-vertex prior, beam slopes free. The remaining 4.6k against the restart test sits mostly
-  on the Lr2 end chips. If it matters, test removing the stave RZ NoCross pin next.
+- **v16.** Run `doc/ITS_RB_v16.json` (v15 OB + IBv3 IB) on the 45-file set; check the MINRES
+  convergence, the IB end chips against IBv3 and the OB module prior χ² (section 9).
+- **IB baseline.** IBv3 (section 9): no IB half-barrel RX pin, no stave RZ pin, relaxed chip priors, no
+  mean-vertex prior, beam slopes free.
+- **Stave rolls.** IBv3's rolls (±0.3–0.9 mrad in the geometry) are invisible in checkResid; watch whether
+  they stay stable in v16 and in the convergence recording.
+- **pp-only end-chip dz** on Lr2 chips 297, 360, 378 (−2.7…−2.9 µm in pp, normal in OO).
 - **Priors on chip-level values.** Chip priors act on gauge-dependent values. Keep them loose wherever the
   parent has free DOFs with a transported constraint.
 - **Beam slopes.** Free SlopeX/SlopeY in all further configs, and drop the mean-vertex `measurement` prior.
-- **IB end chips with the OB of v15.** IBv0 has the v8 OB. Merge the final IB config with v15
-  (`doc/ITS_RB_v16.json` = v15 + the v13 IB block, to be updated with the IBv0/IBv1 changes) and run on the
-  45-file set.
-- **IB–OB translation.** Watch the common 9 µm IB + mean-vertex translation relative to the OB, and the IB
-  weak modes in `weakModes.pdf`, now that the IB is outside the global-mode equations.
+- **IB–OB translation.** Watch the IB + mean-vertex translation relative to the OB in `algdump` (~9 µm in xy
+  at IBv0, plus (0, −3, −5) µm at IBv3). It is nearly invisible to the checkResid IB–OB comparisons. If it
+  keeps drifting in the combined fit, constrain it, e.g. with a pin of the IB half barrels relative to the
+  OB.
+- **Convergence recording** with the final geometry and `ITS_RB_all.json`.
 - **Chip bow DOF.** Implement it (section 8); the expected gain is Δχ² ≈ 10–19k per field.
 - **Vertex jigsaw and the HB-gap edge strip** (section 10).
 
