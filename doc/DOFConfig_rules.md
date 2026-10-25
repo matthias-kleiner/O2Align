@@ -384,6 +384,11 @@ group instead:
   rules, which is how a group can span a level that has no volume of its own (the ITS has no layer
   volume: the half barrels sit directly under `ITS`). All members of a group must request the same
   modes.
+- **Group names** are free labels with no convention: they are not parsed nor matched as patterns, only
+  compared as strings, and serve to collect the volumes and to name the equations in `mp2con.txt`
+  (`OB-Lr3` could be any other string). Membership is decided only by the `match` of the rules. An
+  unnamed group is keyed by the volume's symName, so do not choose a name equal to the symName of a
+  volume (e.g. `ITS/ITSULayer3/ITSUHalfBarrel0`), which would merge it with that volume's own group.
 - **Terms.** The equation sums the free rigid-body DOFs of the *whole subtree* of every volume of the
   group, at all levels, with the same per-volume projection as `globalModes`. Nothing has to be
   flagged below, and the matched volume itself needs no free DOF (a fixed half barrel is fine).
