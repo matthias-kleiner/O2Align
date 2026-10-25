@@ -297,6 +297,7 @@ vanish:
 | `radialPolar`   | Δr = ε·r^p·t^k, t = z/r, (p,k) ∈ {(0,0),(0,1),(0,2),(1,1),(1,2)} | **5** |
 | `tangentialPolar` | rΔφ = ε·r^p·t^k, same (p,k) | **5** |
 | `longitudinalPolar` | Δz = ε·r^p·t^k, (p,k) ∈ {(0,1),(0,2),(1,0),(1,2)} | **4** |
+| `globalShift`   | rigid translation along the global X, Y, Z axis (`globalShift_x/_y/_z`) | **3** |
 
 The two harmonic families are the generic form of the azimuthal modes, with the amplitude explicitly
 proportional to r because that is the measured shape: the fitted ε = amplitude/r of the surviving ITS
@@ -355,6 +356,57 @@ staves, while `globalTilt` flagged at the stave level covers all 192.
 Adding a mode to `Volume::GlobalMode` propagates automatically to the `WeakModesDiag` output and to
 `macro/drawWeakModes.C`, which resolve the mode columns by name; a `static_assert` after the class
 guards `Volume::NGlobalEq` against going out of step.
+
+`globalShift` (Δ**x** = ε·**e**, **e** = x̂, ŷ or ẑ) is the translation partner of `globalTilt`. Over a whole
+detector the top-level pins remove it already; it exists for the `groupModes` clause below. In
+`WeakModesDiag` its B amplitude duplicates the rigid shift of the fit (like `curl` and `globalTilt` the
+rigid rotation) and carries no information.
+
+### Per-group mode equations: `groupModes`
+
+A `globalModes` equation is one equation over the *whole* flagged set, whatever the rules: flagging
+each layer with its own rule still gives a single equation over all of them. A deformation which
+cancels between the parts of the flagged set therefore escapes it. In `ITS_RB_v15`/`v16` the OB bowed
+radially by +12/+13 µm on Lr3/Lr4 and −15…−17 µm on Lr6 at the stave ends, which meets the single
+`bowing` equation by cancellation between layers. The `groupModes` clause writes the equations per
+group instead:
+
+```json
+{ "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]", "groupModes": ["globalShift_x", "globalShift_y"] },
+{ "match": "ITS/ITSULayer3/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+",
+  "groupModes": { "group": "OB-Lr3", "modes": ["bowing"] } }
+```
+
+- **Group.** With a plain mode list (the same syntax as `globalModes`) every matched volume is a group
+  of its own: the first rule gives 2 equations for each of the 8 OB half barrels. With
+  `{"group": "<name>", "modes": <list>}` all volumes given the same name form one group: the second rule
+  gives one bowing equation over all the staves of Lr3. A group name can collect volumes from several
+  rules, which is how a group can span a level that has no volume of its own (the ITS has no layer
+  volume: the half barrels sit directly under `ITS`). All members of a group must request the same
+  modes.
+- **Terms.** The equation sums the free rigid-body DOFs of the *whole subtree* of every volume of the
+  group, at all levels, with the same per-volume projection as `globalModes`. Nothing has to be
+  flagged below, and the matched volume itself needs no free DOF (a fixed half barrel is fine).
+  Summing every level is what makes it impossible to escape: a `pinChildrenMean*` sees only the nearest
+  free descendants, so a motion it pins can reappear one level down. The OB half-barrel "scissor" did
+  exactly that under the stave-level pin, through module TX + RY; `globalShift` per half barrel removes
+  the net translation whichever level carries it.
+- **Semantics.** A volume carries one `groupModes` clause: a later matching rule replaces the modes and
+  the group name of an earlier one. To put a volume in two kinds of group, use different levels, as
+  above (half barrels for the shift, staves for the per-layer bow). The equations are written by
+  `Volume::writeGroupModeConstraints` after the global ones, named `Group mode <eq> over <group>`, with
+  the same normalisation and pede grouping anchor.
+- **Rank.** Group equations must not tile a global one: if the groups of a mode together cover exactly
+  the volumes of a `globalModes` set requesting the same mode, the global equation is the sum of the
+  group ones, an exact rank defect. Drop the mode from the global list (`ITS_RB_v17` removes `bowing`
+  there). Likewise `globalShift` on a volume is almost the transported `pinChildrenMean` of its TX/TY
+  at the first level, so use one or the other. Per-group members of the `rayModes` span (`zScaling`, the
+  p = 1 polar members) inherit the degeneracy warning of the global ones.
+- **Measured directions.** A group equation on a direction the data do measure costs χ². Keep the
+  groups to the weak combinations (net shifts of a part, its bow), not to shapes such as a per-layer
+  constant radius (`radialPolar_r0t0`), which dz vs tgλ measures.
+- **Not diagnosed yet.** `WeakModesDiag` still reports only the modes over each detector branch, not per
+  group.
 
 ## Constraining Ray Modes
 

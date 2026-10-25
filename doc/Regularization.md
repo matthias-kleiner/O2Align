@@ -112,7 +112,8 @@ local/global convention of both input and output. The steps are:
 
 The motion e is written to first order as x → x + T + ω × x. It is estimated from a point cloud:
 the **8 corners of the TGeo bounding box of every child**, at their ideal place in the parent
-frame. (T, ω) minimizes
+frame. For an assembly, such as an ITS stave, the box is computed explicitly, because TGeo leaves it
+at 0 until it is requested. (T, ω) minimizes
 
   Σ<sub>i,k</sub> ‖ u<sub>ik</sub> − T − ω × x<sub>ik</sub> ‖
 
@@ -145,7 +146,7 @@ The sensors are still in place, but the children's corrections get larger, not s
 
 The bounding-box field fit sees what such a pattern actually does to the volumes: a turn of a stave
 about its own long axis displaces its corners by only ω × half-width. The −21 mrad RZ therefore
-stays in the staves, and their translations drop to 0.1–0.2 mm. The price is that the medians of
+stays in the staves, and their translations drop to 0.1–0.4 mm. The price is that the medians of
 the individual child parameters are close to zero rather than exactly zero.
 
 Each child carries the same 8 points, whatever its size, so it counts once.
@@ -159,7 +160,7 @@ Each child carries the same 8 points, whatever its size, so it counts once.
   10<sup>−11</sup> in a rotation-matrix element. A typical value is 2·10<sup>−10</sup> cm.
 - **Summary (info).** The log gives the number of parents processed, the largest transferred shift
   and rotation, and the mean corner displacement of the children relative to their parents before
-  and after. On solA2IBv3, with all levels selected, that displacement went from 178 µm to 66 µm.
+  and after. On solA2IBv3, with all levels selected, that displacement went from 179 µm to 68 µm.
 - **Per parent (debug).** For each parent the log gives the transferred T and ω and the mean child
   displacement before and after.
 

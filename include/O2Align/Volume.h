@@ -120,6 +120,7 @@ class Volume
     RadialPolar,        ///< dr     = eps*r^p*t^k, t = z/r: radial displacement set by the polar angle
     TangentialPolar,    ///< r*dphi = eps*r^p*t^k
     LongitudinalPolar,  ///< dz     = eps*r^p*t^k
+    GlobalShift,        ///< rigid translation along the global X / Y / Z axis: THREE equations
     NGlobalModes
   };
   /// highest azimuthal order of the RadialHarmonic / TangentialHarmonic families
@@ -162,12 +163,15 @@ class Volume
     return {-1, -1};
   }
   /// number of scalar equations of a mode: 2 for Elliptical (phases cos2phi, sin2phi) and for
-  /// GlobalTilt (about X, about Y), 2*GlobalHarmonicLMax for the harmonic families, polarNEq for the
-  /// polar families, 1 for the rest
+  /// GlobalTilt (about X, about Y), 3 for GlobalShift (along X, Y, Z), 2*GlobalHarmonicLMax for the
+  /// harmonic families, polarNEq for the polar families, 1 for the rest
   static constexpr int globalModeNEq(int mode)
   {
     if (isPolarMode(mode)) {
       return polarNEq(mode);
+    }
+    if (mode == GlobalShift) {
+      return 3;
     }
     return (mode == Elliptical || mode == GlobalTilt) ? 2 : ((mode == RadialHarmonic || mode == TangentialHarmonic) ? 2 * GlobalHarmonicLMax : 1);
   }
@@ -186,7 +190,7 @@ class Volume
   /// constexpr member function may not be called in a constant expression inside its own class body
   /// (rootcling rejects it); the static_assert right after the class checks the two agree.
   static constexpr int NGlobalEq = 5 /* the one-equation modes */ + 2 /* Elliptical */ + 2 /* GlobalTilt */ + 2 * (2 * GlobalHarmonicLMax) +
-                                   3 * 2 * (GlobalPolarKMax + 1) - 4 /* polar families minus their duplicates */;
+                                   3 * 2 * (GlobalPolarKMax + 1) - 4 /* polar families minus their duplicates */ + 3 /* GlobalShift */;
   static constexpr int globalEqIndex(int mode, int phase) { return globalEqFirst(mode) + phase; }
   static int globalEqMode(int eq);
   static int globalEqPhase(int eq);
@@ -204,6 +208,8 @@ class Volume
   /// one Millepede Constraint per requested mode and phase, spanning the free rigid-body DOFs of every
   /// volume flagged by a "globalModes" rule. A mode equation is global, so this is written once for the
   /// whole tree, not per volume: call it on the root (writeRigidBodyConstraints already does).
+  /// It also writes the "groupModes" equations: one set per group, each over the free rigid-body DOFs
+  /// of the whole subtrees of the group's volumes, see writeGroupModeConstraints.
   void writeGlobalModeConstraints(std::ostream& os) const;
   ///@}
 
@@ -419,10 +425,24 @@ class Volume
   /// apply the "globalModes" clause of a rule: flags this volume as a participant of the global
   /// deformation-mode equations, with the same "replace, don't merge" semantics as the other clauses
   void applyGlobalModesConfig(const nlohmann::json& modes, const std::string& pattern);
-  /// accumulate the terms of one mode equation over this volume (if flagged for that mode) and its
-  /// whole subtree, as (label, coefficient) pairs still carrying their physical lever arms, counting
-  /// in nFlagged the volumes which were flagged for the mode and do have a free rigid-body DOF
-  void collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged) const;
+  /// apply the "groupModes" clause of a rule: a mode list as for "globalModes" (this volume is a group
+  /// of its own), or {"modes": <list>, "group": "<name>"} (all volumes given the same name form one
+  /// group); see writeGroupModeConstraints
+  void applyGroupModesConfig(const nlohmann::json& cfg, const std::string& pattern);
+  /// the mode equations selected by a "globalModes"/"groupModes" list: a bool, "all", or an array of
+  /// mode, harmonic-order or equation names
+  static std::array<bool, NGlobalEq> parseGlobalModeList(const nlohmann::json& modes, const std::string& clause, const std::string& pattern);
+  /// accumulate the terms of one mode equation over this volume (if flagged for that mode, or always
+  /// with allInSubtree) and its whole subtree, as (label, coefficient) pairs still carrying their
+  /// physical lever arms, counting in nFlagged the volumes which took part with a free rigid-body DOF
+  void collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged, bool allInSubtree = false) const;
+  /// the volumes of this subtree carrying a "groupModes" clause, by group name
+  void collectGroupModeRoots(std::map<std::string, std::vector<const Volume*>>& groups) const;
+  /// one Millepede Constraint per group and requested mode equation, see the "groupModes" clause
+  void writeGroupModeConstraints(std::ostream& os, uint32_t anchorLabel) const;
+  /// normalise one collected mode equation, drop its rounding residues and write it with the pede
+  /// grouping anchor; false (with a warning) if fewer than 2 terms survive
+  static bool writeModeEquation(std::ostream& os, const std::string& name, const std::vector<std::pair<uint32_t, double>>& terms, int nFlagged, uint32_t anchorLabel);
   /// smallest Millepede label of a free rigid-body DOF in this subtree, UINT32_MAX if there is none
   uint32_t minFreeRigidBodyLabel() const;
   /// workaround for the constraint grouping of pede, see writeGlobalModeConstraints
@@ -494,6 +514,11 @@ class Volume
   /// per global deformation-mode equation (flat index, see NGlobalEq): this volume's free rigid-body
   /// DOFs take part in it. Set by the "globalModes" clause; see writeGlobalModeConstraints.
   std::array<bool, NGlobalEq> mGlobalModes{};
+  /// per mode equation: one equation is written over the whole subtree of this volume, together with
+  /// the other volumes of its group mGroupModesName (its own symbolic name if the clause gave none).
+  /// Set by the "groupModes" clause; see writeGroupModeConstraints.
+  std::array<bool, NGlobalEq> mGroupModes{};
+  std::string mGroupModesName{};
   /// set by the "rayModes" clause: the sensors of this branch enter the ray-mode constraints with this
   /// binning (a flagged ancestor takes precedence); see writeRayModeConstraints
   std::shared_ptr<const RayModesConfig> mRayModes{}; //!

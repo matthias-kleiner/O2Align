@@ -566,6 +566,14 @@ bool Volume::globalModeField(int mode, int phase, const double* pos, double* u, 
       om[2] = omZ;
       break;
     }
+    case Volume::GlobalShift:
+      // Rigid translation along the global X, Y or Z axis (phase 0, 1, 2): u = e, om = 0. The
+      // translation partners of GlobalTilt. Over a whole detector the top-level pins remove it
+      // already; it is meant for "groupModes", where it pins the net shift of a part of the
+      // detector at every level below it, which no mean-of-children pin can (their contributor
+      // walk stops at the nearest free descendants)
+      u[phase] = 1.;
+      break;
     default:
       return false;
   }
@@ -598,8 +606,8 @@ std::string Volume::globalEqName(int eq)
   if (m == Elliptical) {
     return base + (ph == 0 ? "_cos2phi" : "_sin2phi");
   }
-  if (m == GlobalTilt) {
-    return base + (ph == 0 ? "_x" : "_y");
+  if (m == GlobalTilt || m == GlobalShift) {
+    return base + (ph == 0 ? "_x" : (ph == 1 ? "_y" : "_z"));
   }
   if (m == RadialHarmonic || m == TangentialHarmonic) {
     const int l = globalHarmonicL(ph);
@@ -615,16 +623,17 @@ std::string Volume::globalEqName(int eq)
 const char* Volume::globalModeName(int mode)
 {
   static constexpr const char* names[NGlobalModes] = {"radialScaling", "zScaling", "curl", "twist", "elliptical", "bowing", "radialHarmonic", "tangentialHarmonic", "globalTilt",
-                                                      "radialPolar", "tangentialPolar", "longitudinalPolar"};
+                                                      "radialPolar", "tangentialPolar", "longitudinalPolar", "globalShift"};
   return (mode >= 0 && mode < NGlobalModes) ? names[mode] : "?";
 }
 
-void Volume::collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged) const
+void Volume::collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged, bool allInSubtree) const
 {
   const int mode = globalEqMode(eq), phase = globalEqPhase(eq);
-  // only the volumes explicitly flagged for this equation contribute, and only through DOFs which are
-  // actually free: a fixed DOF is not a parameter of the fit and must not appear in a constraint
-  if (mGlobalModes[eq] && !mIsPseudo && mRigidBody && mRigidBody->nFreeDOFs() > 0) {
+  // only the volumes explicitly flagged for this equation contribute (every volume of the subtree for
+  // a group equation), and only through DOFs which are actually free: a fixed DOF is not a parameter
+  // of the fit and must not appear in a constraint
+  if ((allInSubtree || mGlobalModes[eq]) && !mIsPseudo && mRigidBody && mRigidBody->nFreeDOFs() > 0) {
     ++nFlagged;
     const auto& l2g = getMatrixL2G();
     const double* pos = l2g.GetTranslation();    // this volume's origin in the global frame
@@ -652,7 +661,17 @@ void Volume::collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, doub
     }
   }
   for (const auto& c : mChildren) {
-    c->collectGlobalModeTerms(eq, terms, nFlagged);
+    c->collectGlobalModeTerms(eq, terms, nFlagged, allInSubtree);
+  }
+}
+
+void Volume::collectGroupModeRoots(std::map<std::string, std::vector<const Volume*>>& groups) const
+{
+  if (std::any_of(mGroupModes.begin(), mGroupModes.end(), [](bool b) { return b; })) {
+    groups[mGroupModesName.empty() ? mSymName : mGroupModesName].push_back(this);
+  }
+  for (const auto& c : mChildren) {
+    c->collectGroupModeRoots(groups);
   }
 }
 
@@ -944,46 +963,86 @@ void Volume::writeGlobalModeConstraints(std::ostream& os) const
   const uint32_t firstLabel = minFreeRigidBodyLabel();
   std::vector<std::pair<uint32_t, double>> terms;
   for (int eq = 0; eq < NGlobalEq; ++eq) {
-    {
+    terms.clear();
+    int nFlagged = 0;
+    collectGlobalModeTerms(eq, terms, nFlagged);
+    if (nFlagged == 0) { // the mode was not requested, or nothing is free where it was requested
+      continue;
+    }
+    writeModeEquation(os, std::format("Global mode {} over {}", globalEqName(eq), mSymName), terms, nFlagged, firstLabel);
+  }
+  writeGroupModeConstraints(os, firstLabel);
+}
+
+// The "groupModes" equations: for each group (the volumes sharing a group name, or a single volume
+// without one) and each requested equation, the mode summed over the free rigid-body DOFs of the
+// *whole* subtrees of the group's volumes, at every level. Summing every level is the point: a
+// mean-of-children pin only sees the nearest free descendants, so a motion it pins can reappear one
+// level further down (the OB half-barrel "scissor" did, through the module TX + RY), while a sum over
+// all levels constrains the total, whichever level realises it.
+void Volume::writeGroupModeConstraints(std::ostream& os, uint32_t anchorLabel) const
+{
+  std::map<std::string, std::vector<const Volume*>> groups;
+  collectGroupModeRoots(groups);
+  std::vector<std::pair<uint32_t, double>> terms;
+  for (const auto& [group, roots] : groups) {
+    // the members of a named group must request the same equations: it is one set of equations
+    for (const auto* v : roots) {
+      if (v->mGroupModes != roots.front()->mGroupModes) {
+        LOGP(fatal, "The groupModes group '{}' is requested with different mode lists for {} and {}", group, roots.front()->mSymName, v->mSymName);
+      }
+    }
+    for (int eq = 0; eq < NGlobalEq; ++eq) {
+      if (!roots.front()->mGroupModes[eq]) {
+        continue;
+      }
       terms.clear();
       int nFlagged = 0;
-      collectGlobalModeTerms(eq, terms, nFlagged);
-      if (nFlagged == 0) { // the mode was not requested, or nothing is free where it was requested
+      for (const auto* v : roots) {
+        v->collectGlobalModeTerms(eq, terms, nFlagged, true);
+      }
+      if (nFlagged == 0) {
+        LOGP(warn, "Ignoring the group mode {} over {}: no free rigid-body DOF in its {} subtree(s)", globalEqName(eq), group, roots.size());
         continue;
       }
-      const auto name = std::format("Global mode {} over {}", globalEqName(eq), mSymName);
-      // the equation is homogeneous (= 0), so its overall scale is arbitrary; normalise the largest
-      // coefficient to 1 to keep the constraint matrix well conditioned, since the raw coefficients
-      // carry the physical lever arms and span orders of magnitude between modes (r ~ 40 cm for
-      // radialScaling against z*r ~ 10^3 cm^2 for the twist)
-      const double norm = terms.empty() ? 0. : std::abs(std::max_element(terms.begin(), terms.end(), [](const auto& a, const auto& b) {
-                                                          return std::abs(a.second) < std::abs(b.second);
-                                                        })->second);
-      Constraint con(name, 0.);
-      if (norm > 0.) {
-        for (const auto& [lab, coeff] : terms) {
-          // relative cut: everything above it is a real projection of the mode, everything below is
-          // a rounding residue of the L2G matrices (the two are separated by many orders of magnitude)
-          if (std::abs(coeff) > 1e-9 * norm) {
-            con.add(lab, coeff / norm);
-          }
-        }
-      }
-      // A mode can legitimately have no handle on the flagged level: z scaling and bowing project on
-      // the local Z (beam) DOF with a coefficient ~ z of the volume, which vanishes for an ITS stave
-      // since a stave is centred at z = 0 -- these modes are only observable with free DOFs that are
-      // *distributed* in z (module/chip level). Say so rather than silently writing nothing. One term
-      // alone is not a mode either, it is a measurement of a single DOF.
-      if (con.getSize() < 2) {
-        LOGP(warn, "Ignoring the constraint '{}': only {} of the {} flagged volumes' free DOFs project on this mode",
-             name, con.getSize(), nFlagged);
-        continue;
-      }
-      addPedeGroupingAnchor(con, firstLabel);
-      con.write(os);
-      LOGP(info, "Wrote the constraint '{}': {} terms over {} flagged volumes", name, con.getSize(), nFlagged);
+      writeModeEquation(os, std::format("Group mode {} over {}", globalEqName(eq), group), terms, nFlagged, anchorLabel);
     }
   }
+}
+
+bool Volume::writeModeEquation(std::ostream& os, const std::string& name, const std::vector<std::pair<uint32_t, double>>& terms, int nFlagged, uint32_t anchorLabel)
+{
+  // the equation is homogeneous (= 0), so its overall scale is arbitrary; normalise the largest
+  // coefficient to 1 to keep the constraint matrix well conditioned, since the raw coefficients
+  // carry the physical lever arms and span orders of magnitude between modes (r ~ 40 cm for
+  // radialScaling against z*r ~ 10^3 cm^2 for the twist)
+  const double norm = terms.empty() ? 0. : std::abs(std::max_element(terms.begin(), terms.end(), [](const auto& a, const auto& b) {
+                                                      return std::abs(a.second) < std::abs(b.second);
+                                                    })->second);
+  Constraint con(name, 0.);
+  if (norm > 0.) {
+    for (const auto& [lab, coeff] : terms) {
+      // relative cut: everything above it is a real projection of the mode, everything below is
+      // a rounding residue of the L2G matrices (the two are separated by many orders of magnitude)
+      if (std::abs(coeff) > 1e-9 * norm) {
+        con.add(lab, coeff / norm);
+      }
+    }
+  }
+  // A mode can legitimately have no handle on the flagged level: z scaling and bowing project on
+  // the local Z (beam) DOF with a coefficient ~ z of the volume, which vanishes for an ITS stave
+  // since a stave is centred at z = 0 -- these modes are only observable with free DOFs that are
+  // *distributed* in z (module/chip level). Say so rather than silently writing nothing. One term
+  // alone is not a mode either, it is a measurement of a single DOF.
+  if (con.getSize() < 2) {
+    LOGP(warn, "Ignoring the constraint '{}': only {} of the {} flagged volumes' free DOFs project on this mode",
+         name, con.getSize(), nFlagged);
+    return false;
+  }
+  addPedeGroupingAnchor(con, anchorLabel);
+  con.write(os);
+  LOGP(info, "Wrote the constraint '{}': {} terms over {} flagged volumes", name, con.getSize(), nFlagged);
+  return true;
 }
 
 // Local delta d^n of the volume from its fitted rigid-body parameters (step 1). Returns false if
@@ -1298,9 +1357,9 @@ void Volume::applyWeightedMeanConfig(const nlohmann::json& cfg, const std::strin
 
 // Apply the "globalModes" clause of a rule: a bool (all equations), "all", or an array of names, each
 // of which may be a mode name (radialScaling, zScaling, curl, twist, elliptical, bowing,
-// radialHarmonic, tangentialHarmonic, globalTilt, radialPolar, tangentialPolar, longitudinalPolar),
-// one order of a harmonic family (radialHarmonic3), or one equation (elliptical_cos2phi,
-// tangentialHarmonic2_sin2phi, radialPolar_r0t1).
+// radialHarmonic, tangentialHarmonic, globalTilt, radialPolar, tangentialPolar, longitudinalPolar,
+// globalShift), one order of a harmonic family (radialHarmonic3), or one equation (elliptical_cos2phi,
+// tangentialHarmonic2_sin2phi, radialPolar_r0t1, globalShift_x).
 // Like pinChildrenMean this never creates a DOF set and never frees anything: it only flags this
 // volume as a participant of the global deformation-mode equations written by
 // writeGlobalModeConstraints, over whichever of its rigid-body DOFs happen to be free at the time of
@@ -1320,20 +1379,55 @@ void Volume::applyGlobalModesConfig(const nlohmann::json& modes, const std::stri
     }
     return;
   }
-  mGlobalModes.fill(false);
+  mGlobalModes = parseGlobalModeList(modes, "globalModes", pattern);
+}
+
+// Apply the "groupModes" clause of a rule. It takes the same mode list as "globalModes", for which
+// this volume forms a group of its own, or {"modes": <list>, "group": "<name>"}, for which all the
+// volumes given the same name form one group. Either way the equations are written over the free
+// rigid-body DOFs of the whole subtree of every volume of the group, at all levels, by
+// writeGroupModeConstraints; nothing has to be flagged below. The volume itself needs no free DOF
+// (it can be the fixed half barrel whose children are to be constrained), and like the other clauses
+// a later matching rule replaces the modes and the group name of an earlier one, e.g.
+//   { "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]", "groupModes": ["globalShift_x", "globalShift_y"] },
+//   { "match": "ITS/ITSULayer3/ITSUHalfBarrel[0-1]", "groupModes": {"group": "OB-Lr3", "modes": ["bowing"]} }
+void Volume::applyGroupModesConfig(const nlohmann::json& cfg, const std::string& pattern)
+{
+  mGroupModesName.clear();
+  if (cfg.is_object()) {
+    if (!cfg.contains("modes")) {
+      LOGP(fatal, "The groupModes clause of the rule '{}' has no \"modes\" list", pattern);
+    }
+    for (const auto& [key, val] : cfg.items()) {
+      if (key != "modes" && key != "group") {
+        LOGP(fatal, "Unknown key '{}' in the groupModes clause of the rule '{}', allowed are \"modes\" and \"group\"", key, pattern);
+      }
+    }
+    mGroupModes = parseGlobalModeList(cfg["modes"], "groupModes", pattern);
+    if (cfg.contains("group")) {
+      mGroupModesName = cfg["group"].get<std::string>();
+    }
+  } else {
+    mGroupModes = parseGlobalModeList(cfg, "groupModes", pattern);
+  }
+}
+
+std::array<bool, Volume::NGlobalEq> Volume::parseGlobalModeList(const nlohmann::json& modes, const std::string& clause, const std::string& pattern)
+{
+  std::array<bool, NGlobalEq> flags{};
   if (modes.is_boolean()) {
-    mGlobalModes.fill(modes.get<bool>());
-    return;
+    flags.fill(modes.get<bool>());
+    return flags;
   }
   if (modes.is_string()) {
     if (modes.get<std::string>() != "all") {
-      LOGP(fatal, "Unknown globalModes value '{}' in the rule '{}', allowed are a bool, \"all\" or a list of mode names", modes.get<std::string>(), pattern);
+      LOGP(fatal, "Unknown {} value '{}' in the rule '{}', allowed are a bool, \"all\" or a list of mode names", clause, modes.get<std::string>(), pattern);
     }
-    mGlobalModes.fill(true);
-    return;
+    flags.fill(true);
+    return flags;
   }
   if (!modes.is_array()) {
-    LOGP(fatal, "Invalid globalModes clause in the rule '{}', allowed are a bool, \"all\" or a list of mode names", pattern);
+    LOGP(fatal, "Invalid {} clause in the rule '{}', allowed are a bool, \"all\" or a list of mode names", clause, pattern);
   }
   for (const auto& item : modes) {
     const auto name = item.get<std::string>();
@@ -1348,18 +1442,19 @@ void Volume::applyGlobalModesConfig(const nlohmann::json& modes, const std::stri
                        ((m == RadialHarmonic || m == TangentialHarmonic) &&
                         name == mode + std::to_string(globalHarmonicL(globalEqPhase(eq))));
       if (hit) {
-        mGlobalModes[eq] = true;
+        flags[eq] = true;
         ++nSet;
       }
     }
     if (nSet == 0) {
-      LOGP(fatal, "Unknown global mode '{}' in the rule '{}'. Allowed are the mode names radialScaling, zScaling, curl, twist, "
+      LOGP(fatal, "Unknown global mode '{}' in the {} rule '{}'. Allowed are the mode names radialScaling, zScaling, curl, twist, "
                   "elliptical, bowing, radialHarmonic, tangentialHarmonic, globalTilt, radialPolar, tangentialPolar, "
-                  "longitudinalPolar, a single harmonic order (e.g. radialHarmonic3) or a single equation "
-                  "(e.g. elliptical_cos2phi, globalTilt_y, radialPolar_r0t1)",
-           name, pattern);
+                  "longitudinalPolar, globalShift, a single harmonic order (e.g. radialHarmonic3) or a single equation "
+                  "(e.g. elliptical_cos2phi, globalTilt_y, globalShift_x, radialPolar_r0t1)",
+           name, clause, pattern);
     }
   }
+  return flags;
 }
 
 // Apply the "measurement" clause of a rule: an object DOF name -> [value, sigma] or {"value", "sigma"}.
@@ -1513,6 +1608,9 @@ void Volume::applyDOFConfig(Volume* root, const std::string& jsonPath)
       }
       if (rule.contains("globalModes")) {
         vol->applyGlobalModesConfig(rule["globalModes"], pattern);
+      }
+      if (rule.contains("groupModes")) {
+        vol->applyGroupModesConfig(rule["groupModes"], pattern);
       }
       if (rule.contains("rayModes")) {
         vol->applyRayModesConfig(rule["rayModes"], pattern);

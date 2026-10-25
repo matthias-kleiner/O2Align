@@ -40,7 +40,9 @@ class Detector;
 /// at radius r, so r*f(t) is absorbed by its phi/tgLambda/curvature (null directions whatever the vertex
 /// does), f(t) only by d0/z0 (broken by the vertex). Their duplicates of other modes are left out. The
 /// modes with a handle only on DOFs distributed in z (zScaling, bowing, polar families) are not
-/// observable from stave-level DOFs, all centred at z = 0. In total Volume::NGlobalEq = 39 columns.
+/// observable from stave-level DOFs, all centred at z = 0. In total Volume::NGlobalEq = 42 columns. The
+/// globalShift columns duplicate the rigid shift of the fit, like curl and globalTilt its rotation, so
+/// their B amplitudes carry no information; they exist for the "groupModes" constraints.
 ///
 /// Not diagnosed here, but available as a constraint: the "rayModes" clause, which removes the common
 /// angular displacement r*F(phi, t) of the sensors of every (phi, t) cell, i.e. the whole function space

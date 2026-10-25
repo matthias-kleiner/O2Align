@@ -291,8 +291,9 @@ ModeFit fitModes(const std::vector<SensorDisp>& sensors)
     A.col(j) /= colNorm(j);
   }
   // JacobiSVD, not BDCSVD: the design matrix is exactly rank deficient by construction (curl and
-  // globalTilt duplicate the rigid rotation columns), and BDCSVD (Eigen 3.4) returned NaN singular
-  // values on it, which left rank 0 and the whole fit void. ~45 columns, so the cost is irrelevant.
+  // globalTilt duplicate the rigid rotation columns, globalShift the rigid shift ones), and BDCSVD
+  // (Eigen 3.4) returned NaN singular values on it, which left rank 0 and the whole fit void. ~50
+  // columns, so the cost is irrelevant.
   Eigen::JacobiSVD<MatrixXd> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
   const auto& sv = svd.singularValues();
   const double tol = 1e-8 * sv(0);

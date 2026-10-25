@@ -187,7 +187,11 @@ std::vector<Vec3> getBoundingBoxCorners(const std::string& path)
   if (!gGeoManager->cd(path.c_str())) {
     LOGP(fatal, "Cannot navigate to {}", path);
   }
-  const auto* box = static_cast<const TGeoBBox*>(gGeoManager->GetCurrentVolume()->GetShape()); // every shape is a TGeoBBox
+  auto* volume = gGeoManager->GetCurrentVolume();
+  auto* box = static_cast<TGeoBBox*>(volume->GetShape()); // every shape is a TGeoBBox
+  if (volume->IsAssembly()) {
+    box->ComputeBBox(); // computed only on demand for an assembly (e.g. an ITS stave), 0 until then
+  }
   const double* o = box->GetOrigin();
   std::vector<Vec3> corners;
   for (const double sx : {-1., 1.}) {
