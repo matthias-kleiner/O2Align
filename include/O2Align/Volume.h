@@ -76,7 +76,7 @@ class Volume
   virtual ~Volume() = default;
 
   static void applyDOFConfig(Volume* root, const std::string& jsonPath);
-  /// parse millepede.res into label -> fitted value, skipping the fixed parameters
+  /// parse millepede.res into label -> fitted value, fixed parameters included (at their preset value)
   static std::map<uint32_t, double> readMillepedeResults(const std::string& milleResPath);
   static void writeMillepedeResults(Volume* root, const std::map<uint32_t, double>& labelToValue, const std::string& outJsonPath, const std::string& injectedJsonPath = "");
 

@@ -987,8 +987,8 @@ void Volume::writeGlobalModeConstraints(std::ostream& os) const
 }
 
 // Local delta d^n of the volume from its fitted rigid-body parameters (step 1). Returns false if
-// the volume has no free rigid-body DOF or all its fitted values are 0 (fixed parameters are
-// absent from labelToValue, hence count as 0).
+// the volume has no free rigid-body DOF or all its fitted values are 0 (labels absent from
+// labelToValue count as 0).
 bool Volume::getFittedLocalDelta(const std::map<uint32_t, double>& labelToValue, TGeoHMatrix& delta) const
 {
   // RSTODO In principle, if the volume has no rigid-body DOF, it should not have any fitted parameters either. 
@@ -1636,12 +1636,15 @@ bool Volume::MP2ROOT_Calib(const std::map<uint32_t, double>&, const InjectedMisa
 
 std::map<uint32_t, double> Volume::readMillepedeResults(const std::string& milleResPath)
 {
-  // parse millepede.res: label fittedValue presigma [...]
+  // parse millepede.res: label fittedValue presigma [...]. Fixed parameters (presigma < 0) are kept
+  // too: pede reports them at their preset value, which is a real correction when the steering fixed
+  // them at a non-zero one (e.g. a fit restarted on top of a previous solution); otherwise it is 0.
   std::ifstream fin(milleResPath);
   if (!fin.is_open()) {
     LOGP(fatal, "Cannot open millepede result file: {}", milleResPath);
   }
   std::map<uint32_t, double> labelToValue;
+  size_t nFixed = 0, nFixedNonZero = 0;
   std::string line;
   while (std::getline(fin, line)) {
     if (line.empty() || line[0] == '!' || line[0] == '*') {
@@ -1656,12 +1659,12 @@ std::map<uint32_t, double> Volume::readMillepedeResults(const std::string& mille
     if (!(iss >> label >> value >> presigma)) {
       continue;
     }
-    if (presigma >= 0.0) { // skip fixed parameters
-      labelToValue[label] = value;
-    }
+    labelToValue[label] = value;
+    nFixed += presigma < 0.0;
+    nFixedNonZero += presigma < 0.0 && value != 0.0;
   }
   fin.close();
-  LOGP(info, "Parsed {} not fixed parameters from {}", labelToValue.size(), milleResPath);
+  LOGP(info, "Parsed {} parameters from {}, of which {} fixed ({} at a non-zero value)", labelToValue.size(), milleResPath, nFixed, nFixedNonZero);
   return labelToValue;
 }
 
