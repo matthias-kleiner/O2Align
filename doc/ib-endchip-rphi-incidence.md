@@ -3,6 +3,7 @@
 Written for: whoever continues the ITS alignment tuning (knows O2Align, Millepede-II and checkResid).
 State: 2026-10-25. Supersedes the versions of 2026-10-22/23 ("rphi-only, non-rigid term", which was an
 artefact, section 5) and of 2026-10-24 ("the end-chip priors block the fit", which was wrong, section 6).
+Sections 9–10 (restart test from IBv0, IBv1, other checkResid features) added on 2026-10-25.
 
 ## 1. Summary
 
@@ -17,9 +18,13 @@ artefact, section 5) and of 2026-10-24 ("the end-chip priors block the fit", whi
   - Freeing it (v13) was not enough: pede's `globalModes` constraints, written once "over ALICE" with the
     IB layers included, forbid the corresponding IB deformation.
   - The chip priors and pede's outlier treatment were tested and are not the cause.
-- **Fix.** `doc/ITS_RB_IBv0.json` (= v13b with `globalModes` restricted to the OB) moves the end chips, and
-  the dy-vs-Z residuals improve (`/data/devAlg/solA2IBv0`, section 7). The changes are confined to the end
-  chips, apart from a common ~9 µm translation of the IB plus mean vertex relative to the OB.
+- **Fix, first step.** `doc/ITS_RB_IBv0.json` (= v13b with `globalModes` restricted to the OB) moves the end
+  chips, and the dy-vs-Z residuals improve (`/data/devAlg/solA2IBv0`, section 7). The changes are confined
+  to the end chips, apart from a common ~9 µm translation of the IB plus mean vertex relative to the OB.
+- **Still constrained in IBv0.** A pede restart from the IBv0 solution with only the 96 end chips free gains
+  Δχ² −14k (Lr0 c0: TY ≈ −25 µm, RX −30…−40 µm at the edge), and checkResid confirms the move (section 9).
+  The suspected blocker is the IB half-barrel `pinChildrenMeanNoCross: ["RX"]`, which forbids a cone; the
+  test config is `doc/ITS_RB_IBv1.json`. The mean-vertex beam slopes should be freed as well.
 - **Chip bowing (dz vs Z "V" shapes).** The remaining V shape inside each chip comes from chips bent out of
   plane along z:
   - normal displacement ∝ w², sagitta about −1…−3 µm;
@@ -266,16 +271,130 @@ parameter: a normal displacement ∝ P₂(w) along the chip, entering both the y
 deformation DOF sets (`LegendreDOFSet`) exist only for ITS3. Calibration-type derivatives are taken only
 from the direct parent of the measurement leaf, so an IB chip bow needs a code change, not a config rule.
 
-## 9. Open points
+## 9. IBv0 still holds the end chips: restart test from the IBv0 solution
 
-- **IB end chips with the OB of v15.** IBv0 has the v8 OB. Merge it with v15 (`doc/ITS_RB_v16.json` =
-  v15 + the v13 IB block, to be updated with the IBv0 `globalModes` change) and run on the 45-file set.
+**Starting point.** In the IBv0 checkResid trees the IB dz shows single-chip outliers of −3…−5 µm, all on
+end chips: Lr0 63 (st7 c0), 72 (st8 c0), 107 (st11 c8); Lr2 297, 351, 360, 378 (c0), 404, 413, 431 (c8).
+On top of that most end chips share a pattern: c0 dz ≈ −1…−2 µm, c8 ≈ +1…+2 µm, dz/dtgλ −2…−4 µm (a normal
+offset rather than TZ).
+
+**Method.** A pede fit of the same `mp2data_0.bin` (B0, B−, B+) with every label fixed at its IBv0
+`millepede.res` value (presigma −1), except the mean vertex and the 6 DOFs of selected chips, which start
+from IBv0 and are free. There is no constraint file: with everything else fixed there is no gauge freedom
+left. The steering repeats IBv0's (`chisqcut 20 10`, `outlierdownweighting 4`, `dwfractioncut 0.15`,
+`method inversion 5 0.1`). This needs no new Mille data, because the data were recorded against the
+reference geometry IBv0 solved for. Each run takes minutes.
+
+Gradients of the data χ² vanish at an unconstrained optimum, and gauge constraints never cost χ². Any χ²
+gained by freeing parameters on top of the fixed IBv0 solution is therefore paid by IBv0's constraints
+acting on measured directions.
+
+**Results** (files in `/data/devAlg/chipTest/<run>/`; shifts run − IBv0; rotations as the shift at the chip
+edge, RX/RY at |w| = 1.5 cm, RZ at |v| = 0.75 cm):
+
+| run | free | χ² | Δχ² vs `mvonly` |
+|---|---|---|---|
+| `mvonly` | mean vertex X, Y, Z (18) | 29 183 092 | — (reproduces IBv0: 27 067 rejects) |
+| `null` | + c4 of the 10 staves of the targets | | −20 (60 params) |
+| `targets` | + the 10 outlier chips above | | −850 (60) |
+| `ends` | + all 96 IB c0/c8 chips | 29 169 098 | **−13 994** (576) |
+| `mvslope` | `mvonly` + SlopeX/Y | | −264 (12) |
+| `endsslope` | `ends` + SlopeX/Y | 29 168 833 | −14 259 (588) |
+
+- **null:** all moves ≤ 0.5 µm.
+- **targets:** the single chips move mostly in the normal direction (63: TY −6, RX −11 µm; 72: TY −12, RX
+  −23 µm; 107: RZ +13 µm), TZ only ~0.3 µm. Freeing outliers one by one captures little.
+- **ends:** a coherent move of all end chips, largest at c0 (the +z end), decreasing with layer radius:
+
+  | | TY (normal) | RX at chip edge | TZ |
+  |---|---|---|---|
+  | Lr0 c0 | −8…−28 µm | −13…−44 µm | +1…+4 µm |
+  | Lr1 c0 | −4…−14 µm | −3…−23 µm | +1…+2 µm |
+  | Lr2 c0 | −1…−8 µm | −5…−19 µm | +1…+3 µm |
+  | c8 | −5…+15 µm | mixed | |
+
+  TZ of 63, 72, 107 comes out +3.6, +3.6, +4.8 µm, matching their checkResid dz. The outliers are the
+  visible part of the collective move.
+- **Beam slope.** The mean-vertex slopes (fixed at 0 in IBv0) are significant: SlopeX −0.03…−0.06 mrad in
+  all slots, SlopeY +0.02…+0.03 mrad (slots 0–3) and −0.06…−0.07 mrad (slots 4–5), errors ~0.007 mrad. They
+  are worth only −264 and are independent of the end chips: the `endsslope` gain is the sum of the two, and
+  the chip shifts are unchanged to 0.1 µm. The beam tilt does not explain the end chips.
+
+**checkResid validation** (`endsslope` geometry, pp B0 tree only; per chip, RMS over chips, IBv0 →
+endsslope):
+
+| | dz | dz/dtgλ | dy | dy/dtgλ |
+|---|---|---|---|---|
+| Lr0 c0 | 1.6 → 1.1 µm | 2.3 → 1.1 | 1.2 → 0.4 | 1.8 → 0.6 |
+| Lr0 c8 | 1.7 → 1.0 | 1.9 → 1.4 | 1.1 → 0.7 | 1.5 → 0.6 |
+| Lr1 c0 | 1.4 → 1.3 | 1.3 → 1.1 | 0.6 → 0.4 | 1.0 → 0.9 |
+| Lr2 c0 | 1.5 → 1.1 | 1.5 → 1.3 | 0.6 → 0.5 | 1.5 → 0.8 |
+| Lr2 c8 | 1.3 → 0.8 | 1.5 → 1.2 | 0.6 → 0.5 | 1.2 → 0.6 |
+| chips 1–7 | unchanged | unchanged | unchanged | unchanged |
+
+- Former outliers: 63 dz −3.3 → −1.7, 72 −3.7 → −1.3, 107 −4.0 → −0.9, 431 −2.4 → −0.3; Lr1 c0
+  (153, 162, 171) barely change.
+- dz vs Z, outermost bins: Lr0 −1.1/+1.6 → −0.2/−0.1, Lr1 −2.3 → −0.5, Lr2 −1.6 → −0.7 µm. Inner bins, the
+  vertex residuals and the core widths are unchanged.
+
+The move is real. The RX tilt compensates the large TY over the chip, so checkResid does not see the
+−25 µm normal shift as a residual. The end chips were not absorbing a Mille-specific artefact.
+
+**Suspected blocker: the IB half-barrel `pinChildrenMeanNoCross: ["RX"]`.** NoCross pins the plain mean of
+the staves' own RX per half barrel, i.e. a common stave tilt in their own frames: a cone, normal shift ∝ z,
+with opposite signs at the two stave ends. The other constraints are excluded or unlikely:
+- `rayModes` has `rMin` 10 cm and no longer touches the IB;
+- the priors are too weak (end chips σ 30–50 µm; the move costs ≲ 1 per chip);
+- the stave RZ pin is a roll, unrelated to this shape.
+
+**Test config `doc/ITS_RB_IBv1.json`** = IBv0 without the half-barrel RX pin and with the mean-vertex
+SlopeX/SlopeY free. Removing the pin opens no gauge freedom: the half-barrel RX stays fixed, so no automatic
+hierarchical constraint is written for it, and a whole half-barrel tilt is still measured against the OB.
+The risk is a weakly measured IB-wide cone (`radialPolar_r0t1`); the stave RX prior (0.5 mrad, 67 µm at the
+stave end) limits it only loosely. What to check:
+- χ² against IBv0's 29 202 684: about −264 from the slopes, and at least ~14k more if the pin was the
+  blocker;
+- constraint rank = number of equations, no near-zero eigenvalues;
+- Lr0 c0 as in `endsslope` (TY ≈ −25 µm, RX −30…−40 µm at the edge), small changes elsewhere;
+- the IB `radialPolar_r0t1` amplitude in the `WeakModesDiag` output. If it runs away, add an IB-only
+  `globalModes: ["radialPolar_r0t1"]` rule, separate from the OB one. If the χ² gain is much smaller than
+  14k, the next suspects are the ITS-level NoCross over the IB and OB half barrels, then the stave RZ pin.
+
+**`MilleRes` bug found on the way (fixed in `f9ae6ee`).** `Volume::readMillepedeResults` kept only labels
+with presigma ≥ 0, so parameters fixed at a non-zero preset value were dropped. For the restart test this
+gave the reference geometry plus the freed chips instead of IBv0 plus the freed chips. All labels are kept
+now; consumers treat missing labels as 0, so ordinary runs are unaffected. Two limits remain: corrections are
+applied only to volumes with at least one free rigid-body DOF in the `MilleRes` config (use the config of the
+fit that produced the values), and the calibration JSON writes only calibration DOFs free in that config.
+
+## 10. Other IBv0 checkResid features (not end chips)
+
+- **Vertex jigsaw in dY_vtx vs φ.** It has the Lr0 stave pitch: dY_vtx rises linearly across each Lr0 stave
+  by ~2 µm (pp) to ~3 µm (OO), the same in both half barrels, while Lr0's own dy is flat across the stave.
+  Lr2 dy shows the opposite ramp (+0.8 → −0.9 µm pp). A ramp in the position across the stave is a ramp in
+  incidence angle, the signature of a normal offset of the measurement plane. It is unchanged by the
+  `endsslope` geometry. Not understood.
+- **Outlier bins at φ ≈ π (and weaker at 2π) in dy vs φ, Lr0 and Lr2.** They come from the outermost
+  ~1.5 mm in rφ of the last HB0 stave of each layer at the half-barrel gap: edge minus centre +8…+13 µm on
+  Lr0 st5, −2…−6 µm on Lr1 st7, +6…+15 µm on Lr2 st9, uniform along z, the same in pp and OO and independent
+  of cluster size. The alternating sign is the leave-one-out signature of one layer. A real deformation of
+  that size on the edge staves only is considered improbable; the cause is open. (An earlier attribution to
+  tracks crossing between half barrels was wrong: those are only 1–10 % of the bin.)
+
+## 11. Open points
+
+- **IBv1.** Run it (section 9) and decide on the IB half-barrel RX pin. `endsslope` (IBv0 + end chips +
+  beam slopes) is a valid interim IB geometry meanwhile.
+- **Beam slopes.** Free SlopeX/SlopeY in all further configs.
+- **IB end chips with the OB of v15.** IBv0 has the v8 OB. Merge the final IB config with v15
+  (`doc/ITS_RB_v16.json` = v15 + the v13 IB block, to be updated with the IBv0/IBv1 changes) and run on the
+  45-file set.
 - **IB–OB translation.** Watch the common 9 µm IB + mean-vertex translation relative to the OB, and the IB
   weak modes in `weakModes.pdf`, now that the IB is outside the global-mode equations.
 - **Chip bow DOF.** Implement it (section 8); the expected gain is Δχ² ≈ 10–19k per field.
-- **Lr0 sawtooth.** Check it in the IBv0 checkResid trees, which were not available for this analysis.
+- **Vertex jigsaw and the HB-gap edge strip** (section 10).
 
-## 10. Tools
+## 12. Tools
 
 - **In the repository:** `macro/milleSplit.cxx`, `macro/milleSplitModels.py` and `macro/sensDump.C`,
   documented in `doc/milleSplit.md`. The mean vertex is free since 2026-10-24.
@@ -290,3 +409,7 @@ from the direct parent of the measurement leaf, so an IB chip bow needs a code c
     toys), `c1.py` – `c4.py` (vertex-anchored inversions).
 
   Copy them into `macro/` if they are needed again.
+- **Restart test (`/data/devAlg/chipTest/`):** `mkChipTest.py` writes, per run directory, `param.txt` (all
+  labels at their IBv0 values, the chosen chips and the mean vertex free), `steer.txt` and `chips.txt`;
+  `cmpChipTest.py <runs>` prints χ², Δχ² vs `mvonly` and the per-chip DOF changes. Session scratchpad:
+  `o1.py` – `o13.py` (per-chip checkResid tables, tgλ fits, vertex profiles, edge checks).
