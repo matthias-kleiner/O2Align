@@ -23,8 +23,10 @@ Sections 9–10 (restart test from IBv0, IBv1, other checkResid features) added 
   to the end chips, apart from a common ~9 µm translation of the IB plus mean vertex relative to the OB.
 - **Still constrained in IBv0.** A pede restart from the IBv0 solution with only the 96 end chips free gains
   Δχ² −14k (Lr0 c0: TY ≈ −25 µm, RX −30…−40 µm at the edge), and checkResid confirms the move (section 9).
-  The suspected blocker is the IB half-barrel `pinChildrenMeanNoCross: ["RX"]`, which forbids a cone; the
-  test config is `doc/ITS_RB_IBv1.json`. The mean-vertex beam slopes should be freed as well.
+  Two things blocked it: the IB half-barrel `pinChildrenMeanNoCross: ["RX"]`, which forbids a cone
+  (removing it in IBv1 gave −5.9k), and the σ 5 µm chip TY priors acting on gauge-dependent chip-level
+  values (relaxing them in IBv2 gave −3.8k more). `doc/ITS_RB_IBv2.json` recovers two thirds of the gain,
+  with the beam slopes free and the meaningless mean-vertex prior removed.
 - **Chip bowing (dz vs Z "V" shapes).** The remaining V shape inside each chip comes from chips bent out of
   plane along z:
   - normal displacement ∝ w², sagitta about −1…−3 µm;
@@ -360,6 +362,47 @@ stave end) limits it only loosely. What to check:
   `globalModes: ["radialPolar_r0t1"]` rule, separate from the OB one. If the χ² gain is much smaller than
   14k, the next suspects are the ITS-level NoCross over the IB and OB half barrels, then the stave RZ pin.
 
+**IBv1 and IBv2 results** (`/data/devAlg/solA2IBv1`, `solA2IBv2`). Pede's total χ² contains the
+`measurement` priors of `mp2con.txt` (7374 equations in IBv0/IBv1, exactly the ndf excess over the
+restart runs). Only the data χ² = total − prior χ² (the prior part re-evaluated from `millepede.res`) is
+comparable with the restart test:
+
+| | total χ² | prior χ² | data χ² | Δ data vs IBv0 |
+|---|---|---|---|---|
+| IBv0 | 29 202 684 | 19 588 | 29 183 096 | — |
+| IBv1 (no HB RX pin, slopes free) | 29 197 757 | 20 517 | 29 177 240 | −5 856 |
+| IBv2 (IBv1 + relaxed chip priors, no MV prior) | 29 177 081 | 3 619 | 29 173 462 | −9 634 |
+| `endsslope` (restart test) | | | 29 168 833 | −14 263 |
+
+- **The prior χ² of IBv0 was dominated by two meaningless terms.**
+  - The chip TY priors, σ 5 µm on chips c1–c7, cost 8.5k (9.4k in IBv1). They act on chip-level values,
+    which are hierarchy bookkeeping relative to the stave. In IBv1 the stave-mean chip TY runs −17 → −32 µm
+    along Lr0. The stave's transported constraint is gauge for the data, but not once the chip-level
+    values carry priors: the end-chip move then pays prior χ².
+  - The mean-vertex Y prior, 0 ± 50 µm against the beam at −1.82 mm, costs 1.33k per slot (8k in total).
+    Its pull on Y is ~0.1 µm, so it changes nothing.
+- **`doc/ITS_RB_IBv2.json`** = IBv1 with all IB chip priors set to the former end-chip values (TX 30, TY 50,
+  TZ 30 µm, RX and RZ 3 mrad) and the mean-vertex `measurement` prior removed. Its constraint rank is full
+  (2800 of 2800).
+- **checkResid, per-chip means from the `_hman` 2D histograms**, RMS over chips, in µm:
+
+  | | IBv0 | IBv1 | IBv2 | `endsslope` |
+  |---|---|---|---|---|
+  | Lr0 c0 dz, pp | 1.7 | 1.2 | 1.1 | 1.1 |
+  | Lr0 c8 dz, pp | 1.6 | 1.3 | 1.2 | 1.2 |
+  | Lr2 c0 dz, pp | 1.5 | 1.2 | 1.4 | 1.1 |
+  | Lr2 c8 dz, OO | 1.4 | 1.3 | 1.1 | 0.8 |
+  | Lr0 c8 dz, OO | 1.4 | 1.1 | 1.0 | 0.8 |
+  | middle chips | unchanged | unchanged | unchanged | unchanged |
+
+  On Lr0 and Lr1 IBv2 is close to `endsslope`. The Lr2 end chips lag: pp dz of 297, 360 and 413 is still
+  −2.5 µm, against −1.3…−2.6 µm in `endsslope`.
+- **The remaining 4.6k.** IBv2 recovers two thirds of the restart-test gain. The IB priors now cost only
+  1.05k, and would cost 0.73k at the `endsslope` values, so they are not the remaining gap. `endsslope` need
+  not satisfy IBv2's non-gauge pins (the ITS-level NoCross, the stave RZ NoCross), so part of the gap is
+  their cost. Pede also stops at its 5-iteration limit with an expected ΔF of ~380 in the last iteration,
+  so it is not fully converged; that is worth well under 1k.
+
 **`MilleRes` bug found on the way (fixed in `f9ae6ee`).** `Volume::readMillepedeResults` kept only labels
 with presigma ≥ 0, so parameters fixed at a non-zero preset value were dropped. For the restart test this
 gave the reference geometry plus the freed chips instead of IBv0 plus the freed chips. All labels are kept
@@ -383,9 +426,12 @@ fit that produced the values), and the calibration JSON writes only calibration 
 
 ## 11. Open points
 
-- **IBv1.** Run it (section 9) and decide on the IB half-barrel RX pin. `endsslope` (IBv0 + end chips +
-  beam slopes) is a valid interim IB geometry meanwhile.
-- **Beam slopes.** Free SlopeX/SlopeY in all further configs.
+- **IB baseline.** IBv2 (section 9) is the current IB config: no IB half-barrel RX pin, relaxed chip
+  priors, no mean-vertex prior, beam slopes free. The remaining 4.6k against the restart test sits mostly
+  on the Lr2 end chips. If it matters, test removing the stave RZ NoCross pin next.
+- **Priors on chip-level values.** Chip priors act on gauge-dependent values. Keep them loose wherever the
+  parent has free DOFs with a transported constraint.
+- **Beam slopes.** Free SlopeX/SlopeY in all further configs, and drop the mean-vertex `measurement` prior.
 - **IB end chips with the OB of v15.** IBv0 has the v8 OB. Merge the final IB config with v15
   (`doc/ITS_RB_v16.json` = v15 + the v13 IB block, to be updated with the IBv0/IBv1 changes) and run on the
   45-file set.
