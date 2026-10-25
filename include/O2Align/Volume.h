@@ -21,6 +21,7 @@
 #include <array>
 #include <limits>
 #include <algorithm>
+#include <functional>
 
 #include <Eigen/Dense>
 #include <nlohmann/json_fwd.hpp>
@@ -41,6 +42,17 @@ namespace o2::alignrs
 {
 using Matrix26 = Eigen::Matrix<double, 2, 6>; // d(Y,Z)/d(rigid-body DOFs)
 using Matrix66 = Eigen::Matrix<double, 6, 6>;
+
+/// How the coefficients of the "globalModes"/"groupModes" equations are built, see
+/// Volume::writeGlobalModeConstraints and doc/DOFConfig_rules.md
+struct ModeEquationOptions {
+  /// coefficient of a DOF = projection of the mode on the displacement this DOF gives to the
+  /// sensor-box corners of its subtree; false: the mode evaluated at the volume's origin (legacy)
+  bool sensorProjection = true;
+  /// "groupModes": constrain the mode relative to the free rigid motion of each group volume, i.e.
+  /// remove from the mode its least-squares rigid part over the volume's sensors (needs sensorProjection)
+  bool relativeToGroupRoots = true;
+};
 
 class Volume
 {
@@ -90,8 +102,8 @@ class Volume
   // steering file output
   /// statWeighted: default weighting of the hierarchical mean-of-children constraint (see
   /// writeChildrenMeanConstraints) for every DOF of every volume whose own "weightedMean" clause did
-  /// not override it.
-  void writeRigidBodyConstraints(std::ostream& os, bool statWeighted = false) const;
+  /// not override it; modeOpt: see ModeEquationOptions
+  void writeRigidBodyConstraints(std::ostream& os, bool statWeighted = false, const ModeEquationOptions& modeOpt = {}) const;
   void writeParameters(std::ostream& os) const;
   void writeTree(std::ostream& os, int indent = 0) const;
 
@@ -210,7 +222,7 @@ class Volume
   /// whole tree, not per volume: call it on the root (writeRigidBodyConstraints already does).
   /// It also writes the "groupModes" equations: one set per group, each over the free rigid-body DOFs
   /// of the whole subtrees of the group's volumes, see writeGroupModeConstraints.
-  void writeGlobalModeConstraints(std::ostream& os) const;
+  void writeGlobalModeConstraints(std::ostream& os, const ModeEquationOptions& opt = {}) const;
   ///@}
 
   /// \name Ray-mode constraints
@@ -436,10 +448,25 @@ class Volume
   /// with allInSubtree) and its whole subtree, as (label, coefficient) pairs still carrying their
   /// physical lever arms, counting in nFlagged the volumes which took part with a free rigid-body DOF
   void collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged, bool allInSubtree = false) const;
+  /// displacement field of a mode at a global position (0 where the mode is undefined)
+  using ModeField = std::function<void(const double* pos, double* u)>;
+  static ModeField modeField(int eq);
+  /// sensor-projected version of collectGlobalModeTerms (ModeEquationOptions::sensorProjection): the
+  /// coefficient of a DOF is sum_p u(p).d(p), p running over the sample points of the sensors of the
+  /// volume's subtree and d(p) the displacement of p for a unit value of the DOF. Returns the sums
+  /// {U = sum u(p), M = sum p x u(p)} over this subtree, from which every coefficient follows.
+  std::array<double, 6> collectProjectedModeTerms(const ModeField& field, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged, bool allInSubtree,
+                                                  int eq) const;
+  /// sample points (global frame) of the sensors of this subtree: the 8 corners of the box of each
+  /// leaf, placed in its L2G frame, or its origin alone if it has no box
+  void collectSensorSamplePoints(std::vector<std::array<double, 3>>& pts) const;
+  /// field minus its least-squares projection, over the sensor sample points of this subtree, on the
+  /// rigid motions of this volume's free DOFs; sum |u|^2 over the points before and after in norm2
+  ModeField removeFreeRigidMotion(const ModeField& field, std::array<double, 2>& norm2) const;
   /// the volumes of this subtree carrying a "groupModes" clause, by group name
   void collectGroupModeRoots(std::map<std::string, std::vector<const Volume*>>& groups) const;
   /// one Millepede Constraint per group and requested mode equation, see the "groupModes" clause
-  void writeGroupModeConstraints(std::ostream& os, uint32_t anchorLabel) const;
+  void writeGroupModeConstraints(std::ostream& os, uint32_t anchorLabel, const ModeEquationOptions& opt) const;
   /// normalise one collected mode equation, drop its rounding residues and write it with the pede
   /// grouping anchor; false (with a warning) if fewer than 2 terms survive
   static bool writeModeEquation(std::ostream& os, const std::string& name, const std::vector<std::pair<uint32_t, double>>& terms, int nFlagged, uint32_t anchorLabel);

@@ -137,6 +137,10 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   // count from instead. Left empty, or if the file can't be read or doesn't cover every contributor of
   // a weighted equation, falls back to an equal-split write for that equation, with a warning.
   std::string statInFile = "";
+  // coefficients of the "globalModes"/"groupModes" equations (Volume ModeEquationOptions, see
+  // doc/DOFConfig_rules.md#how-the-mode-coefficients-are-built)
+  bool modeSensorProjection = true; // project each mode on the displacement a DOF gives to the sensor box corners of its subtree; false: legacy, the mode evaluated at the volume's origin, each volume weighted 1
+  bool groupModesRelToRoots = true; // groupModes: constrain the mode relative to the free rigid motion of each group volume (needs modeSensorProjection)
   std::string statFile = "procStat";
   std::string milleBinFile = "mp2data";
   std::string milleConFile = "mp2con.txt";

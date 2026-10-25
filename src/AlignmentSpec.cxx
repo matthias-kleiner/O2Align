@@ -938,7 +938,10 @@ void AlignmentSpec::writeMilleSteerFiles(bool statWeighted)
   std::ofstream tree(mParams->milleTreeFile);
   mHierarchy->writeTree(tree);
   std::ofstream cons(mParams->milleConFile);
-  mHierarchy->writeRigidBodyConstraints(cons, statWeighted);
+  ModeEquationOptions modeOpt;
+  modeOpt.sensorProjection = mParams->modeSensorProjection;
+  modeOpt.relativeToGroupRoots = mParams->groupModesRelToRoots;
+  mHierarchy->writeRigidBodyConstraints(cons, statWeighted, modeOpt);
   std::ofstream par(mParams->milleParamFile);
   mHierarchy->writeParameters(par);
 }

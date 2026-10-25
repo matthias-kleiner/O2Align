@@ -316,8 +316,9 @@ only the vertex constraint can see. The members which are already modes of their
 radial (1,0) is `radialScaling`, tangential (1,0) is `curl`, longitudinal (1,1) = z is `zScaling`, and
 longitudinal (0,0) is a rigid z shift. Longitudinal (1,0), Δz = ε·r, is the telescope mode, and radial
 (0,1), Δr = ε·z/r, is the cone that showed up as the IB chip-TY dipole. Like `zScaling` these families
-have no handle on stave-level DOFs (all at z ≈ 0): they matter as soon as DOFs distributed in z
-(modules, chips) are free, which is exactly when they must be requested. Note that `bowing`
+have little or no handle on stave-level DOFs (all at z ≈ 0, see "How the mode coefficients are
+built"): they matter as soon as DOFs distributed in z (modules, chips) are free, which is exactly when
+they must be requested. Note that `bowing`
 (Δr = ε·z², one ε for all layers) is *not* a null direction; its null counterpart is
 `radialPolar_r0t2`, Δr = ε·z²/r². The equations are named `<family>_r<p>t<k>`, e.g.
 `radialPolar_r0t1`. They are only the axisymmetric, low-order members of a family that is
@@ -335,18 +336,48 @@ must follow the rule that frees them. Flagging several nested levels at once is 
 double counting: the equation then constrains the total amplitude summed over all of them, which is
 the degenerate quantity, regardless of which level realises it.
 
-The coefficients come from each volume's own `getL2G()`, not from nominal radii: for every free DOF,
-the projection of the mode's analytic displacement field **u**(x) (for `TX,TY,TZ`) or of the local
-rotation **ω**(x) = ½∇×**u** it induces (for `RX,RY,RZ`) onto the corresponding local axis. The
-rotation part is not optional: it is what makes `twist` constrain the OB staves' `RY` rather than
-their translations. Each equation is homogeneous, so it is normalised to a largest coefficient of 1,
-and terms below 1e-9 of that are dropped as rounding residues of the L2G matrices.
+### How the mode coefficients are built
 
-A mode with no handle on the flagged level is skipped with a warning rather than silently. `zScaling`
-and `bowing` project on a volume's local Z (beam) DOF with a coefficient ∝ z of that volume, which
-vanishes for an ITS stave — a stave is centred at z = 0 — so these two need free DOFs that are
-*distributed* in z (module or chip level) to be observable at all. `globalModes` is ignored, with a
-warning, on a volume that is not rigid-body alignable.
+The coefficients come from the volumes' own `getL2G()`, not from nominal radii. Two definitions exist,
+selected by `AlignParams.modeSensorProjection` (`Volume::ModeEquationOptions`, set in
+`AlignmentSpec::writeMilleSteerFiles`):
+
+- **Sensor projection (default, `true`).** The equation is the projection of the displacement of the
+  sensors on the mode. Each sensor is sampled at the 8 corners **p** of its box (the box of its geometry
+  volume, placed in its L2G frame; its origin alone if it has none). A unit value of the free DOF *k* of
+  a volume with origin **O** and local axes **e**<sub>k</sub> moves **p** by **d**(**p**) =
+  **e**<sub>k</sub> (`TX,TY,TZ`) or **e**<sub>k</sub> × (**p** − **O**) (`RX,RY,RZ`), and its coefficient is
+  Σ<sub>p</sub> **u**(**p**)·**d**(**p**) over the sample points of the sensors *of its subtree*, i.e.
+  **U**·**e**<sub>k</sub>, resp. (**M** − **O** × **U**)·**e**<sub>k</sub>, with **U** = Σ **u**(**p**) and
+  **M** = Σ **p** × **u**(**p**), sums which add up over the subtrees (`Volume::collectProjectedModeTerms`).
+  Since the sensor displacement is the sum of the contributions of all levels, the equation is the same
+  whichever level realises the motion: a half-barrel shift gives the same total at stave, half-stave or
+  module level (`globalShift_y` over Lr3 HB0 in `ITS_RB_v17`: coefficient sums −7.69, −7.69, −7.71 per
+  level), and a volume counts in proportion to its sensors. The rotations get their lever arm from the
+  sensors' extent: the rotation of a stave is weighted by its length, that of a chip about its own centre
+  by its few cm. This is the metric of the B amplitude of `WeakModesDiag` (a fit of the sensor
+  displacements), up to the sampling of the sensor rotations.
+- **Origin evaluation (legacy, `false`).** For every free DOF, the projection of the mode's field
+  **u**(x) (for `TX,TY,TZ`) or of the local rotation **ω**(x) = ½∇×**u** it induces (for `RX,RY,RZ`),
+  evaluated at the volume's *origin*, onto the corresponding local axis; every volume counts with
+  weight 1, whatever its size. The rotation part is what makes `twist` constrain the OB staves' `RY`
+  rather than their translations. With several nested levels flagged, the equation then weights the
+  levels by their number of volumes rather than by the displacement they cause (the same Lr3 HB0 shift:
+  −7.69, −15.4, −61.6 at stave, half-stave and module level), so its content depends on which level
+  carries the motion. It reproduces the `mp2con.txt` written before the option existed exactly.
+  Metric A of `WeakModesDiag` still uses these coefficients.
+
+Each equation is homogeneous, so it is normalised to a largest coefficient of 1, and terms below 1e-9
+of that are dropped as rounding residues of the L2G matrices.
+
+A mode with no handle on the flagged level is skipped with a warning rather than silently. With the
+origin evaluation, `zScaling`, `bowing` and the polar families project on a volume's DOFs with
+coefficients ∝ z (z²) of the volume's origin, which vanish for an ITS stave — a stave is centred at
+z = 0 — so these need free DOFs that are *distributed* in z (module or chip level) to be observable at
+all. With the sensor projection the modes even in z (`bowing`, `radialPolar_r0t2`, ...) do reach the
+stave DOFs, through Σ z² of the stave's sensors; the odd ones (`zScaling`, `radialPolar_r0t1`, ...)
+still cancel over a stave symmetric in z. `globalModes` is ignored, with a warning, on a volume that
+is not rigid-body alignable.
 
 `globalTilt` is nearly the same equation as a `pinChildrenMean` (transported form) of the parent's
 `RX`/`RY`, so requesting both makes the constraint set rank-deficient. Prefer `globalTilt`: the pin's
@@ -390,12 +421,27 @@ group instead:
   unnamed group is keyed by the volume's symName, so do not choose a name equal to the symName of a
   volume (e.g. `ITS/ITSULayer3/ITSUHalfBarrel0`), which would merge it with that volume's own group.
 - **Terms.** The equation sums the free rigid-body DOFs of the *whole subtree* of every volume of the
-  group, at all levels, with the same per-volume projection as `globalModes`. Nothing has to be
+  group, at all levels, with the same coefficients as `globalModes` (see "How the mode coefficients are
+  built"). Nothing has to be
   flagged below, and the matched volume itself needs no free DOF (a fixed half barrel is fine).
   Summing every level is what makes it impossible to escape: a `pinChildrenMean*` sees only the nearest
   free descendants, so a motion it pins can reappear one level down. The OB half-barrel "scissor" did
   exactly that under the stave-level pin, through module TX + RY; `globalShift` per half barrel removes
   the net translation whichever level carries it.
+- **Relative to the free motion of the group volumes** (`AlignParams.groupModesRelToRoots`, default
+  `true`, needs `modeSensorProjection`). Before the projection, the mode is replaced, for each volume of
+  the group, by its residual after a least-squares fit, over the sample points of that volume's sensors,
+  of the rigid motions of the volume's own *free* DOFs (`Volume::removeFreeRigidMotion`). The free DOFs
+  of the group volumes then drop out of the equation exactly, and it constrains only the deformation of
+  their content. For the per-layer stave bow of `ITS_RB_v17` (staves free in TX, TY, TZ, RY) the field
+  z²·r̂ acts as (z² − ⟨z²⟩)·r̂ per stave: the radial offset of each stave, which the data measure,
+  stays free, while the module TY coefficients sum to ≈ 0 per half stave. Without it, the projected
+  bow would load the stave TY with Σ z² of its sensors and pin the stave radii together with the bow;
+  the origin evaluation escaped this only because a stave origin sits at z = 0, and was centred at module
+  level only through the equal-weight child-mean constraints. A group volume without free DOFs (the
+  fixed OB half barrels of the `globalShift` groups) is left unchanged. A mode which is entirely a free
+  rigid motion of the group volumes (e.g. `globalShift` on free half barrels) leaves nothing to
+  constrain and is skipped with a warning; fix the DOF or set the switch to `false` to constrain it.
 - **Semantics.** A volume carries one `groupModes` clause: a later matching rule replaces the modes and
   the group name of an earlier one. To put a volume in two kinds of group, use different levels, as
   above (half barrels for the shift, staves for the per-layer bow). The equations are written by

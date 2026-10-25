@@ -20,6 +20,7 @@
 #include <functional>
 #include <TGeoManager.h>
 #include <TGeoPhysicalNode.h>
+#include <TGeoBBox.h>
 #include <TMath.h>
 #include <nlohmann/json.hpp>
 
@@ -200,12 +201,12 @@ bool Volume::hasAnyWeightedMean() const
   return false;
 }
 
-void Volume::writeRigidBodyConstraints(std::ostream& os, bool statWeighted) const
+void Volume::writeRigidBodyConstraints(std::ostream& os, bool statWeighted, const ModeEquationOptions& modeOpt) const
 {
   if (isRoot()) {
     // a global deformation mode spans the whole tree, so its equation is written once here and not
     // during the per-volume recursion below
-    writeGlobalModeConstraints(os);
+    writeGlobalModeConstraints(os, modeOpt);
     writeRayModeConstraints(os);
   }
   // a volume which is not rigid-body alignable (the root of the hierarchy, a detector envelope)
@@ -665,6 +666,169 @@ void Volume::collectGlobalModeTerms(int eq, std::vector<std::pair<uint32_t, doub
   }
 }
 
+Volume::ModeField Volume::modeField(int eq)
+{
+  const int mode = globalEqMode(eq), phase = globalEqPhase(eq);
+  return [mode, phase](const double* pos, double* u) {
+    double om[3];
+    if (!globalModeField(mode, phase, pos, u, om)) {
+      u[0] = u[1] = u[2] = 0.;
+    }
+  };
+}
+
+void Volume::collectSensorSamplePoints(std::vector<std::array<double, 3>>& pts) const
+{
+  if (!isLeaf()) {
+    for (const auto& c : mChildren) {
+      c->collectSensorSamplePoints(pts);
+    }
+    return;
+  }
+  // the box of the geometry volume, centred on the origin of the leaf's own L2G frame: a sensor may
+  // define its L2G differently from its geometry volume (the ITS chip vs its sensitive layer), but
+  // only the extent matters here, which serves to weight the rotations of the DOFs by a lever arm
+  const auto& l2g = getMatrixL2G();
+  const auto* box = mPN ? dynamic_cast<const TGeoBBox*>(mPN->GetShape()) : nullptr;
+  if (box == nullptr) {
+    const double* o = l2g.GetTranslation();
+    pts.push_back({o[0], o[1], o[2]});
+    return;
+  }
+  for (const double sx : {-1., 1.}) {
+    for (const double sy : {-1., 1.}) {
+      for (const double sz : {-1., 1.}) {
+        const double loc[3] = {sx * box->GetDX(), sy * box->GetDY(), sz * box->GetDZ()};
+        auto& g = pts.emplace_back();
+        l2g.LocalToMaster(loc, g.data());
+      }
+    }
+  }
+}
+
+// A unit value of the local DOF k of a volume with origin O and local axes e_k (columns of L2G)
+// moves a point p by d(p) = e_k for a translation and by e_k x (p - O) for a rotation (see
+// computeJacobianL2T: dX = t + omega x p in the local frame). Its coefficient sum_p u(p).d(p) is then
+// U.e_k, resp. (M - O x U).e_k, with U = sum u(p) and M = sum p x u(p), sums which add up over the
+// subtrees: one pass over the sensors gives the coefficients of every level.
+std::array<double, 6> Volume::collectProjectedModeTerms(const ModeField& field, std::vector<std::pair<uint32_t, double>>& terms, int& nFlagged, bool allInSubtree, int eq) const
+{
+  std::array<double, 6> sums{}; // U, M
+  if (isLeaf()) {
+    std::vector<std::array<double, 3>> pts;
+    collectSensorSamplePoints(pts);
+    for (const auto& p : pts) {
+      double u[3];
+      field(p.data(), u);
+      for (int i = 0; i < 3; ++i) {
+        sums[i] += u[i];
+        sums[3 + i] += p[(i + 1) % 3] * u[(i + 2) % 3] - p[(i + 2) % 3] * u[(i + 1) % 3];
+      }
+    }
+  }
+  for (const auto& c : mChildren) {
+    const auto cs = c->collectProjectedModeTerms(field, terms, nFlagged, allInSubtree, eq);
+    for (int i = 0; i < 6; ++i) {
+      sums[i] += cs[i];
+    }
+  }
+  // same selection as collectGlobalModeTerms
+  if ((allInSubtree || mGlobalModes[eq]) && !mIsPseudo && mRigidBody && mRigidBody->nFreeDOFs() > 0) {
+    ++nFlagged;
+    const auto& l2g = getMatrixL2G();
+    const double* o = l2g.GetTranslation();
+    const double* rot = l2g.GetRotationMatrix(); // row-major 3x3; column k = local axis k in GLO
+    double r[3];                                   // M - O x U
+    for (int i = 0; i < 3; ++i) {
+      r[i] = sums[3 + i] - (o[(i + 1) % 3] * sums[(i + 2) % 3] - o[(i + 2) % 3] * sums[(i + 1) % 3]);
+    }
+    const int nDOF = std::min(mRigidBody->nDOFs(), static_cast<int>(RigidBodyDOFSet::NDOF));
+    for (int iDOF = 0; iDOF < nDOF; ++iDOF) {
+      if (mRigidBody->isFree(iDOF)) {
+        const double* v = (iDOF < 3) ? sums.data() : r;
+        const int ax = iDOF % 3;
+        terms.emplace_back(mLabel.raw(iDOF), v[0] * rot[ax] + v[1] * rot[3 + ax] + v[2] * rot[6 + ax]);
+      }
+    }
+  }
+  return sums;
+}
+
+// u'(p) = u(p) - sum_j beta_j g_j(p), g_j the displacement field of the free DOF j of this volume and
+// beta the least-squares solution of G beta = b, G_ij = sum_p g_i.g_j, b_j = sum_p u.g_j. By
+// construction sum_p u'.g_j = 0: the free DOFs of this volume drop out of the projected equation.
+Volume::ModeField Volume::removeFreeRigidMotion(const ModeField& field, std::array<double, 2>& norm2) const
+{
+  std::vector<std::array<double, 3>> pts;
+  collectSensorSamplePoints(pts);
+  std::vector<int> dofs;
+  if (mRigidBody && !mIsPseudo) {
+    const int nDOF = std::min(mRigidBody->nDOFs(), static_cast<int>(RigidBodyDOFSet::NDOF));
+    for (int iDOF = 0; iDOF < nDOF; ++iDOF) {
+      if (mRigidBody->isFree(iDOF)) {
+        dofs.push_back(iDOF);
+      }
+    }
+  }
+  const auto& l2g = getMatrixL2G();
+  const double* o0 = l2g.GetTranslation();
+  const double* rot = l2g.GetRotationMatrix();
+  const std::array<double, 3> o{o0[0], o0[1], o0[2]};
+  std::array<std::array<double, 3>, 3> axes; // local axes in GLO
+  for (int k = 0; k < 3; ++k) {
+    axes[k] = {rot[k], rot[3 + k], rot[6 + k]};
+  }
+  auto dofField = [dofs, axes, o](int j, const double* p, double* g) {
+    const auto& e = axes[dofs[j] % 3];
+    if (dofs[j] < 3) {
+      g[0] = e[0], g[1] = e[1], g[2] = e[2];
+    } else {
+      const double d[3] = {p[0] - o[0], p[1] - o[1], p[2] - o[2]};
+      for (int i = 0; i < 3; ++i) {
+        g[i] = e[(i + 1) % 3] * d[(i + 2) % 3] - e[(i + 2) % 3] * d[(i + 1) % 3];
+      }
+    }
+  };
+  const int n = static_cast<int>(dofs.size());
+  Eigen::MatrixXd G = Eigen::MatrixXd::Zero(n, n);
+  Eigen::VectorXd b = Eigen::VectorXd::Zero(n);
+  std::vector<std::array<double, 3>> g(n);
+  for (const auto& p : pts) {
+    double u[3];
+    field(p.data(), u);
+    for (int j = 0; j < n; ++j) {
+      dofField(j, p.data(), g[j].data());
+      b(j) += u[0] * g[j][0] + u[1] * g[j][1] + u[2] * g[j][2];
+      for (int i = 0; i <= j; ++i) {
+        G(i, j) += g[i][0] * g[j][0] + g[i][1] * g[j][1] + g[i][2] * g[j][2];
+      }
+    }
+  }
+  G = G.selfadjointView<Eigen::Upper>();
+  // a complete orthogonal decomposition rather than a plain inverse: a volume with all its sensors on
+  // a line (or a single point-like one) leaves some of its rotations without a lever arm
+  const Eigen::VectorXd beta = n ? Eigen::VectorXd(G.completeOrthogonalDecomposition().solve(b)) : Eigen::VectorXd();
+  ModeField reduced = [field, dofField, beta, n](const double* p, double* u) {
+    field(p, u);
+    double gj[3];
+    for (int j = 0; j < n; ++j) {
+      dofField(j, p, gj);
+      for (int i = 0; i < 3; ++i) {
+        u[i] -= beta(j) * gj[i];
+      }
+    }
+  };
+  norm2 = {0., 0.};
+  for (const auto& p : pts) {
+    double u[3], ur[3];
+    field(p.data(), u);
+    reduced(p.data(), ur);
+    norm2[0] += u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+    norm2[1] += ur[0] * ur[0] + ur[1] * ur[1] + ur[2] * ur[2];
+  }
+  return reduced;
+}
+
 void Volume::collectGroupModeRoots(std::map<std::string, std::vector<const Volume*>>& groups) const
 {
   if (std::any_of(mGroupModes.begin(), mGroupModes.end(), [](bool b) { return b; })) {
@@ -948,7 +1112,7 @@ void Volume::writeRayModeConstraints(std::ostream& os) const
   }
 }
 
-void Volume::writeGlobalModeConstraints(std::ostream& os) const
+void Volume::writeGlobalModeConstraints(std::ostream& os, const ModeEquationOptions& opt) const
 {
   // Workaround for the constraint grouping of pede (grpcon, Millepede-II 4fd638f67f): constraints are
   // processed in the order of their lowest parameter index, and a constraint joining several groups
@@ -965,13 +1129,17 @@ void Volume::writeGlobalModeConstraints(std::ostream& os) const
   for (int eq = 0; eq < NGlobalEq; ++eq) {
     terms.clear();
     int nFlagged = 0;
-    collectGlobalModeTerms(eq, terms, nFlagged);
+    if (opt.sensorProjection) {
+      collectProjectedModeTerms(modeField(eq), terms, nFlagged, false, eq);
+    } else {
+      collectGlobalModeTerms(eq, terms, nFlagged);
+    }
     if (nFlagged == 0) { // the mode was not requested, or nothing is free where it was requested
       continue;
     }
     writeModeEquation(os, std::format("Global mode {} over {}", globalEqName(eq), mSymName), terms, nFlagged, firstLabel);
   }
-  writeGroupModeConstraints(os, firstLabel);
+  writeGroupModeConstraints(os, firstLabel, opt);
 }
 
 // The "groupModes" equations: for each group (the volumes sharing a group name, or a single volume
@@ -980,8 +1148,16 @@ void Volume::writeGlobalModeConstraints(std::ostream& os) const
 // mean-of-children pin only sees the nearest free descendants, so a motion it pins can reappear one
 // level further down (the OB half-barrel "scissor" did, through the module TX + RY), while a sum over
 // all levels constrains the total, whichever level realises it.
-void Volume::writeGroupModeConstraints(std::ostream& os, uint32_t anchorLabel) const
+// With ModeEquationOptions::relativeToGroupRoots the mode is first made orthogonal, over the sensors
+// of each group volume, to the free rigid motion of that volume: its own free DOFs then drop out and
+// the equation constrains the deformation of the volume's content only, e.g. a per-layer stave bow
+// z^2 rHat acts as (z^2 - <z^2>) rHat and leaves the radial offset of each stave to the data.
+void Volume::writeGroupModeConstraints(std::ostream& os, uint32_t anchorLabel, const ModeEquationOptions& opt) const
 {
+  if (opt.relativeToGroupRoots && !opt.sensorProjection) {
+    LOGP(warn, "relativeToGroupRoots needs sensorProjection for the coefficients of the group modes: ignored");
+  }
+  const bool relToRoots = opt.relativeToGroupRoots && opt.sensorProjection;
   std::map<std::string, std::vector<const Volume*>> groups;
   collectGroupModeRoots(groups);
   std::vector<std::pair<uint32_t, double>> terms;
@@ -998,11 +1174,29 @@ void Volume::writeGroupModeConstraints(std::ostream& os, uint32_t anchorLabel) c
       }
       terms.clear();
       int nFlagged = 0;
+      std::array<double, 2> norm2{}; // of the mode before and after removing the free motion of the roots
       for (const auto* v : roots) {
-        v->collectGlobalModeTerms(eq, terms, nFlagged, true);
+        if (!opt.sensorProjection) {
+          v->collectGlobalModeTerms(eq, terms, nFlagged, true);
+          continue;
+        }
+        auto field = modeField(eq);
+        if (relToRoots) {
+          std::array<double, 2> n2{};
+          field = v->removeFreeRigidMotion(field, n2);
+          norm2[0] += n2[0];
+          norm2[1] += n2[1];
+        }
+        v->collectProjectedModeTerms(field, terms, nFlagged, true, eq);
       }
       if (nFlagged == 0) {
         LOGP(warn, "Ignoring the group mode {} over {}: no free rigid-body DOF in its {} subtree(s)", globalEqName(eq), group, roots.size());
+        continue;
+      }
+      // the mode is (numerically) a rigid motion of each group volume, which its own free DOFs carry:
+      // nothing is left to constrain, and what writeModeEquation would normalise is rounding noise
+      if (relToRoots && norm2[1] <= 1e-12 * norm2[0]) {
+        LOGP(warn, "Ignoring the group mode {} over {}: it is a free rigid motion of the group volumes", globalEqName(eq), group);
         continue;
       }
       writeModeEquation(os, std::format("Group mode {} over {}", globalEqName(eq), group), terms, nFlagged, anchorLabel);
@@ -1029,10 +1223,10 @@ bool Volume::writeModeEquation(std::ostream& os, const std::string& name, const 
       }
     }
   }
-  // A mode can legitimately have no handle on the flagged level: z scaling and bowing project on
-  // the local Z (beam) DOF with a coefficient ~ z of the volume, which vanishes for an ITS stave
-  // since a stave is centred at z = 0 -- these modes are only observable with free DOFs that are
-  // *distributed* in z (module/chip level). Say so rather than silently writing nothing. One term
+  // A mode can legitimately have no handle on the flagged level: z scaling projects on the local Z
+  // (beam) DOF with a coefficient ~ z of the volume (origin evaluation) or ~ sum z of its sensors
+  // (sensor projection), which vanishes for an ITS stave centred at z = 0 -- such modes are only
+  // observable with free DOFs that are *distributed* in z (module/chip level). Say so rather than silently writing nothing. One term
   // alone is not a mode either, it is a measurement of a single DOF.
   if (con.getSize() < 2) {
     LOGP(warn, "Ignoring the constraint '{}': only {} of the {} flagged volumes' free DOFs project on this mode",
