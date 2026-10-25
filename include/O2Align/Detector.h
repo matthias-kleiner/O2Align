@@ -21,6 +21,7 @@
 
 #include "DetectorsCommonDataFormats/AlignParam.h"
 #include "DetectorsCommonDataFormats/DetID.h"
+#include "O2Align/AlignGeomUtils.h"
 #include "O2Align/TimeSlotsSet.h"
 #include "O2Align/Volume.h"
 #include "DataFormatsGlobalTracking/RecoContainer.h"
@@ -101,9 +102,11 @@ class Detector
   ///                     correction of a parent changes the global delta of all its daughters),
   ///                     plus the volumes which were not in the initial vector but are moved by the
   ///                     fit, ordered by the geometry level.
+  /// \param regularize   if not null, before writing transfer to the selected parents the common
+  ///                     corrections of their children, see geomutils::transferChildrenCommonMotion
   /// Must be called after attachTo, with the geometry the fit was done on loaded; the ideal geometry
   /// itself is not needed. The derivation (thesis A.7, A.8) is documented in Detector.cxx.
-  virtual std::vector<o2::detectors::AlignParam> MP2AlignParams(const std::map<uint32_t, double>& labelToValue, bool writeLocal) const;
+  virtual std::vector<o2::detectors::AlignParam> MP2AlignParams(const std::map<uint32_t, double>& labelToValue, bool writeLocal, const geomutils::ChildrenTransferConfig* regularize = nullptr) const;
 
   /// Compact, human-readable summary of how many volumes of this detector's branch have at least
   /// one free rigid-body and/or calibration DOF, one line per hierarchy level: "<Nrb>/<Ncal>/<N>"

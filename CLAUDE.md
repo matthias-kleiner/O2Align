@@ -50,10 +50,16 @@ global mode, from the constraint projection (A) and from a fit of the sensor dis
 `macro/drawWeakModes.C` plots them.
 
 `--output` is a comma-separated `EnumFlags` list: `VerboseGBL, MilleData, MilleSteer, MilleRes,
-MisRes, WeakModesDiag, WeakModesDiagIni, Debug` ([AlignmentSpec.h](include/O2Align/AlignmentSpec.h)).
+MisRes, WeakModesDiag, WeakModesDiagIni, Regularize, Debug` ([AlignmentSpec.h](include/O2Align/AlignmentSpec.h)).
 `WeakModesDiagIni` is a standalone pass, independent of `MilleRes`: it diagnoses the weak modes
 already present in the initial (CCDB) alignment baked into the loaded geometry, relative to the
 ideal geometry, with no millepede.res involved (see [doc/WeakModes.md](doc/WeakModes.md)).
+`Regularize` (any combination not processing data) rewrites `<DET>_<algParamsOutFile>` — of the
+`MilleRes` result, or else of the initial alignment — transferring to each TGeo alignable parent
+(`AlignParams.regularizeParents` regex, all if empty; deepest first) the rigid motion robustly (L1/IRLS)
+fitted to the displacements of its children's bounding-box corners, sensors kept in place
+(`geomutils::transferChildrenCommonMotion`, see [doc/Regularization.md](doc/Regularization.md)). The aligned geometry loaded must be the one of the
+initial alignment, otherwise the ideal matrices derived from it are wrong.
 
 If DPL workflow should be piped to a chain of shell comands, it has to have `--run` option before the 1st element not being a workflow, i.e. `... | o2-dev-alignment-workflow --run | tee my.log`.
 

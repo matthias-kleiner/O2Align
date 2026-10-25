@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <optional>
 #include <functional>
 #include <memory>
 //#undef WITH_OPENMP // for testing without OpenMP
@@ -344,7 +345,8 @@ class AlignmentSpec final : public Task
   // ITS3 acceptance so false is to discard track
   bool applyMisalignment(Eigen::Vector2d& res, const FrameInfoExt& frame, const TrackD& wTrk, size_t iTrk);
 
-  // combine the fitted rigid-body corrections with the initial alignment and write them as AlignParam vector
+  // combine the fitted rigid-body corrections with the initial alignment and write them as AlignParam
+  // vector, regularized if OutputOpt::Regularize is requested
   void writeAlignParams(const std::map<uint32_t, double>& labelToValue) const;
 
   /// global (alignment + calibration) derivatives of one measured point, with their labels
@@ -1655,15 +1657,25 @@ bool AlignmentSpec::applyMisalignment(Eigen::Vector2d& res, const FrameInfoExt& 
 // object the fit started from, given as DET:file in algParamsInitial), combine it with the fitted
 // rigid-body corrections of its branch (Detector::MP2AlignParams) and write the result, in the CCDB
 // format, to <DET>_<algParamsOutFile>. A detector without initial file is assumed to have been ideal.
+// With OutputOpt::Regularize the common motion of the children is transferred to their parents
+// before writing, see geomutils::transferChildrenCommonMotion.
 void AlignmentSpec::writeAlignParams(const std::map<uint32_t, double>& labelToValue) const
 {
   using AlgParVec = std::vector<o2::detectors::AlignParam>;
-  
+
+  std::optional<geomutils::ChildrenTransferConfig> regularize;
+  if (mOutOpt[o2::alignrs::OutputOpt::Regularize]) {
+    regularize.emplace();
+    if (!mParams->regularizeParents.empty()) {
+      regularize->parents.emplace_back(mParams->regularizeParents);
+    }
+    regularize->minChildren = mParams->regularizeMinChildren;
+  }
   for (const auto* det : mDetectors) {
     if (!det->getTopVolume() || det->getO2DetID() < 0) {
       continue; // branch discarded
     }
-    auto result = det->MP2AlignParams(labelToValue, mParams->writeLocalAlignParams);
+    auto result = det->MP2AlignParams(labelToValue, mParams->writeLocalAlignParams, regularize ? &*regularize : nullptr);
     if (result.empty()) {
       continue; // nothing to align, e.g. a detector made only of virtual volumes and never aligned
     }
@@ -1681,7 +1693,7 @@ void AlignmentSpec::endOfStream(EndOfStreamContext& /*ec*/)
     mDBGOut.reset();
   }
   if (!mOutOpt[o2::alignrs::OutputOpt::ProcessData]) {
-    // standalone MilleSteer/MilleRes/WeakModesDiag/WeakModesDiagIni (run() only called
+    // standalone MilleSteer/MilleRes/WeakModesDiag/WeakModesDiagIni/Regularize (run() only called
     // updateTimeDependentParams, which already triggered buildHierarchy() on its first, guaranteed
     // call): no track data is read, only millepede.res and the geometry/hierarchy already built are
     // needed, so this can wait until here, after any run() invocation (there is at most one, from the
@@ -1714,6 +1726,13 @@ void AlignmentSpec::endOfStream(EndOfStreamContext& /*ec*/)
       }
       if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiag]) {
         diagnoseWeakModes(mHierarchy.get(), fitted, mParams->weakModesOutBase);
+      }
+    }
+    if (mOutOpt[o2::alignrs::OutputOpt::Regularize] && !mOutOpt[o2::alignrs::OutputOpt::MilleRes]) { // standalone: regularize the initial (CCDB) alignment
+      if (mParams->algParamsOutFile.empty()) {
+        LOGP(error, "Regularize requested with empty AlignParams.algParamsOutFile, nothing is written");
+      } else {
+        writeAlignParams({});
       }
     }
     if (mOutOpt[o2::alignrs::OutputOpt::WeakModesDiagIni]) { // standalone: weak modes of the initial (CCDB) alignment, no millepede.res needed

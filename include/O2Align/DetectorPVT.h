@@ -41,7 +41,7 @@ class DetectorPVT final : public Detector
   bool prepareTrack(o2::globaltracking::RecoContainer* /*recoData*/, const GlobalIDSet& /*ids*/, Track& /*resTrack*/) final { return false; }
 
   /// this is not a real detector, it has no geometry and no measurements, hence it produces no AlignParam objects
-  std::vector<o2::detectors::AlignParam> MP2AlignParams(const std::map<uint32_t, double>& labelToValue, bool writeLocal) const final { return {}; }
+  std::vector<o2::detectors::AlignParam> MP2AlignParams(const std::map<uint32_t, double>& labelToValue, bool writeLocal, const geomutils::ChildrenTransferConfig* /*regularize*/) const final { return {}; }
 
   /// label of the mean vertex volume. Its position is a calibration DOF set (MeanVertexDOFSet),
   /// whose labels carry the ID of the calibration slot, see Volume::getActiveCalibLabel

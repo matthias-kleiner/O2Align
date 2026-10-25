@@ -18,6 +18,7 @@
 #include <string>
 #include <regex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <TGeoMatrix.h>
@@ -63,6 +64,38 @@ TGeoHMatrix getInitialGlobalDelta(const o2::detectors::AlignParam& par);
 /// being accumulated parents first, like GeometryManager::applyAlignment applies them. An empty
 /// map (identity) for every volume if initial is null.
 PathMatrices collectInitialCumulativeDeltas(const std::vector<o2::detectors::AlignParam>* initial);
+
+/// alignable entry of the loaded geometry
+struct Alignable {
+  std::string symName;
+  std::string path;
+};
+
+/// all alignable entries of the loaded geometry whose TGeo path is one of topPaths or lies below
+/// one of them, ordered parents first
+std::vector<Alignable> collectAlignablesBelow(const std::unordered_set<std::string>& topPaths);
+
+/// indices of the alignable children (nearest alignable TGeo descendants) of every alignable having
+/// some, keyed by the path of the parent
+std::unordered_map<std::string, std::vector<size_t>> collectAlignableChildren(const std::vector<Alignable>& alignables);
+
+/// selection of the parents for transferChildrenCommonMotion
+struct ChildrenTransferConfig {
+  std::vector<VolumePattern> parents; // symbolic names of the parents to process, all if empty
+  int minChildren = 2;                // skip the parents with fewer alignable children
+};
+
+/// A posteriori regularization of an alignment: to every selected parent (deepest first, so that the
+/// common part cascades up) transfer the rigid motion robustly (L1, the multidimensional counterpart of
+/// the median) describing, in the parent frame, the displacements of the bounding box corners of its TGeo
+/// alignable children, keeping every child, hence every sensor, at its final place. A common motion of
+/// the children which no rigid motion of the parent produces (e.g. all staves turned around their own
+/// axes) stays in the children.
+/// \param cumulative cumulative global deltas P (G = P * G^id) of the volumes having an alignment
+///                   object, modified in place: the parents and their children which had none get one
+/// \param alignables  the volumes among which parents and children are looked for (parents first)
+/// \param ideal       ideal L2G matrix G^id of every alignable, by path
+void transferChildrenCommonMotion(PathMatrices& cumulative, const std::vector<Alignable>& alignables, const PathMatrices& ideal, const ChildrenTransferConfig& cfg);
 
 } // namespace o2::alignrs::geomutils
 

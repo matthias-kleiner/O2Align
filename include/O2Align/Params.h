@@ -147,6 +147,11 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
 
   // conversion of the fitted rigid-body corrections to o2::detectors::AlignParam (MilleRes stage)
   std::string algParamsOutFile = "alignment.root"; // if not empty, write the combined alignment of each detector to <DET>_<algParamsOutFile>, to be applied to the ideal geometry
+  // Regularize output option: transfer to every selected TGeo alignable parent the common motion of its
+  // alignable children (robust L1 rigid-motion fit of the displacements of their bounding box corners),
+  // deepest parents first, keeping the placement of every sensor
+  std::string regularizeParents = ""; // regex (DOF-config style, implicit arbitrary prefix, '|' for alternatives) of the symbolic names of the parents to regularize, all if empty
+  int regularizeMinChildren = 2;      // skip the parents with fewer alignable children
 
   // WeakModesDiag output (MilleRes stage): <weakModesOutBase>.json and <weakModesOutBase>.root
   std::string weakModesOutBase = "weakModes";

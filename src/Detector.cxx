@@ -69,6 +69,12 @@ namespace o2::alignrs
      With no new correction this gives back the initial objects, converted to the requested convention.
 
   The ideal geometry is never needed: G^id_j = (P^p_j)^-1 * G^p_j wherever it enters.
+
+  4) Optional regularization (OutputOpt::Regularize), geomutils::transferChildrenCommonMotion: before the
+     conversion to objects, the P^c of the parents are modified to absorb the common (robust) motion of their
+     TGeo alignable children, while the P^c of the children, hence the placement of every sensor, are
+     kept. The volumes made explicit by this (a parent or a child without object) are added to the
+     output, and the sensor placement given by the final objects is checked against the one before.
 */
 namespace
 {
@@ -150,9 +156,114 @@ std::vector<OutputEntry> selectOutputVolumes(Volume* top, const AlgParVec* initi
   return entries;
 }
 
+/// Step 3: combined cumulative delta P^c of every output volume
+PathMatrices combineCumulativeDeltas(const std::vector<OutputEntry>& entries, const PathMatrices& iniCum, const PathMatrices& newCum)
+{
+  PathMatrices combinedCum;
+  for (const auto& e : entries) {
+    combinedCum[e.path] = getOnPath(newCum, e.path, true) * getOnPath(iniCum, e.path, true);
+  }
+  return combinedCum;
+}
+
+/// Step 3: the alignment objects of the output volumes (ordered parents first), D^c_j = P^c_j * (P^c_{a(j)})^-1,
+/// converted to the local convention if requested
+AlgParVec makeAlignParams(const std::vector<OutputEntry>& entries, const PathMatrices& combinedCum, const PathMatrices& iniCum, bool writeLocal)
+{
+  AlgParVec result;
+  result.reserve(entries.size());
+  for (const auto& e : entries) {
+    const auto& pc = combinedCum.at(e.path);
+    const auto pcParent = getOnPath(combinedCum, e.path, false);
+    TGeoHMatrix delta = pc * pcParent.Inverse();
+    if (writeLocal) {
+      // d^c = (Z^c)^-1 * D^c * Z^c, with Z^c = P^c_{a(j)} * G^id_j the matrix of j before its own delta
+      const TGeoHMatrix z = pcParent * getOnPath(iniCum, e.path, true).Inverse() * getGeometryMatrix(e.symName);
+      delta = z.Inverse() * delta * z;
+    }
+    result.emplace_back(e.symName.c_str(), e.algID, delta, !writeLocal, false);
+  }
+  return result;
+}
+
+/// paths of the non-virtual volumes of the branch below top (included)
+std::unordered_set<std::string> collectBranchPaths(Volume* top)
+{
+  std::unordered_set<std::string> paths;
+  top->traverse([&](Volume* vol) {
+    if (!vol->isVirtual()) {
+      paths.insert(getAlignablePath(vol->getSymName()));
+    }
+  });
+  return paths;
+}
+
+/// ideal L2G of every alignable, G^id_j = (P^p_j)^-1 * G^p_j
+PathMatrices collectIdealMatrices(const std::vector<Alignable>& alignables, const PathMatrices& iniCum)
+{
+  PathMatrices ideal;
+  for (const auto& a : alignables) {
+    ideal[a.path] = getOnPath(iniCum, a.path, true).Inverse() * getGeometryMatrix(a.symName);
+  }
+  return ideal;
+}
+
+/// Step 4: add to the output the volumes which got an explicit cumulative delta, keeping the order parents first
+void addRegularizedEntries(std::vector<OutputEntry>& entries, const std::vector<Alignable>& alignables, const PathMatrices& combinedCum)
+{
+  std::unordered_set<std::string> selected;
+  for (const auto& e : entries) {
+    selected.insert(e.path);
+  }
+  for (const auto& a : alignables) {
+    if (combinedCum.contains(a.path) && !selected.contains(a.path)) {
+      entries.emplace_back(a.symName, a.path, -1);
+    }
+  }
+  std::stable_sort(entries.begin(), entries.end(), [](const OutputEntry& a, const OutputEntry& b) { return getPathDepth(a.path) < getPathDepth(b.path); });
+}
+
+/// Step 4 closure: the cumulative deltas obtained by applying the output objects (parents first) to the
+/// ideal geometry must place every sensor (alignable without alignable children) as before the regularization
+void checkSensorPlacement(const AlgParVec& result, const PathMatrices& before, const std::vector<Alignable>& alignables, const PathMatrices& ideal, const std::string& detName)
+{
+  PathMatrices applied;
+  for (const auto& par : result) {
+    const auto path = getAlignablePath(par.getSymName());
+    const auto pa = getOnPath(applied, path, false);
+    auto delta = par.createMatrix();
+    if (!par.isGlobal()) {
+      const TGeoHMatrix z = pa * ideal.at(path);
+      delta = z * delta * z.Inverse();
+    }
+    applied[path] = delta * pa;
+  }
+  const auto children = collectAlignableChildren(alignables);
+  double maxShift = 0., maxRot = 0.;
+  size_t nSensors = 0;
+  for (const auto& a : alignables) {
+    if (children.contains(a.path)) {
+      continue;
+    }
+    const TGeoHMatrix diff = getOnPath(applied, a.path, true) * ideal.at(a.path) * (getOnPath(before, a.path, true) * ideal.at(a.path)).Inverse();
+    for (int i = 0; i < 3; ++i) {
+      maxShift = std::max(maxShift, std::abs(diff.GetTranslation()[i]));
+    }
+    for (int i = 0; i < 9; ++i) {
+      maxRot = std::max(maxRot, std::abs(diff.GetRotationMatrix()[i] - (i % 4 ? 0. : 1.)));
+    }
+    ++nSensors;
+  }
+  if (maxShift > 1e-9 || maxRot > 1e-11) {
+    LOGP(error, "Regularization of {} changed the sensor placement: max deviation over {} sensors {:.3e} cm, {:.3e} in rotation", detName, nSensors, maxShift, maxRot);
+  } else {
+    LOGP(info, "Regularization of {} keeps the sensor placement: max deviation over {} sensors {:.3e} cm, {:.3e} in rotation", detName, nSensors, maxShift, maxRot);
+  }
+}
+
 } // namespace
 
-std::vector<o2::detectors::AlignParam> Detector::MP2AlignParams(const std::map<uint32_t, double>& labelToValue, bool writeLocal) const
+std::vector<o2::detectors::AlignParam> Detector::MP2AlignParams(const std::map<uint32_t, double>& labelToValue, bool writeLocal, const geomutils::ChildrenTransferConfig* regularize) const
 {
   if (getO2DetID() < 0) {
     LOGP(fatal, "MP2AlignParams called for {} which has no DetID", getDetName());
@@ -170,26 +281,21 @@ std::vector<o2::detectors::AlignParam> Detector::MP2AlignParams(const std::map<u
   // initial objects, if any, are still rewritten in the requested convention
   const auto newCum = collectNewCumulativeDeltas(mTopVolume, labelToValue);
   const auto iniCum = collectInitialCumulativeDeltas(iniAlg);
-  const auto entries = selectOutputVolumes(mTopVolume, iniAlg, newCum);
-
-  // step 3, parents being processed first so that P^c_{a(j)} is known when j is reached
-  PathMatrices combinedCum;
+  auto entries = selectOutputVolumes(mTopVolume, iniAlg, newCum);
+  auto combinedCum = combineCumulativeDeltas(entries, iniCum, newCum);
   AlgParVec result;
-  result.reserve(entries.size());
-  for (const auto& e : entries) {
-    const auto pp = getOnPath(iniCum, e.path, true);
-    const auto pc = getOnPath(newCum, e.path, true) * pp;
-    const auto pcParent = getOnPath(combinedCum, e.path, false);
-    combinedCum[e.path] = pc;
-    TGeoHMatrix delta = pc * pcParent.Inverse();
-    if (writeLocal) {
-      // d^c = (Z^c)^-1 * D^c * Z^c, with Z^c = P^c_{a(j)} * G^id_j the matrix of j before its own delta
-      const TGeoHMatrix z = pcParent * pp.Inverse() * getGeometryMatrix(e.symName);
-      delta = z.Inverse() * delta * z;
-    }
-    result.emplace_back(e.symName.c_str(), e.algID, delta, !writeLocal, false);
+  if (regularize && !entries.empty()) {
+    const auto alignables = collectAlignablesBelow(collectBranchPaths(mTopVolume));
+    const auto ideal = collectIdealMatrices(alignables, iniCum);
+    const auto before = combinedCum;
+    transferChildrenCommonMotion(combinedCum, alignables, ideal, *regularize);
+    addRegularizedEntries(entries, alignables, combinedCum);
+    result = makeAlignParams(entries, combinedCum, iniCum, writeLocal);
+    checkSensorPlacement(result, before, alignables, ideal, getDetName());
+  } else {
+    result = makeAlignParams(entries, combinedCum, iniCum, writeLocal);
   }
-  LOGP(info, "Converted rigid-body corrections of {} to {} {} AlignParam objects ({} in the initial alignment)", getDetName(), result.size(), writeLocal ? "local" : "global", iniAlg ? iniAlg->size() : 0);
+  LOGP(info, "Converted rigid-body corrections of {} to {} {} AlignParam objects ({} in the initial alignment){}", getDetName(), result.size(), writeLocal ? "local" : "global", iniAlg ? iniAlg->size() : 0, regularize ? ", regularized" : "");
   return result;
 }
 
