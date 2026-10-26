@@ -329,12 +329,13 @@ class AlignmentSpec final : public Task
 
   // build and fit a single composed GBL trajectory for the selected tracks of one collision,
   // with their common vertex position as parameters shared by all of them
-  size_t buildGBLVertex(const std::vector<Track*>& contributors, std::vector<gbl::GblTrajectory>& gblTraj);
+  size_t buildGBLVertex(const std::vector<Track*>& contributors, std::vector<gbl::GblTrajectory>& gblTraj, double mvPriorCovScale = 1.);
 
   void collectVertexTracks(const V2TRef& trackRef, bool useVertexConstraint, std::unordered_map<GTrackID, bool>& ambigTable, std::vector<Track>& resTracks);
   void refitTracks(std::vector<Track>& resTracks, bool useVertexConstraint);
-  bool constrainWithVertex(const PVertex& vtx, int ivref, std::vector<Track>& resTracks, std::vector<Track*>& commonVertexTracks);
-  void buildVertexTrajectories(std::vector<Track>& resTracks, bool hasPVConstraint, const std::vector<Track*>& commonVertexTracks, std::vector<gbl::GblTrajectory>& gblTraj);
+  bool constrainWithVertex(const PVertex& vtx, int ivref, std::vector<Track>& resTracks, std::vector<std::vector<Track*>>& commonVertexGroups);
+  void splitCommonVertexTracks(const std::vector<Track*>& tracks, std::vector<std::vector<Track*>>& commonVertexGroups) const;
+  void buildVertexTrajectories(std::vector<Track>& resTracks, bool hasPVConstraint, const std::vector<std::vector<Track*>>& commonVertexGroups, std::vector<gbl::GblTrajectory>& gblTraj);
   void writeMilleRecords(std::vector<gbl::GblTrajectory>& gblTraj);
 
   // build track to vertex association
@@ -542,11 +543,11 @@ void AlignmentSpec::process() // collisions
     }
     collectVertexTracks(primVer2TRefs[ivref], useVertexConstraint, ambigTable, resTracks);
     refitTracks(resTracks, useVertexConstraint);
-    std::vector<Track*> commonVertexTracks;
-    if (useVertexConstraint && !constrainWithVertex(vtxRefit, ivref, resTracks, commonVertexTracks)) {
+    std::vector<std::vector<Track*>> commonVertexGroups;
+    if (useVertexConstraint && !constrainWithVertex(vtxRefit, ivref, resTracks, commonVertexGroups)) {
       useVertexConstraint = false; // the tracks of this vertex are fitted w/o the vertex point
     }
-    buildVertexTrajectories(resTracks, useVertexConstraint, commonVertexTracks, gblTraj);
+    buildVertexTrajectories(resTracks, useVertexConstraint, commonVertexGroups, gblTraj);
   }
   LOGP(info, "Processing stats: {}", mProcessingStats.asString());
   mGBLStatSingle.print("Single-track");
@@ -619,14 +620,16 @@ void AlignmentSpec::refitTracks(std::vector<Track>& resTracks, bool useVertexCon
 // the info[0] slot of its contributors. Returns false if the vertex refit failed.
 // Tracks selected for the composed trajectory use vtxMultiTrackRefCovScale so their reference
 // states pass through the common vertex. Mode 1 also updates the remaining contributors with the
-// unscaled vertex covariance for their individual trajectories.
-bool AlignmentSpec::constrainWithVertex(const PVertex& vtx, int ivref, std::vector<Track>& resTracks, std::vector<Track*>& commonVertexTracks)
+// unscaled vertex covariance for their individual trajectories. Mode 4 selects all contributors
+// and splits them into groups of at most maxTracksPerMultiTrackPV, one composed trajectory each.
+bool AlignmentSpec::constrainWithVertex(const PVertex& vtx, int ivref, std::vector<Track>& resTracks, std::vector<std::vector<Track*>>& commonVertexGroups)
 {
-  commonVertexTracks.clear();
+  commonVertexGroups.clear();
   std::vector<uint8_t> useForCommonVertex(resTracks.size(), 0);
   int nCommonTracks{0};
+  const int maxCommonTracks = mParams->useMultiTrackPVConstraint == 4 ? (int)resTracks.size() : mParams->maxTracksPerMultiTrackPV;
   if (mParams->useMultiTrackPVConstraint > 0) {
-    for (size_t itr = 0; itr < resTracks.size() && nCommonTracks < mParams->maxTracksPerMultiTrackPV; ++itr) {
+    for (size_t itr = 0; itr < resTracks.size() && nCommonTracks < maxCommonTracks; ++itr) {
       if (resTracks[itr].gid.isPVContributor()) {
         useForCommonVertex[itr] = 1;
         ++nCommonTracks;
@@ -652,36 +655,67 @@ bool AlignmentSpec::constrainWithVertex(const PVertex& vtx, int ivref, std::vect
       continue;
     }
   }
+  std::vector<Track*> commonVertexTracks;
   for (size_t itr = 0; itr < resTracks.size(); ++itr) {
     if (useForCommonVertex[itr] && resTracks[itr].gid.isIndexSet() && !resTracks[itr].info.empty() && resTracks[itr].info.front().isVertex()) {
       commonVertexTracks.push_back(&resTracks[itr]);
     }
   }
+  splitCommonVertexTracks(commonVertexTracks, commonVertexGroups);
   return true;
 }
 
+// Distribute the tracks selected for the common vertex over the composed trajectories: a single
+// one, except in mode 4, where ceil(N / maxTracksPerMultiTrackPV) groups are filled round-robin, so
+// that they have balanced sizes and no group collects e.g. only the tracks of one source. Each group
+// gets its own free vertex: the groups are independent measurements of the same collision.
+void AlignmentSpec::splitCommonVertexTracks(const std::vector<Track*>& tracks, std::vector<std::vector<Track*>>& commonVertexGroups) const
+{
+  commonVertexGroups.clear();
+  if (tracks.empty()) {
+    return;
+  }
+  const size_t maxPerGroup = std::max(2, mParams->maxTracksPerMultiTrackPV);
+  const size_t nGroups = mParams->useMultiTrackPVConstraint == 4 ? (tracks.size() + maxPerGroup - 1) / maxPerGroup : 1;
+  commonVertexGroups.resize(nGroups);
+  for (size_t itr = 0; itr < tracks.size(); ++itr) {
+    commonVertexGroups[itr % nGroups].push_back(tracks[itr]);
+  }
+}
+
 // Create the GBL input of the tracks of one vertex: 1st, if the common vertex constraint is
-// requested, a single composed trajectory of the tracks whose prebooked info[0] slot holds the
-// vertex point. Then the remaining tracks, each separately: those carrying the vertex point are
+// requested, a composed trajectory per group of the tracks whose prebooked info[0] slot holds the
+// vertex point (a single group except in mode 4). Then the remaining tracks, each separately: those carrying the vertex point are
 // fitted from it on, treating it as an ordinary measured point of this track only, the others from
 // their 1st measured point.
-void AlignmentSpec::buildVertexTrajectories(std::vector<Track>& resTracks, bool hasPVConstraint, const std::vector<Track*>& commonVertexTracks, std::vector<gbl::GblTrajectory>& gblTraj)
+void AlignmentSpec::buildVertexTrajectories(std::vector<Track>& resTracks, bool hasPVConstraint, const std::vector<std::vector<Track*>>& commonVertexGroups, std::vector<gbl::GblTrajectory>& gblTraj)
 {
-  if (!commonVertexTracks.empty()) {
-    if (const auto nAccepted = buildGBLVertex(commonVertexTracks, gblTraj); nAccepted > 0) {
-      mProcessingStats.nPVGBLAcc++;
+  // with several groups the mean vertex prior, added once per composed trajectory, is deweighted by
+  // their number for it to count once per collision
+  const double groupMVPriorCovScale = mParams->scaleMVPriorWithNTracks ? std::max<double>(1., commonVertexGroups.size()) : 1.;
+  bool pvAccepted = false;
+  for (const auto& group : commonVertexGroups) {
+    if (const auto nAccepted = buildGBLVertex(group, gblTraj, groupMVPriorCovScale); nAccepted > 0) {
+      pvAccepted = true;
       mProcessingStats.nTrcMultiPVAcc += nAccepted;
     }
   }
+  if (pvAccepted) {
+    mProcessingStats.nPVGBLAcc++;
+  }
+  auto inCommonVertex = [&commonVertexGroups](const Track* t) {
+    return std::any_of(commonVertexGroups.begin(), commonVertexGroups.end(), [t](const auto& group) {
+      return std::find(group.begin(), group.end(), t) != group.end();
+    });
+  };
   if (hasPVConstraint && mParams->useMultiTrackPVConstraint == 3) {
     return; // only multi-track trajectories are requested, no single-track ones 
   }
   // per-track PV constraint: every track carrying the vertex point gets the mean vertex prior,
   // optionally deweighted by their number for the prior to count once per collision
   double mvPriorCovScale = 0.;
-  const auto nWithVertex = std::count_if(resTracks.begin(), resTracks.end(), [&commonVertexTracks](const Track& t) {
-    return t.gid.isIndexSet() && !t.info.empty() && t.info.front().isVertex() &&
-           std::find(commonVertexTracks.begin(), commonVertexTracks.end(), &t) == commonVertexTracks.end();
+  const auto nWithVertex = std::count_if(resTracks.begin(), resTracks.end(), [&inCommonVertex](const Track& t) {
+    return t.gid.isIndexSet() && !t.info.empty() && t.info.front().isVertex() && !inCommonVertex(&t);
   });
   if (nWithVertex > 0) {
     mvPriorCovScale = mParams->scaleMVPriorWithNTracks ? static_cast<double>(nWithVertex) : 1.;
@@ -690,7 +724,7 @@ void AlignmentSpec::buildVertexTrajectories(std::vector<Track>& resTracks, bool 
     if (!resTrack.gid.isIndexSet() || resTrack.info.empty()) {
       continue; // failed track
     }
-    if (std::find(commonVertexTracks.begin(), commonVertexTracks.end(), &resTrack) != commonVertexTracks.end()) {
+    if (inCommonVertex(&resTrack)) {
       continue; // already accounted with the common vertex constraint
     }
     const bool hasVertex = resTrack.info.front().isVertex();
@@ -1477,7 +1511,7 @@ void AlignmentSpec::addMeanVertexDerivatives(const Track& resTrack, gbl::GblPoin
 // W/o magnetic field the kinematic constraint w/o curvature is used, see makeZeroFieldInnerTransformation.
 // Every contributor must carry the vertex point in its info[0] slot, with its track state there,
 // as left by Track::updateWithVertex.
-size_t AlignmentSpec::buildGBLVertex(const std::vector<Track*>& contributors, std::vector<gbl::GblTrajectory>& gblTraj)
+size_t AlignmentSpec::buildGBLVertex(const std::vector<Track*>& contributors, std::vector<gbl::GblTrajectory>& gblTraj, double mvPriorCovScale)
 {
   std::vector<std::pair<std::vector<gbl::GblPoint>, Eigen::MatrixXd>> pointsAndTrans;
   std::vector<Track*> used;
@@ -1495,7 +1529,7 @@ size_t AlignmentSpec::buildGBLVertex(const std::vector<Track*>& contributors, st
     }
     Eigen::MatrixXd innerTrans = computeVertexTransformation(*trc);
     if (used.empty()) { // impose the prior on the vertex of this collision
-      addMeanVertexPrior(*trc, innerTrans, points.front());
+      addMeanVertexPrior(*trc, innerTrans, points.front(), mvPriorCovScale);
     }
     pointsAndTrans.emplace_back(std::move(points), std::move(innerTrans));
     used.push_back(trc);

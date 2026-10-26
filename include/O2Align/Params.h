@@ -35,8 +35,10 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   // 1: use multi-track PV constraint (at most 1st maxTracksPerMultiTrackPV) and allow single tracks with eventual PV constraint for the rest
   // 2: use multi-track PV constraint (at most 1st maxTracksPerMultiTrackPV) and use the rest w/o PV constraint at all
   // 3: multi-track PV constraint only (at most 1st maxTracksPerMultiTrackPV), no single-track at all
+  // 4: all contributors in multi-track PV constraints, split round-robin into groups of at most maxTracksPerMultiTrackPV,
+  //    each a separate composed trajectory with its own free vertex; the non-contributors w/o PV constraint, as in 2
   int useMultiTrackPVConstraint = 1; 
-  int maxTracksPerMultiTrackPV = 15;       // maximum number of tracks to use for multi-track PV constraint, 
+  int maxTracksPerMultiTrackPV = 15;       // maximum number of tracks to use for multi-track PV constraint (mode 4: per group), 
   bool refitVtxFollowsMV = true;           // per-track PV constraint: the refitted vertex moves with the correction of the mean vertex position (same global derivatives as the prior), otherwise it anchors the frame of the starting geometry
   bool scaleMVPriorWithNTracks = true;     // per-track PV constraint: scale the luminous region covariance of the mean vertex prior by the number of tracks of the vertex, for the prior to count once per collision
   float vtxMultiTrackRefCovScale = 1e-2f;  // multi-track PV constraint: scale of the vertex covariance in the KF update defining the reference state at the vertex point, for the references of all tracks to pass (almost) through the common vertex. The stored vertex point keeps the true covariance
