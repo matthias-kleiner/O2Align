@@ -84,8 +84,8 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
 
   int verbose = 0; // verbosity level
   bool useStableRef = true; // use input tracks as linearization point
-  float meanPtB0 = 0.3f;    // impose this pT on tracks for B=0 (ignore if <=0)
-  float maxChi2Ndf = 10;    // maximum Chi2/Ndf allowed for GBL fit
+  float meanPtB0 = 0.4f;    // impose this pT on tracks for B=0 (ignore if <=0)
+  float maxChi2Ndf = 15;    // maximum Chi2/Ndf allowed for GBL fit
   float minMS = 1e-6f;      //  minimum scattering to account for
   // A step whose material would otherwise be lumped into a single thin scatterer at its far end is
   // instead split into two (one extra scatterer-only point at the radius midpoint) when both the
