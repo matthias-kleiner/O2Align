@@ -33,7 +33,7 @@ void customize(std::vector<ConfigParamSpec>& workflowOptions)
 {
   std::vector<o2::framework::ConfigParamSpec> options{
     {"disable-mc", o2::framework::VariantType::Bool, false, {"enable MC propagation"}},
-    {"track-sources", VariantType::String, std::string{GID::ALL}, {"comma-separated list of track sources to use"}},
+    {"track-sources", VariantType::String, std::string{GID::ALL}, {"comma-separated list of track sources to use, cosmic-ext for TrackCosmicExtended"}},
     {"detectors", VariantType::String, "ITS", {"comma-separated list of detectors in the alignment (clusters to load)"}},
     {"with-its3", VariantType::Bool, false, {"ITS3 alignment mode"}},
     {"output", VariantType::String, "", {"output steering"}},
@@ -53,11 +53,13 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfg)
   o2::conf::ConfigurableParam::updateFromString(cfg.options().get<std::string>("configKeyValues"));
   const GID::mask_t allowedSourcesTrc = GID::getSourcesMask("ITS,TPC,ITS-TPC,ITS-TPC-TRD,ITS-TPC-TOF,ITS-TPC-TRD-TOF");
   const GID::mask_t allowedSourcesClus = GID::getSourcesMask("ITS,TPC,TRD,TOF");
-  GID::mask_t srcTrc = allowedSourcesTrc & GID::getSourcesMask(cfg.options().get<std::string>("track-sources"));
+  const auto srcTracks = cfg.options().get<std::string>("track-sources");
+  bool isCosmicExt = srcTracks == "cosmic-ext";
   GID::mask_t dets = allowedSourcesClus & GID::getSourcesMask(cfg.options().get<std::string>("detectors"));
   const auto useMC = !cfg.options().get<bool>("disable-mc");
   const auto withITS3 = cfg.options().get<bool>("with-its3");
   o2::alignrs::OutputEnum output(cfg.options().get<std::string>("output"));
+
   // rectify options
   if (output[o2::alignrs::OutputOpt::Regularize] && (output[o2::alignrs::OutputOpt::ProcessData] || output[o2::alignrs::OutputOpt::MilleData] || output[o2::alignrs::OutputOpt::VerboseGBL])) {
     LOGP(fatal, "Regularize cannot be combined with the options processing data (ProcessData, MilleData, VerboseGBL)");
@@ -68,25 +70,31 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfg)
   if (output[o2::alignrs::OutputOpt::MilleData] || output[o2::alignrs::OutputOpt::VerboseGBL]) {
     output.set(o2::alignrs::OutputOpt::ProcessData);
   }
+  GID::mask_t srcTrc;
+  srcTrc = allowedSourcesTrc & GID::getSourcesMask(srcTracks);
 
   WorkflowSpec specs;
 
   bool requestCTPLumi = false;
   
   if (output[o2::alignrs::OutputOpt::ProcessData]) {
-    if (dets[GID::TPC]) { // the TPC cluster transformation needs the scalers
-      auto sclOpt = o2::tpc::CorrectionMapsOptions::parseGlobalOptions(cfg.options());
-      requestCTPLumi = sclOpt.requestCTPLumi;
-      srcTrc = srcTrc | GID::getSourcesMask("CTP");
-      specs.emplace_back(o2::tpc::getTPCScalerSpec(sclOpt));
-    }    
-    o2::globaltracking::InputHelper::addInputSpecs(cfg, specs, dets, srcTrc, srcTrc, useMC);
-    o2::globaltracking::InputHelper::addInputSpecsPVertex(cfg, specs, useMC);
+    if (!isCosmicExt) {
+      if (dets[GID::TPC]) { // the TPC cluster transformation needs the scalers
+        auto sclOpt = o2::tpc::CorrectionMapsOptions::parseGlobalOptions(cfg.options());
+        requestCTPLumi = sclOpt.requestCTPLumi;
+        srcTrc = srcTrc | GID::getSourcesMask("CTP");
+        specs.emplace_back(o2::tpc::getTPCScalerSpec(sclOpt));
+      }    
+      o2::globaltracking::InputHelper::addInputSpecs(cfg, specs, dets, srcTrc, srcTrc, useMC);
+      o2::globaltracking::InputHelper::addInputSpecsPVertex(cfg, specs, useMC);
+    } else {
+      o2::globaltracking::InputHelper::addInputSpecsCosmicsExtended(cfg, specs);
+    }
   } else {
     specs.emplace_back(o2::globaltracking::getNoInpDummyOutSpec(0));
   }
   
-  specs.emplace_back(o2::alignrs::getAlignmentSpec(srcTrc, dets, useMC, withITS3, requestCTPLumi, output));
+  specs.emplace_back(o2::alignrs::getAlignmentSpec(srcTrc, dets, isCosmicExt, useMC, withITS3, requestCTPLumi, output));
 
   o2::raw::HBFUtilsInitializer hbfIni(cfg, specs);
   return std::move(specs);

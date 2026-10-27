@@ -45,6 +45,8 @@
 #include "Framework/DeviceSpec.h"
 #include "ITSBase/GeometryTGeo.h"
 #include "DataFormatsGlobalTracking/RecoContainer.h"
+#include "DataFormatsGlobalTracking/TrackCosmicsExtended.h"
+#include "CommonDataFormat/TFIDInfo.h"
 #include "DetectorsCommonDataFormats/DetID.h"
 #include "DetectorsBase/Propagator.h"
 #include "DetectorsBase/GRPGeomHelper.h"
@@ -242,8 +244,8 @@ class AlignmentSpec final : public Task
   AlignmentSpec(AlignmentSpec&&) = delete;
   AlignmentSpec& operator=(const AlignmentSpec&) = delete;
   AlignmentSpec& operator=(AlignmentSpec&&) = delete;
-  AlignmentSpec(std::shared_ptr<DataRequest> dr, std::shared_ptr<o2::base::GRPGeomRequest> gr, GTrackID::mask_t src, DetID::mask_t dmask, bool useMC, bool withITS3, o2::alignrs::OutputEnum out)
-    : mDataRequest(dr), mGGCCDBRequest(gr), mTracksSrcMask(src), mUseMC(useMC), mIsITS3(withITS3), mOutOpt(out)
+  AlignmentSpec(std::shared_ptr<DataRequest> dr, std::shared_ptr<o2::base::GRPGeomRequest> gr, GTrackID::mask_t src, DetID::mask_t dmask, bool cosmicsExt, bool useMC, bool withITS3, o2::alignrs::OutputEnum out)
+    : mDataRequest(dr), mGGCCDBRequest(gr), mTracksSrcMask(src), mCosmicsExt(cosmicsExt), mUseMC(useMC), mIsITS3(withITS3), mOutOpt(out)
   {
     if (dmask[DetID::ITS]) {
       mITS = std::make_unique<DetectorITS>(withITS3);
@@ -270,6 +272,7 @@ class AlignmentSpec final : public Task
   void endOfStream(EndOfStreamContext& ec) final;
   void finaliseCCDB(ConcreteDataMatcher& matcher, void* obj) final;
   void process();
+  void processCosmicExt(); // cosmic TrackCosmicsExtended input
 
  private:
   void updateTimeDependentParams(ProcessingContext& pc);
@@ -397,6 +400,7 @@ class AlignmentSpec final : public Task
   bool mUseMC{false};
   bool mUsePVConstraint{false}; // use PV as additional constraint in a given track refit  //RSTODO: this should be a per-track decision, not global, should not be datamember
   GTrackID::mask_t mTracksSrcMask;
+  bool mCosmicsExt{false}; // read TrackCosmicsExtended instead of the collision data
   std::vector<int> mTrackSources;
   int mNThreads{1};
   std::string mConfMacro{};                  // optional user macro configuring the detectors
@@ -505,11 +509,21 @@ void AlignmentSpec::run(ProcessingContext& pc)
     mRecoData = &recoData;
     mRecoData->collectData(pc, *mDataRequest); // call this before updateTimeDependentParams() as some calib CCDB objects are fetched there
     updateTimeDependentParams(pc);
-    process();
+    if (mCosmicsExt) {
+      processCosmicExt();
+    } else {
+      process();
+    }
     mRecoData = nullptr;
   } else {
     updateTimeDependentParams(pc); // still needed: triggers buildHierarchy() on the first call, sets mFieldOFF/detector timestamps
   }
+}
+
+void AlignmentSpec::processCosmicExt()
+{
+  ++mProcessingStats.nTF;
+  LOGP(info, "Received {} cosmic tracks", mRecoData->getCosmicExtTracks().size());
 }
 
 void AlignmentSpec::process() // collisions
@@ -1839,27 +1853,30 @@ void AlignmentSpec::finaliseCCDB(ConcreteDataMatcher& matcher, void* obj)
   }
 }
 
-DataProcessorSpec getAlignmentSpec(GTrackID::mask_t srcTracks, GTrackID::mask_t detectors, bool useMC, bool withITS3, bool requestCTPLumi, o2::alignrs::OutputEnum out)
+DataProcessorSpec getAlignmentSpec(GTrackID::mask_t srcTracks, GTrackID::mask_t detectors, bool cosmicsExt, bool useMC, bool withITS3, bool requestCTPLumi, o2::alignrs::OutputEnum out)
 {
   auto dataRequest = std::make_shared<DataRequest>();
   std::shared_ptr<o2::base::GRPGeomRequest> ggRequest{nullptr};
   auto detMask = GTrackID::getSourcesDetectorsMask(detectors);
 
   if (out[o2::alignrs::OutputOpt::ProcessData]) {
-    dataRequest->requestTracks(srcTracks, useMC);
-    if (withITS3) {
-      dataRequest->requestIT3Clusters(useMC);
+    if (cosmicsExt) {
+      dataRequest->requestCosmicExtTracks(useMC);
     } else {
-      dataRequest->requestClusters(detectors, useMC);
+      dataRequest->requestTracks(srcTracks, useMC);
+      if (withITS3) {
+        dataRequest->requestIT3Clusters(useMC);
+      } else {
+        dataRequest->requestClusters(detectors, useMC);
+      }
+      if (requestCTPLumi) {
+        dataRequest->inputs.emplace_back("lumiCTP", o2::header::gDataOriginCTP, "LUMICTP", 0, Lifetime::Timeframe);
+      }
+      dataRequest->requestPrimaryVertices(useMC);
+      // the mean vertex is the prior of the primary vertex of every collision and the starting point
+      // of the alignment of the virtual PVT detector
+      dataRequest->inputs.emplace_back("meanvtx", "GLO", "MEANVERTEX", 0, Lifetime::Condition, ccdbParamSpec("GLO/Calib/MeanVertex", {}, 1));
     }
-    if (requestCTPLumi) {
-      dataRequest->inputs.emplace_back("lumiCTP", o2::header::gDataOriginCTP, "LUMICTP", 0, Lifetime::Timeframe);
-    }
-
-    dataRequest->requestPrimaryVertices(useMC);
-    // the mean vertex is the prior of the primary vertex of every collision and the starting point
-    // of the alignment of the virtual PVT detector
-    dataRequest->inputs.emplace_back("meanvtx", "GLO", "MEANVERTEX", 0, Lifetime::Condition, ccdbParamSpec("GLO/Calib/MeanVertex", {}, 1));
     if (detMask[DetID::TRD]) { // the tracklet transformation needs the drift velocity and ExB
       dataRequest->inputs.emplace_back("calvdexb", "TRD", "CALVDRIFTEXB", 0, Lifetime::Condition, ccdbParamSpec("TRD/Calib/CalVdriftExB"));
     }
@@ -1902,7 +1919,7 @@ DataProcessorSpec getAlignmentSpec(GTrackID::mask_t srcTracks, GTrackID::mask_t 
     .name = "barrel-alignment",
     .inputs = dataRequest->inputs,
     .outputs = {},
-    .algorithm = AlgorithmSpec{adaptFromTask<AlignmentSpec>(dataRequest, ggRequest, srcTracks, detMask, useMC, withITS3, out)},
+    .algorithm = AlgorithmSpec{adaptFromTask<AlignmentSpec>(dataRequest, ggRequest, srcTracks, detMask, cosmicsExt, useMC, withITS3, out)},
     .options = opts};
 }
 } // namespace o2::alignrs
