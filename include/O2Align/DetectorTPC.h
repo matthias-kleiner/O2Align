@@ -27,6 +27,11 @@ class GPUParam;
 class TPCFastTransformPOD;
 } // namespace o2::gpu
 
+namespace o2::dataformats
+{
+struct TrackCosmicsExtended;
+} // namespace o2::dataformats
+
 namespace o2::alignrs
 {
 
@@ -39,6 +44,21 @@ class DetectorTPC final : public Detector
 
   void prepareData(o2::globaltracking::RecoContainer* recoData) final;
   bool prepareTrack(o2::globaltracking::RecoContainer* recoData, const GlobalIDSet& ids, Track& resTrack) final;
+
+  /// Seed resTrack and append the TPC points of both legs of a cosmic, ordered along the motion of the muon, fitting them
+  /// with the KF on the way. Each cluster is measured in its sector frame or, where the muon moves inwards there, in the sector
+  /// frame rotated by pi, so the motion always points towards +x as the track parameterisation requires. All the clusters are
+  /// transformed with the time of the cosmic (timeMUS, since the start of the TF), so the two legs share one z reference. In
+  /// gaps (between the legs) material-only points are added. ptB0 > 0 is imposed as the pT of the seed (scattering errors w/o
+  /// field). On success resTrack.track is the state at the last point; on failure resTrack is left in an undefined state and the
+  /// reason is returned.
+  enum class CosmicStatus : uint8_t { OK,
+                                      TooFewClusters,
+                                      PropagationFailed,
+                                      UpdateFailed };
+  CosmicStatus prepareCosmicExt(const o2::dataformats::TrackCosmicsExtended& cosm, float timeMUS, float ptB0, Track& resTrack);
+  /// clusters of the cosmics skipped by prepareCosmicExt (propagation failed or |snp| above Params::cosmicsMaxClusterSnp)
+  uint64_t getCosmicClustersSkipped() const { return mCosmicClustersSkipped; }
 
   /// both must be provided by the caller before the 1st prepareTrack call
   void setCorrMaps(const o2::gpu::TPCFastTransformPOD* maps) { mCorrMaps = maps; }
@@ -87,6 +107,15 @@ class DetectorTPC final : public Detector
   void onSlotChange(int slotID) final;
 
  private:
+  /// padrow / pad cuts of Params (pad-row range, stack edges, sector edges)
+  static bool acceptClusterPosition(int row, float pad);
+
+  /// In a gap between clusters of a cosmic: propagate trk towards the next cluster (global position xGloTo, yGloTo), appending
+  /// material-only points every Params::cosmicsMaterialStep along the direction of the track, in the frame rotated to that
+  /// direction (snp = 0 there). The material near the beam line and of the inner field cages is then lumped where it is, not
+  /// all at the next cluster. False if the propagation failed.
+  bool addCosmicMaterialPoints(double xGloTo, double yGloTo, o2::track::TrackParCovD& trk, o2::track::TrackParD* refLin, Track& resTrack) const;
+
   static constexpr std::array<std::pair<int, int>, NStacks> sStackMinMaxRow = {
     std::pair<int, int>{0, 62}, std::pair<int, int>{63, 96}, std::pair<int, int>{97, 126}, std::pair<int, int>{127, 151}};
 
@@ -95,6 +124,7 @@ class DetectorTPC final : public Detector
   o2::tpc::VDriftCorrFact mVDrift{}; // drift calibration accounted by mCorrMaps
   Volume* mEnvelope{nullptr};    // fictitious top volume, owner of the drift calibration DOFs
   std::vector<Volume*> mSensors; // sector volumes, indexed by sector
+  uint64_t mCosmicClustersSkipped{0}; // see getCosmicClustersSkipped
 };
 
 } // namespace o2::alignrs

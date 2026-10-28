@@ -82,6 +82,15 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   // TPC drift calibration
   std::string VDTimeSlotsJson = ""; // json file with TPC drift calibration intervals in ms
 
+  // cosmics (cosmic-ext input)
+  float cosmicsMaxTimeErrMUS = -1.f; // >= 0: only cosmics with a TOF time or a matcher time of error below this (pairs crossing the CE)
+  bool cosmicsSkipNearBeam = false;  // skip the near-beam pairs (mostly fakes from collision tracks)
+  int cosmicsTFParity = -1;          // 0 / 1: only the TFs with this parity of tfCounter (e.g. half of the data for a cross-check), -1: all
+  float cosmicsMaterialStep = 5.f;   // [cm] spacing of the material points between the legs of a cosmic, along its direction
+  float cosmicsMaxClusterSnp = 0.87f; // TPC clusters of cosmics crossed at |snp| above this are skipped: PropagatorD::propagateToAlphaX
+                                      // refuses |snp| > 0.9 * maxSnp at the target, so keep this below that minus the initial snp step
+                                      // of the GBL jacobians (ridderMaxIniStep[2], use ~0.01 for cosmics), else those steps fail
+
   int verbose = 0; // verbosity level
   bool useStableRef = true; // use input tracks as linearization point
   float meanPtB0 = 0.4f;    // impose this pT on tracks for B=0 (ignore if <=0)

@@ -401,6 +401,8 @@ class AlignmentSpec final : public Task
   bool mUsePVConstraint{false}; // use PV as additional constraint in a given track refit  //RSTODO: this should be a per-track decision, not global, should not be datamember
   GTrackID::mask_t mTracksSrcMask;
   bool mCosmicsExt{false}; // read TrackCosmicsExtended instead of the collision data
+  static constexpr int NCosmicStatus = 4;             // DetectorTPC::CosmicStatus values
+  std::array<uint32_t, NCosmicStatus + 1> mCosmicCounters{}; // cosmics by DetectorTPC::CosmicStatus, + failed inward refits
   std::vector<int> mTrackSources;
   int mNThreads{1};
   std::string mConfMacro{};                  // optional user macro configuring the detectors
@@ -520,10 +522,57 @@ void AlignmentSpec::run(ProcessingContext& pc)
   }
 }
 
+// One GBL trajectory per cosmic through both legs, in the direction of the motion of the muon.
+// For now only the TPC clusters of the legs are used (see DetectorTPC::prepareCosmicExt).
 void AlignmentSpec::processCosmicExt()
 {
   ++mProcessingStats.nTF;
-  LOGP(info, "Received {} cosmic tracks", mRecoData->getCosmicExtTracks().size());
+  const auto cosmics = mRecoData->getCosmicExtTracks();
+  LOGP(info, "Received {} cosmic tracks", cosmics.size());
+  if (!mTPC) {
+    LOGP(warn, "Only the TPC part of the cosmics is implemented, but the TPC is not among the detectors");
+    return;
+  }
+  if (mParams->cosmicsTFParity >= 0 && static_cast<int>(mRecoData->getCosmicExtTFID().tfCounter % 2) != mParams->cosmicsTFParity) {
+    return;
+  }
+  std::vector<gbl::GblTrajectory> gblTraj;
+  for (const auto& cosm : cosmics) {
+    if (cosm.duplicateOf >= 0) { // the same muon matched twice
+      continue;
+    }
+    if (mParams->cosmicsSkipNearBeam && cosm.cosmic.isNearBeam()) {
+      continue;
+    }
+    if (mParams->cosmicsMaxTimeErrMUS >= 0.f && !cosm.hasTOFTime() && cosm.cosmic.getTimeMUS().getTimeStampError() >= mParams->cosmicsMaxTimeErrMUS) {
+      continue;
+    }
+    // the TOF time of the cosmic if it has one, otherwise the one of the matcher
+    const float timeMUS = cosm.hasTOFTime() ? cosm.timeTOFMUS : cosm.cosmic.getTimeMUS().getTimeStamp();
+    if (mParams->verbose > 2) {
+      LOGP(info, "COSMIC {} {} {:.5f} {}", mRecoData->getCosmicExtTFID().tfCounter, &cosm - cosmics.data(), timeMUS, cosm.hasTOFTime());
+    }
+    ++mProcessingStats.nTrc;
+    Track resTrack;
+    const auto status = mTPC->prepareCosmicExt(cosm, timeMUS, mFieldOFF ? mParams->meanPtB0 : 0.f, resTrack);
+    ++mCosmicCounters[static_cast<int>(status)];
+    if (status != DetectorTPC::CosmicStatus::OK) {
+      continue;
+    }
+    // GBL starts from the state at the 1st point: refit back to it
+    if (!resTrack.fitTrack(static_cast<int>(resTrack.info.size()) - 1, 0, false, true)) {
+      ++mCosmicCounters[NCosmicStatus];
+      continue;
+    }
+    if (buildGBLTrack(resTrack, 0, gblTraj, 0.)) {
+      ++mProcessingStats.nTrcNoPVAcc;
+    }
+  }
+  LOGP(info, "Processing stats: {}", mProcessingStats.asString());
+  LOGP(info, "Cosmics: prepared {}, too few TPC clusters {}, propagation failed {}, update failed {}, inward refit failed {}; TPC clusters skipped {}",
+       mCosmicCounters[0], mCosmicCounters[1], mCosmicCounters[2], mCosmicCounters[3], mCosmicCounters[NCosmicStatus], mTPC->getCosmicClustersSkipped());
+  mGBLStatSingle.print("Cosmics");
+  writeMilleRecords(gblTraj);
 }
 
 void AlignmentSpec::process() // collisions
