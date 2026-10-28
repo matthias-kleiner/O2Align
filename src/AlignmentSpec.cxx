@@ -151,7 +151,7 @@ Matrix26 getLeafRigidBodyDerivatives(const Volume& leaf, const FrameInfoExt& fra
 void countDetectorPoints(ProcessingStats& stats, const Track& track)
 {
   for (const auto& frame : track.info) {
-    if (!frame.isValid() || frame.isVertex()) {
+    if (!frame.isValid() || frame.isVertex() || frame.isMaterialOnly()) {
       continue;
     }
     switch (frame.detIdx) {
@@ -1231,8 +1231,12 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
       // numerically calculates the transport jacobian from prev. point to this point
       // then we actually do the step to the point and accumulate the material
       auto stepTo = [&](double xTo, double alphaTo, float& msErrOut) -> bool {
-        if (!getTransportJacobian(wTrk, xTo, alphaTo, jacALICE, err) ||
-            !prop->propagateToAlphaX(wTrk, refLin, alphaTo, xTo, false, mParams->maxSnp, mParams->maxStep, 1, mParams->corrType, &lt)) {
+        const bool jacOK = getTransportJacobian(wTrk, xTo, alphaTo, jacALICE, err);
+        if (!jacOK || !prop->propagateToAlphaX(wTrk, refLin, alphaTo, xTo, false, mParams->maxSnp, mParams->maxStep, 1, mParams->corrType, &lt)) {
+          if (mParams->verbose > 1) {
+            LOGP(info, "GBL step failed ({}) to point {} of {} (x {} alpha {}, material only {}) from track {}, ref {}", jacOK ? "propagation" : "jacobian",
+                 ip, np, xTo, alphaTo, frame.isMaterialOnly(), wTrk.asString(), refLin ? refLin->asString() : "none");
+          }
           ++gblStat.failedProp;
           return false;
         }
@@ -1271,7 +1275,7 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
     const auto& cluster = frame.cluster;
     Eigen::Vector2d res = Eigen::Vector2d::Zero();
     Eigen::Matrix2d prec = Eigen::Matrix2d::Zero();
-    const bool addMeas = !(skipFirstMeas && points.empty());
+    const bool addMeas = !(skipFirstMeas && points.empty()) && !frame.isMaterialOnly();
     if (addMeas) {
       res << cluster.getY() - wTrk.getY(), cluster.getZ() - wTrk.getZ();
 
@@ -1301,7 +1305,9 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
       lt.clearFast(); // clear if accounted
     }
 
-    if (!frame.isVertex()) { // the vertex point has no alignable volume behind it
+    if (frame.isMaterialOnly()) {
+      // no measurement, hence no globals: the point only carries the scatterer
+    } else if (!frame.isVertex()) { // the vertex point has no alignable volume behind it
       const auto globals = buildPointGlobals(frame, wTrk, contributingVolumes);
       point.addGlobals(globals.labels, globals.der);
     } else if (addMeas) {
@@ -1334,7 +1340,7 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
       point.printPoint(5);
     }
     points.push_back(point);
-    if (refLin) { // displace the reference to the measurement, as done in the KF refit
+    if (refLin && !frame.isMaterialOnly()) { // displace the reference to the measurement, as done in the KF refit
       refLin->setY(cluster.getY());
       refLin->setZ(cluster.getZ());
     }

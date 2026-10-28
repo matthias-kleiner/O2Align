@@ -21,10 +21,13 @@ namespace o2::alignrs
 /// is always created as virtual and both its frames are derived from the sector angle alone:
 /// the local frame is the global one rotated by the sector angle and the tracking frame coincides
 /// with the local one. The sensor ID is the sector number [0 : MAXSECTOR).
+/// The tracking frame is nevertheless taken per point (hasFixedTrackingFrame() false): the clusters
+/// of the upper leg of a cosmic are measured in the sector frame rotated by pi, where the muon moves
+/// towards +x, see DetectorTPC::prepareCosmicExt.
 class SensorTPC final : public Volume
 {
  public:
-  using Volume::Volume;
+  SensorTPC(const char* symName, Label label, bool virt = false) : Volume(symName, label, virt) { mFixedTrackingFrame = false; }
   void defineMatrixL2G() final;
   void defineMatrixT2L() final;
 };

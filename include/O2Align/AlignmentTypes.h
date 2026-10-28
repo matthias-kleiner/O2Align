@@ -39,6 +39,7 @@ struct FrameInfoExt final {
   };
   enum {
     ITSOverlapBit = 0, // the point is on an ITS overlap
+    MaterialOnlyBit,   // no measurement: the point only carries the material crossed since the previous one (a scatterer)
     NUserBits
   };
   int8_t lr = Invalid;            // detector-specific layer-like index, -1 = vtx, -2 = invalid point
@@ -55,6 +56,8 @@ struct FrameInfoExt final {
   
   bool isITSOverlap() const { return userBits & (0x1 << ITSOverlapBit); }  
   void setITSOverlap() { userBits |= (0x1 << ITSOverlapBit); }
+  bool isMaterialOnly() const { return userBits & (0x1 << MaterialOnlyBit); }
+  void setMaterialOnly() { userBits |= (0x1 << MaterialOnlyBit); }
   ClassDefNV(FrameInfoExt, 3)
 };
 

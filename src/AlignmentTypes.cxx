@@ -59,6 +59,9 @@ bool Track::fitTrack(int frameStart, int frameStop, bool cropOnFailure, bool res
       }
       return false;
     }
+    if (frame.isMaterialOnly()) { // nothing to update with: only the material is accounted by the propagation
+      continue;
+    }
     const auto& cluster = frame.cluster;
     chi2 += static_cast<float>(trFit.getPredictedChi2Quiet(cluster));
     if (!trFit.update(cluster)) {
