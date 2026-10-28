@@ -780,7 +780,7 @@ void AlignmentSpec::updateTimeDependentParams(ProcessingContext& pc)
     initOnFirstTF();
   }
   if (mOutOpt[o2::alignrs::OutputOpt::ProcessData]) {
-    if ( Params::Instance().usePVConstraintMinTracks > 0) {
+    if (Params::Instance().usePVConstraintMinTracks > 0 && !mCosmicsExt) { // no mean vertex is requested for the cosmics
       pc.inputs().get<o2::dataformats::MeanVertexObject*>("meanvtx"); // triggers finaliseCCDB
     }
     if (mTRD) {

@@ -71,7 +71,9 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfg)
     output.set(o2::alignrs::OutputOpt::ProcessData);
   }
   GID::mask_t srcTrc;
-  srcTrc = allowedSourcesTrc & GID::getSourcesMask(srcTracks);
+  if (!isCosmicExt) { // cosmic-ext is not a GlobalTrackID source
+    srcTrc = allowedSourcesTrc & GID::getSourcesMask(srcTracks);
+  }
 
   WorkflowSpec specs;
 
@@ -88,6 +90,13 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfg)
       o2::globaltracking::InputHelper::addInputSpecs(cfg, specs, dets, srcTrc, srcTrc, useMC);
       o2::globaltracking::InputHelper::addInputSpecsPVertex(cfg, specs, useMC);
     } else {
+      if (dets[GID::TPC]) { // the raw TPC clusters of the cosmics are transformed with the maps of the scaler
+        auto sclOpt = o2::tpc::CorrectionMapsOptions::parseGlobalOptions(cfg.options());
+        if (sclOpt.requestCTPLumi) {
+          LOGP(fatal, "cosmic-ext input has no CTP lumi: use --lumi-type 0 or --disable-ctp-lumi-request");
+        }
+        specs.emplace_back(o2::tpc::getTPCScalerSpec(sclOpt));
+      }
       o2::globaltracking::InputHelper::addInputSpecsCosmicsExtended(cfg, specs);
     }
   } else {
