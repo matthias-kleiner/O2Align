@@ -84,6 +84,7 @@
 #include "O2Align/DetectorITS.h"
 #include "O2Align/DetectorPVT.h"
 #include "O2Align/DetectorTPC.h"
+#include "O2Align/TPCMap.h"
 #include "O2Align/DetectorTRD.h"
 #include "O2Align/DetectorTOF.h"
 
@@ -411,6 +412,7 @@ class AlignmentSpec final : public Task
   std::unique_ptr<DetectorPVT> mPVT; // virtual detector of the mean vertex, owner of its calibration state
   std::unique_ptr<DetectorITS> mITS;
   std::unique_ptr<DetectorTPC> mTPC;
+  std::unique_ptr<TPCMap> mTPCMap; // residual of the TPC correction map, if TPCMapParams.grid is set
   std::unique_ptr<DetectorTRD> mTRD;
   std::unique_ptr<DetectorTOF> mTOF;
   std::vector<Detector*> mDetectors; // all created detectors, in the order of the detector index
@@ -1050,6 +1052,13 @@ void AlignmentSpec::initOnFirstTF()
     mTPCParam->SetDefaults(o2::base::PropagatorD::Instance()->getNominalBz(), false);
     mTPC->setTPCParam(mTPCParam.get());
     mTPC->initCalib();
+    if (const auto& mapGrid = TPCMapParams::Instance().grid; !mapGrid.empty()) {
+      mTPCMap = std::make_unique<TPCMap>();
+      if (!mTPCMap->init(mapGrid)) {
+        LOGP(fatal, "Invalid TPC map grid {}", mapGrid);
+      }
+      LOGP(info, "TPC map residual on the grid {}: {} parameters", mapGrid, mTPCMap->getGrid().nParameters());
+    }
   }
   if (mTRD) {
     mTRD->initCalib();
@@ -1097,9 +1106,11 @@ AlignmentSpec::PointGlobals AlignmentSpec::buildPointGlobals(const FrameInfoExt&
   const auto* sensorVol = tileVol->getParent();
   const auto* calibSet = sensorVol ? sensorVol->getCalib() : nullptr;
   const int nCalib = calibSet ? calibSet->nDOFs() : 0;
+  // the TPC map residual: sparse, only the nodes around the point
+  const int nMap = (mTPCMap && frame.detIdx == Detector::DetTPC) ? TPCMap::NGlobals : 0;
 
-  PointGlobals globals{{}, Eigen::MatrixXd::Zero(2, nColRB + nCalib)};
-  globals.labels.reserve(nColRB + nCalib);
+  PointGlobals globals{{}, Eigen::MatrixXd::Zero(2, nColRB + nCalib + nMap)};
+  globals.labels.reserve(nColRB + nCalib + nMap);
   Eigen::Index curCol{0};
 
   // 1) tile: TRK -> LOC via precomputed T2L and J_L2T
@@ -1140,6 +1151,12 @@ AlignmentSpec::PointGlobals AlignmentSpec::buildPointGlobals(const FrameInfoExt&
     }
     globals.der.middleCols(curCol, nd) = calDer;
     curCol += nd;
+  }
+  // 4) the TPC map residual
+  if (nMap) {
+    globals.labels.resize(curCol + nMap);
+    mTPCMap->fillGlobals(frame, derCtx, globals.labels.data() + curCol, globals.der.middleCols(curCol, nMap));
+    curCol += nMap;
   }
   if (frame.zFromTrack) { // the Z "measurement" follows the track, whatever the alignment
     globals.der.row(1).setZero();
@@ -1213,6 +1230,9 @@ void AlignmentSpec::writeMilleSteerFiles(bool statWeighted)
   mHierarchy->writeRigidBodyConstraints(cons, statWeighted, modeOpt);
   std::ofstream par(mParams->milleParamFile);
   mHierarchy->writeParameters(par);
+  if (mTPCMap) {
+    mTPCMap->writeParameters(par, TPCMapParams::Instance().presigma);
+  }
 }
 
 bool AlignmentSpec::loadVolumeStatistics(const std::string& fname)
