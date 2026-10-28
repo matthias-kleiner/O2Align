@@ -41,6 +41,8 @@
 
 #pragma link C++ class o2::alignrs::Params + ;
 #pragma link C++ class o2::conf::ConfigurableParamHelper < o2::alignrs::Params > + ;
+#pragma link C++ class o2::alignrs::TPCMapParams + ;
+#pragma link C++ class o2::conf::ConfigurableParamHelper < o2::alignrs::TPCMapParams > + ;
 
 //#pragma link C++ class std::vector < o2::track::TrackParametrization < double>> + ;
 

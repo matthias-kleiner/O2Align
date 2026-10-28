@@ -53,6 +53,7 @@ add_library(O2Align SHARED
             src/TimeSlotsSet.cxx
             src/WeakModes.cxx
             src/ProcessingStats.cxx
+            src/TPCMap.cxx
             src/AlignmentSpec.cxx)
 #add_library(O2::Align ALIAS O2Align)
 
@@ -83,6 +84,7 @@ add_root_dictionary(O2Align
                             include/O2Align/AlignmentTypes.h
                             include/O2Align/TimeSlotsSet.h
                             include/O2Align/ProcessingStats.h
+                            include/O2Align/TPCMap.h
 			    LINKDEF src/O2AlignLinkDef.h)
 
 add_executable(O2exe-alignment-workflow src/alignment-workflow.cxx)
