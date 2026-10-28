@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <fstream>
 #include <sstream>
 
 #include "MathUtils/Utils.h"
@@ -146,6 +147,100 @@ void TPCMap::writeParameters(std::ostream& os, double presigma) const
       }
     }
   }
+}
+
+void TPCMap::writeConstraints(std::ostream& os) const
+{
+  enum Mode { RotationZ,
+              RadialScale,
+              ShiftZ,
+              ScaleZ,
+              NModes };
+  static constexpr const char* ModeNames[NModes] = {"rotation about z", "radial scale", "z shift", "z scale"};
+  const int nSides = mGrid.nSlots() == 2 ? 2 : 0;
+  for (int mode = 0; mode < NModes; ++mode) {
+    os << "Constraint 0.0 ! TPC map, " << ModeNames[mode] << '\n';
+    for (int slot = 0; slot < mGrid.nSlots(); ++slot) {
+      const double zSign = (nSides ? slot : slot / 18) == 0 ? 1. : -1.; // A side (or sectors 0-17): z > 0
+      for (int ix = 0; ix < mGrid.nX(); ++ix) {
+        for (int iy = 0; iy < mGrid.nY(); ++iy) {
+          for (int iz = 0; iz < mGrid.nZ(); ++iz) {
+            const double x = mGrid.xNode(ix);
+            const double y = mGrid.yxNode(iy) * x;
+            const double z = zSign * (mGrid.zAbsolute() ? mGrid.zNode(iz) : mGrid.zNode(iz) * x);
+            const double coef[3] = {mode == RotationZ ? -y : (mode == RadialScale ? x : 0.),
+                                    mode == RotationZ ? x : (mode == RadialScale ? y : 0.),
+                                    mode == ShiftZ ? 1. : (mode == ScaleZ ? z : 0.)};
+            const Label lbl(Detector::DetTPC, IDOffset + slot * mGrid.nNodes() + mGrid.node(ix, iy, iz), false, true);
+            for (int component = 0; component < 3; ++component) {
+              if (coef[component] != 0.) {
+                os << std::format("{} {:g}\n", lbl.raw(component), coef[component]);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+bool TPCMap::loadValues(const std::string& resFile)
+{
+  std::ifstream in(resFile);
+  std::string line;
+  std::getline(in, line); // header
+  mValues.assign(mGrid.nSlots() * 3 * mGrid.nNodes(), 0.);
+  int nFound = 0;
+  while (std::getline(in, line)) {
+    std::istringstream tokens(line);
+    uint32_t raw = 0;
+    double val = 0.;
+    int slot = 0;
+    int component = 0;
+    int node = 0;
+    if ((tokens >> raw >> val) && decodeLabel(raw, slot, component, node)) {
+      mValues[(slot * 3 + component) * mGrid.nNodes() + node] = val;
+      ++nFound;
+    }
+  }
+  if (!nFound) {
+    mValues.clear();
+  }
+  return nFound > 0;
+}
+
+double TPCMap::value(int sector, int component, double x, double y, double z) const
+{
+  if (mValues.empty()) {
+    return 0.;
+  }
+  int nodes[8];
+  double weights[8];
+  mGrid.basis(x, y / x, std::abs(z), nodes, weights);
+  const int offset = (mGrid.slot(sector) * 3 + component) * mGrid.nNodes();
+  double v = 0.;
+  for (int k = 0; k < 8; ++k) {
+    v += weights[k] * mValues[offset + nodes[k]];
+  }
+  return v;
+}
+
+bool TPCMap::hasClusterShift() const
+{
+  const auto& par = TPCMapParams::Instance();
+  return !mValues.empty() || par.injectRotZ != 0.f || par.injectScaleR != 0.f || par.injectShiftZ != 0.f || par.injectScaleZ != 0.f;
+}
+
+std::array<double, 3> TPCMap::clusterShift(int sector, double x, double y, double z) const
+{
+  const auto& par = TPCMapParams::Instance();
+  std::array<double, 3> d{-par.injectRotZ * y + par.injectScaleR * x, par.injectRotZ * x + par.injectScaleR * y, par.injectShiftZ + par.injectScaleZ * z};
+  if (!mValues.empty()) {
+    for (int component = 0; component < 3; ++component) {
+      d[component] += par.applyScale * value(sector, component, x, y, z);
+    }
+  }
+  return d;
 }
 
 bool TPCMap::decodeLabel(uint32_t raw, int& slot, int& component, int& node) const

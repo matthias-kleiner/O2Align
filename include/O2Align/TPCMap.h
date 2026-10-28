@@ -12,6 +12,7 @@
 #ifndef O2_ALIGN_TPCMAP_H
 #define O2_ALIGN_TPCMAP_H
 
+#include <array>
 #include <cstdint>
 #include <ostream>
 #include <string>
@@ -29,6 +30,14 @@ struct DerivativeContext;
 struct TPCMapParams : public o2::conf::ConfigurableParamHelper<TPCMapParams> {
   std::string grid = "";  // node grid "nodes/ps=<0|1>/ny=<n>/zabs=<0|1>/x=<x nodes>/z=<z nodes>" (see TPCMapGrid); empty: no map
   float presigma = 0.1f; // presigma of every map parameter [cm], i.e. a ridge towards the correction applied to the clusters
+  bool gauge = false;    // constrain the global modes straight tracks of the TPC alone cannot see (TPCMap::writeConstraints)
+  // shift of the TPC clusters after the transformation (TPCMap::clusterShift): a fitted map and / or global modes for tests
+  std::string applyRes = ""; // millepede.res with a map on the same grid, applied to the clusters scaled by applyScale
+  float applyScale = -1.f;   // -1: correct the clusters by that map, +1: inject it
+  float injectRotZ = 0.f;    // [rad] a global rotation about z added to the clusters (dX = -t y, dY = t x in the sector frame)
+  float injectScaleR = 0.f;  // a radial scale added to the clusters (dX = e x, dY = e y)
+  float injectShiftZ = 0.f;  // [cm] a z shift added to the clusters
+  float injectScaleZ = 0.f;  // a z scale added to the clusters (dZ = s z, global z)
 
   O2ParamDef(TPCMapParams, "TPCMapParams");
 };
@@ -50,6 +59,10 @@ class TPCMapGrid
   int slot(int sector) const { return mPerSector ? sector : (sector >= 18 ? 1 : 0); }
   /// index of a node within its slot
   int node(int ix, int iy, int iz) const { return (ix * mNY + iy) * nZ() + iz; }
+  double xNode(int ix) const { return mXNodes[ix]; }
+  double yxNode(int iy) const { return mNY > 1 ? -mYXMax + 2 * mYXMax * iy / (mNY - 1) : 0.; }
+  double zNode(int iz) const { return mZNodes[iz]; }
+  bool zAbsolute() const { return mZAbsolute; }
   /// the 8 nodes (indices within the slot) and weights at (x, y/x, |z|); nodes beyond the grid are clamped to its edges
   void basis(double x, double yx, double absZ, int nodes[8], double weights[8]) const;
 
@@ -85,11 +98,27 @@ class TPCMap
   /// Millepede "Parameter" records of all the map parameters (appended to the parameter file, without its header)
   void writeParameters(std::ostream& os, double presigma) const;
 
+  /// Millepede "Constraint" records fixing the global affine modes of the map that straight TPC tracks do not see, common to both
+  /// sides: rotation about z (dX = -y, dY = x), radial scale (dX = x, dY = y), z shift (dZ = 1) and z scale (dZ = z, global z),
+  /// with the node coordinates in the sector frame. Needed when nothing outside the TPC (ITS, TOF) anchors the fit. The relative
+  /// modes of the two sides are left free: cosmics crossing the central electrode see them.
+  void writeConstraints(std::ostream& os) const;
+
   /// the map parameter of a raw Millepede label: false if the label is not one of the map
   bool decodeLabel(uint32_t raw, int& slot, int& component, int& node) const;
 
+  /// load the node values of a fitted map on the same grid from a millepede.res; false if it has no parameter of this map
+  bool loadValues(const std::string& resFile);
+  /// value [cm] of component (0 dX, 1 dY, 2 dZ) of the loaded map at (x, y, z) of a sector frame
+  double value(int sector, int component, double x, double y, double z) const;
+  /// true if TPCMapParams asks for a cluster shift (applyRes loaded, or an injected global mode)
+  bool hasClusterShift() const;
+  /// the shift of a TPC cluster at (x, y, z) of its sector frame: applyScale x the loaded map + the injected global modes
+  std::array<double, 3> clusterShift(int sector, double x, double y, double z) const;
+
  private:
   TPCMapGrid mGrid;
+  std::vector<double> mValues; // node values [cm] of a loaded map, index (slot * 3 + component) * nNodes + node; empty if none
 };
 
 } // namespace o2::alignrs

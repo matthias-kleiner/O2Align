@@ -1058,6 +1058,16 @@ void AlignmentSpec::initOnFirstTF()
         LOGP(fatal, "Invalid TPC map grid {}", mapGrid);
       }
       LOGP(info, "TPC map residual on the grid {}: {} parameters", mapGrid, mTPCMap->getGrid().nParameters());
+      const auto& mapPar = TPCMapParams::Instance();
+      if (!mapPar.applyRes.empty() && !mTPCMap->loadValues(mapPar.applyRes)) {
+        LOGP(fatal, "No parameter of the TPC map on {} in {}", mapGrid, mapPar.applyRes);
+      }
+      if (mTPCMap->hasClusterShift()) {
+        LOGP(info, "TPC clusters shifted: map {} x {}, injected rotation about z {} rad, radial scale {}, z shift {} cm, z scale {}",
+             mapPar.applyRes.empty() ? "none" : mapPar.applyRes, mapPar.applyScale, mapPar.injectRotZ, mapPar.injectScaleR, mapPar.injectShiftZ,
+             mapPar.injectScaleZ);
+        mTPC->setClusterShift(mTPCMap.get());
+      }
     }
   }
   if (mTRD) {
@@ -1228,6 +1238,9 @@ void AlignmentSpec::writeMilleSteerFiles(bool statWeighted)
   modeOpt.sensorProjection = mParams->modeSensorProjection;
   modeOpt.relativeToGroupRoots = mParams->groupModesRelToRoots;
   mHierarchy->writeRigidBodyConstraints(cons, statWeighted, modeOpt);
+  if (mTPCMap && TPCMapParams::Instance().gauge) {
+    mTPCMap->writeConstraints(cons);
+  }
   std::ofstream par(mParams->milleParamFile);
   mHierarchy->writeParameters(par);
   if (mTPCMap) {

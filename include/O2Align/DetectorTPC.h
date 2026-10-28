@@ -34,6 +34,7 @@ class TPCFastTransformPOD;
 
 namespace o2::alignrs
 {
+class TPCMap;
 
 class DetectorTPC final : public Detector
 {
@@ -51,6 +52,8 @@ class DetectorTPC final : public Detector
   void setCorrMaps(const o2::gpu::TPCFastTransformPOD* maps) { mCorrMaps = maps; }
   void setTPCParam(const o2::gpu::GPUParam* par) { mTPCParam = par; }
   const o2::gpu::TPCFastTransformPOD* getCorrMaps() const { return mCorrMaps; }
+  /// a shift added to every cluster after the transformation (a fitted map to correct with, or injected modes for tests)
+  void setClusterShift(const TPCMap* shift) { mClusterShift = shift; }
   const o2::gpu::GPUParam* getTPCParam() const { return mTPCParam; }
 
   /// The drift calibration already applied to the correction maps: the fitted VDRIFT correction is
@@ -104,6 +107,7 @@ class DetectorTPC final : public Detector
   o2::tpc::VDriftCorrFact mVDrift{}; // drift calibration accounted by mCorrMaps
   Volume* mEnvelope{nullptr};        // fictitious top volume, owner of the drift calibration DOFs
   std::vector<Volume*> mSensors;     // sector volumes, indexed by sector
+  const TPCMap* mClusterShift{nullptr}; // see setClusterShift, not owned
 };
 
 } // namespace o2::alignrs

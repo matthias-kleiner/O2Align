@@ -32,6 +32,7 @@
 #include "O2Align/DetectorTPC.h"
 #include "O2Align/Params.h"
 #include "O2Align/SensorTPC.h"
+#include "O2Align/TPCMap.h"
 #include "O2Align/TrackFit.h"
 #include "TPCFastTransformPOD.h"
 
@@ -112,6 +113,17 @@ struct SelectedCluster {
     return static_cast<float>(x * std::sin(alpha) + y * std::cos(alpha));
   }
 };
+
+/// the TPCMap cluster shift (DetectorTPC::setClusterShift) added to a transformed cluster, if any
+void applyClusterShift(const TPCMap* shift, SelectedCluster& sel)
+{
+  if (shift) {
+    const auto d = shift->clusterShift(sel.sector, sel.x, sel.y, sel.z);
+    sel.x += d[0];
+    sel.y += d[1];
+    sel.z += d[2];
+  }
+}
 
 /// charge-weighted merge of the clusters of a track on neighbouring pad-rows of the same sector
 struct SuperCluster {
@@ -257,6 +269,7 @@ bool DetectorTPC::prepareTrack(o2::globaltracking::RecoContainer* recoData, cons
       }
       SelectedCluster sel{.sector = sector, .row = row, .qTot = static_cast<float>(cl.getQtot()), .state = shMap[&cl - clusterNativeAccess.clustersLinear]};
       mCorrMaps->Transform(sector, row, cl.getPad(), cl.getTime(), sel.x, sel.y, sel.z, tOffset);
+      applyClusterShift(mClusterShift, sel);
       return sel;
     }
     return std::nullopt;
@@ -313,6 +326,7 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     }
     auto& sel = selected.emplace_back(SelectedCluster{.sector = cc.sector, .row = cc.row, .qTot = static_cast<float>(cc.cl.getQtot())});
     mCorrMaps->Transform(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
+    applyClusterShift(mClusterShift, sel);
   }
   std::sort(selected.begin(), selected.end(), [](const auto& a, const auto& b) { return a.yLab() < b.yLab(); });
 
