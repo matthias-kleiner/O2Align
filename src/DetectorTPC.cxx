@@ -349,6 +349,12 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     nClUsed += sc.nClusters;
     return true;
   });
+  if (params.verbose > 1) {
+    const auto& all = leg == 0 ? cosm.clTPCBottom : cosm.clTPCTop;
+    LOGP(info, "Cosmic TPC leg {}: {} clusters in the input, {} selected, {} used; time {} mus, 1st selected: sector {} row {} x {} y {} z {}; ref: {}", leg, all.size(),
+         selected.size(), nClUsed, timeMUS, selected.empty() ? -1 : selected[0].sector, selected.empty() ? -1 : selected[0].row, selected.empty() ? 0.f : selected[0].x,
+         selected.empty() ? 0.f : selected[0].y, selected.empty() ? 0.f : selected[0].z, ref.asString());
+  }
   return nClUsed;
 }
 
