@@ -32,3 +32,10 @@ objects are queried for the current time.
    the scatterer of this step is not split) and continues along the bottom leg.
 
 Energy loss is propagated with the default sign (along the parametrisation), not along the flight as in `MatchCosmics`.
+
+## Clean selection (PbPb cosmics, TPC map fit)
+
+Off by default (`AlignParams`): `cosmRequireTOFPair`, `cosmRejectNearBeam`, `cosmMinP` [GeV], `cosmMaxDTimeTOF` [mus]
+(|TOF time - matcher's time|), `cosmTPCMaxZOverR` (only the TPC clusters with |z| < value * r are used: a correction map made of
+collision tracks is not constrained outside of their acceptance). The debug tree carries the selection variables of each cosmic
+(`DbgTrack::cosm`, see [DebugInfo.md](DebugInfo.md)).
