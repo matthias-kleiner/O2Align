@@ -15,6 +15,7 @@
 #include <memory>
 
 #include <optional>
+#include <sstream>
 #include "CommonConstants/LHCConstants.h"
 #include "DataFormatsGlobalTracking/RecoContainer.h"
 #include <algorithm>
@@ -29,6 +30,7 @@
 #include "Framework/Logger.h"
 #include "MathUtils/Utils.h"
 #include "O2Align/AlignmentTypes.h"
+#include "O2Align/ClusterBiasCorrection.h"
 #include "O2Align/DetectorTPC.h"
 #include "O2Align/Params.h"
 #include "O2Align/SensorTPC.h"
@@ -320,6 +322,39 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
   const float timeMUS = cosm.hasTOFTime() ? cosm.timeTOFMUS : cosm.cosmic.getTimeMUS().getTimeStamp();
   const float tOffset = timeMUS / (o2::constants::lhc::LHCBunchSpacingMUS * 8);
   std::vector<SelectedCluster> selected;
+  if (!mClusterBiasInit) {
+    initClusterBias();
+  }
+  // the reco's per-cluster bias correction (TPCMapParams.clusterBias*), decided by the prediction = the reference track at the cluster's
+  // row in its sector frame: the table's inward bias at the predicted pad phase and distance d_pred from the nearest pad-plane edge,
+  // moved outward on the prediction's side; false = rejected (d_pred below the cut)
+  const auto& mapParams = TPCMapParams::Instance();
+  auto correctClusterBias = [&](const o2::tpc::ClusterNative& cl, SelectedCluster& sel) {
+    namespace cb = o2::tpc::cluster_bias;
+    constexpr int NSectorsPerSide = o2::tpc::constants::MAXSECTOR / 2;
+    o2::track::TrackParCovD trk;
+    if (!propagateCosmicRef(ref, o2::math_utils::detail::sector2Angle<double>(sel.sector % NSectorsPerSide), sel.x, trk)) {
+      ++mClusterBiasCount[2]; // kept uncorrected: the supercluster's own propagation decides on it
+      return true;
+    }
+    const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(sel.row);
+    const double yPred = trk.getY();
+    const double dPred = (0.5 * o2::gpu::GPUTPCGeometry::NPads(sel.row) * padWidth - std::abs(yPred)) / padWidth;
+    if (dPred < mapParams.clusterBiasRejectPads) {
+      ++mClusterBiasCount[1];
+      return false;
+    }
+    const float pad = cl.getPad();
+    const int cls = cb::classOfFlags(cl.getFlags(), std::abs(pad - std::round(pad)) < 0.25f / 64.f);
+    const int stack = cb::stackOfRow(sel.row);
+    const double snp = std::clamp(trk.getSnp(), -0.999, 0.999);
+    const double absSlope = std::abs(snp / std::sqrt((1. - snp) * (1. + snp)));
+    const double bias = mClusterBias->inwardBias(mClusterBias->byRegion ? cb::regionOfRow(sel.row) : stack, cls, cb::driftLength(sel.z), absSlope,
+                                                 std::max(0., dPred), mClusterBiasMult[stack]);
+    sel.y += static_cast<float>((yPred >= 0. ? 1. : -1.) * bias * mapParams.clusterBiasScale);
+    ++mClusterBiasCount[0];
+    return true;
+  };
   for (const auto& cc : leg == 0 ? cosm.clTPCBottom : cosm.clTPCTop) {
     if (!cc.isAttached() || cc.row > params.maxTPCPadRow || !isClusterAccepted(cc.cl, cc.row)) {
       continue;
@@ -327,6 +362,9 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     auto& sel = selected.emplace_back(SelectedCluster{.sector = cc.sector, .row = cc.row, .qTot = static_cast<float>(cc.cl.getQtot())});
     mCorrMaps->Transform(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
     applyClusterShift(mClusterShift, sel);
+    if (mClusterBias && !correctClusterBias(cc.cl, sel)) {
+      selected.pop_back();
+    }
   }
   std::sort(selected.begin(), selected.end(), [](const auto& a, const auto& b) { return a.yLab() < b.yLab(); });
 
@@ -351,6 +389,43 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
 int DetectorTPC::getMinCosmicMeasurements() const
 {
   return Params::Instance().minTPCClusters;
+}
+
+void DetectorTPC::initClusterBias()
+{
+  mClusterBiasInit = true;
+  const auto& mapParams = TPCMapParams::Instance();
+  if (mapParams.clusterBiasTable.empty()) {
+    return;
+  }
+  auto table = std::make_shared<o2::tpc::cluster_bias::ClusterBiasCorrection>();
+  std::string error;
+  if (!table->load(mapParams.clusterBiasTable, &error)) {
+    LOGP(fatal, "Cannot load the cluster bias table {}: {}", mapParams.clusterBiasTable, error);
+  }
+  if (!mapParams.clusterBiasMult.empty()) {
+    std::stringstream ss(mapParams.clusterBiasMult);
+    std::string item;
+    for (int s = 0; s < NStacks; ++s) {
+      if (!std::getline(ss, item, ',')) {
+        LOGP(fatal, "TPCMapParams.clusterBiasMult needs {} values (IROC, OROC1-3): {}", NStacks, mapParams.clusterBiasMult);
+      }
+      mClusterBiasMult[s] = std::stof(item);
+    }
+  } else if (table->hasOccupancy()) {
+    LOGP(warn, "Cluster bias table {} has an occupancy term (and any data correction folded into it), but no TPCMapParams.clusterBiasMult: left out",
+         mapParams.clusterBiasTable);
+  }
+  LOGP(info, "Cosmics: per-cluster bias correction {} ({} records, occupancy term {}, mult {} {} {} {}), x {}, clusters with d_pred < {} pads rejected",
+       mapParams.clusterBiasTable, table->byRegion ? "pad-region" : "stack", mClusterBiasMult[0] >= 0.f && table->hasOccupancy() ? "on" : "off",
+       mClusterBiasMult[0], mClusterBiasMult[1], mClusterBiasMult[2], mClusterBiasMult[3], mapParams.clusterBiasScale, mapParams.clusterBiasRejectPads);
+  mClusterBias = table;
+}
+
+std::string DetectorTPC::getClusterBiasStats() const
+{
+  return std::format("corrected {}, rejected (d_pred below the cut) {}, kept without a prediction {}", mClusterBiasCount[0], mClusterBiasCount[1],
+                     mClusterBiasCount[2]);
 }
 
 } // namespace o2::alignrs

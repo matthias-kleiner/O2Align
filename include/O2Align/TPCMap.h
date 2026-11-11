@@ -42,6 +42,16 @@ struct TPCMapParams : public o2::conf::ConfigurableParamHelper<TPCMapParams> {
   // (no derivative, no lumi scaling; the TF's vDrift / t0 of the input as for the ideal map), e.g. our coarse + fine map of one window;
   // empty: Ruben's ideal transformation (no distortion correction)
   std::string cosmicCorrMap = "";
+  // per-cluster bias correction of the reco (cosmic-ext TPC clusters): ClusterBiasCorrection table (O2 tpc-fine-map-gbl-edgetree format);
+  // per cluster the table's inward bias at the PREDICTED pad phase + edge part at the predicted distance d_pred [pads] from the nearest
+  // pad-plane edge (prediction = the cosmic's reference track at the cluster's row), moved outward on the prediction's side and added to
+  // the cluster y; clusters with d_pred < clusterBiasRejectPads are dropped. Empty: off
+  std::string clusterBiasTable = "";
+  float clusterBiasRejectPads = 1.f; // [pads]
+  float clusterBiasScale = 1.f;      // x the correction (0: only the rejection)
+  // occupancy (TrackDataCompact::multStack) per stack IROC, OROC1-3 for a table with M records (the cosmics carry none), "m0,m1,m2,m3";
+  // empty: the occupancy term (and a data correction folded into it) left out
+  std::string clusterBiasMult = "";
 
   O2ParamDef(TPCMapParams, "TPCMapParams");
 };

@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <array>
 #include <utility>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "DataFormatsTPC/VDriftCorrFact.h"
@@ -31,6 +33,11 @@ namespace o2::gpu
 class GPUParam;
 class TPCFastTransformPOD;
 } // namespace o2::gpu
+
+namespace o2::tpc::cluster_bias
+{
+struct ClusterBiasCorrection;
+} // namespace o2::tpc::cluster_bias
 
 namespace o2::alignrs
 {
@@ -55,6 +62,8 @@ class DetectorTPC final : public Detector
   /// a shift added to every cluster after the transformation (a fitted map to correct with, or injected modes for tests)
   void setClusterShift(const TPCMap* shift) { mClusterShift = shift; }
   const o2::gpu::GPUParam* getTPCParam() const { return mTPCParam; }
+  /// counts of the per-cluster bias correction (TPCMapParams.clusterBias*): corrected, rejected (d_pred below the cut), no prediction
+  std::string getClusterBiasStats() const;
 
   /// The drift calibration already applied to the correction maps: the fitted VDRIFT correction is
   /// relative to it, hence it is needed to express the result wrt the reference drift velocity.
@@ -108,6 +117,12 @@ class DetectorTPC final : public Detector
   Volume* mEnvelope{nullptr};        // fictitious top volume, owner of the drift calibration DOFs
   std::vector<Volume*> mSensors;     // sector volumes, indexed by sector
   const TPCMap* mClusterShift{nullptr}; // see setClusterShift, not owned
+  // per-cluster bias correction of the cosmics (TPCMapParams.clusterBias*), loaded at the first cosmic
+  void initClusterBias();
+  bool mClusterBiasInit{false};
+  std::shared_ptr<const o2::tpc::cluster_bias::ClusterBiasCorrection> mClusterBias; // null: off
+  std::array<float, NStacks> mClusterBiasMult{-1.f, -1.f, -1.f, -1.f};               // multStack per stack for the occupancy term (< 0: off)
+  std::array<uint64_t, 3> mClusterBiasCount{};                                         // corrected, rejected (d_pred below the cut), no prediction
 };
 
 } // namespace o2::alignrs

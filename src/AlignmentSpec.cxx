@@ -583,6 +583,9 @@ void AlignmentSpec::processCosmicExt()
   LOGP(info, "Processing stats: {}", mProcessingStats.asString());
   LOGP(info, "Cosmics selection: rejected without an unambiguous TOF pair {}, near-beam {}, below the momentum cut {}", mCosmicsRejected[0],
        mCosmicsRejected[1], mCosmicsRejected[2]);
+  if (mTPC && !TPCMapParams::Instance().clusterBiasTable.empty()) {
+    LOGP(info, "Cosmics TPC cluster bias: {}", mTPC->getClusterBiasStats());
+  }
   mGBLStatSingle.print("Single-track");
   writeMilleRecords(gblTraj);
 }
