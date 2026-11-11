@@ -419,7 +419,7 @@ class AlignmentSpec final : public Task
 
   o2::gpu::aligned_unique_buffer_ptr<o2::gpu::TPCFastTransformPOD> mCosmicTPCMap; // ideal TPC transformation for cosmics
   DbgCosmic mDbgCosmic;                       // debug record of the cosmic being processed (valid only while it is)
-  std::array<uint64_t, 3> mCosmicsRejected{}; // by the clean selection: no unambiguous TOF pair, near-beam, momentum (cosm* params)
+  std::array<uint64_t, 4> mCosmicsRejected{}; // by the clean selection: no unambiguous TOF pair, near-beam, momentum, TOF vs matcher time (cosm* params)
   std::unique_ptr<o2::gpu::GPUParam> mTPCParam;                                   // TPC cluster error parametrization, field-dependent
   o2::tpc::VDriftHelper mTPCVDriftHelper{};                                       // drift calibration accounted by the correction maps
   std::shared_ptr<DataRequest> mDataRequest;
@@ -583,8 +583,8 @@ void AlignmentSpec::processCosmicExt()
     mDbgCosmic.valid = false;
   }
   LOGP(info, "Processing stats: {}", mProcessingStats.asString());
-  LOGP(info, "Cosmics selection: rejected without an unambiguous TOF pair {}, near-beam {}, below the momentum cut {}", mCosmicsRejected[0],
-       mCosmicsRejected[1], mCosmicsRejected[2]);
+  LOGP(info, "Cosmics selection: rejected without an unambiguous TOF pair {}, near-beam {}, below the momentum cut {}, TOF time off the matcher's {}",
+       mCosmicsRejected[0], mCosmicsRejected[1], mCosmicsRejected[2], mCosmicsRejected[3]);
   mGBLStatSingle.print("Single-track");
   writeMilleRecords(gblTraj);
 }
@@ -681,6 +681,10 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
   if (mParams->cosmRequireTOFPair && (!cosm.hasTOFTime() || (cosm.scoreTOFReversed >= 0.f && cosm.scoreTOFReversed <= cosm.scoreTOFPair))) {
     ++mCosmicsRejected[0];
     return reject("no unambiguous TOF pair");
+  }
+  if (mParams->cosmMaxDTimeTOF > 0.f && cosm.hasTOFTime() && std::abs(cosm.timeTOFMUS - cosm.cosmic.getTimeMUS().getTimeStamp()) > mParams->cosmMaxDTimeTOF) {
+    ++mCosmicsRejected[3];
+    return reject("TOF time differs from the matcher's");
   }
   if (mParams->cosmRejectNearBeam && cosm.cosmic.isNearBeam()) {
     ++mCosmicsRejected[1];
