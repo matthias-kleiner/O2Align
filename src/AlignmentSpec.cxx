@@ -418,6 +418,7 @@ class AlignmentSpec final : public Task
   std::vector<Detector*> mDetectors; // all created detectors, in the order of the detector index
 
   o2::gpu::aligned_unique_buffer_ptr<o2::gpu::TPCFastTransformPOD> mCosmicTPCMap; // ideal TPC transformation for cosmics
+  std::array<uint64_t, 3> mCosmicsRejected{}; // by the clean selection: no unambiguous TOF pair, near-beam, momentum (cosm* params)
   std::unique_ptr<o2::gpu::GPUParam> mTPCParam;                                   // TPC cluster error parametrization, field-dependent
   o2::tpc::VDriftHelper mTPCVDriftHelper{};                                       // drift calibration accounted by the correction maps
   std::shared_ptr<DataRequest> mDataRequest;
@@ -580,6 +581,8 @@ void AlignmentSpec::processCosmicExt()
     }
   }
   LOGP(info, "Processing stats: {}", mProcessingStats.asString());
+  LOGP(info, "Cosmics selection: rejected without an unambiguous TOF pair {}, near-beam {}, below the momentum cut {}", mCosmicsRejected[0],
+       mCosmicsRejected[1], mCosmicsRejected[2]);
   mGBLStatSingle.print("Single-track");
   writeMilleRecords(gblTraj);
 }
@@ -673,8 +676,20 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
   if (cosm.duplicateOf >= 0) {
     return reject("duplicate");
   }
+  if (mParams->cosmRequireTOFPair && (!cosm.hasTOFTime() || (cosm.scoreTOFReversed >= 0.f && cosm.scoreTOFReversed <= cosm.scoreTOFPair))) {
+    ++mCosmicsRejected[0];
+    return reject("no unambiguous TOF pair");
+  }
+  if (mParams->cosmRejectNearBeam && cosm.cosmic.isNearBeam()) {
+    ++mCosmicsRejected[1];
+    return reject("near-beam pair");
+  }
   // the refit at the TOF time, if any, otherwise the matcher's track, both are upward
   const auto& srcTrack = cosm.chi2MatchPolished >= 0.f ? cosm.polished : static_cast<const o2::track::TrackParCov&>(cosm.cosmic);
+  if (mParams->cosmMinP > 0.f && !mFieldOFF && srcTrack.getP() < mParams->cosmMinP) {
+    ++mCosmicsRejected[2];
+    return reject("momentum");
+  }
   TrackD refUp = convertTrack<double>(srcTrack);
   refUp.setPID(o2::track::PID::Muon, true);
   if (mFieldOFF && mParams->meanPtB0Cosm > 0.) {

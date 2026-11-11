@@ -50,6 +50,10 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
 
   int minGBLPoints = 4;       // minimum number of GBL points per track
   float cosmMaxChi2Cl = 30.f; // cosmics: max chi2 wrt the reference track of an ITS cluster, TRD tracklet or TOF cluster to be accepted (ambiguity resolution)
+  // cosmics: selection of clean cosmics (all off by default)
+  bool cosmRequireTOFPair = false; // a top-bottom TOF flight pair gave the cosmic its time (hasTOFTime()) and the same pair in the impossible order is not as good (scoreTOFReversed: an accidental coincidence otherwise)
+  bool cosmRejectNearBeam = false; // reject the matcher's near-beam pairs (TrackCosmics::isNearBeam(): legs close to the beam line, mostly collision tracks)
+  float cosmMinP = 0.f;            // [GeV] min momentum of the cosmic's reference track, B on only (<= 0: no cut)
   // cosmics: "golden" selection of the ITS road hits (CosmicsITSClean.h, B=0 only)
   bool cosmiGoldOnly = true;      // keep only the ITS hits on the straight line of the cosmic, requiring a clean cosmic (see below); false: all road hits
   bool cosmGoldRequireTOF = true; // golden cosmic must have a TOF time (hasTOFTime()): its road is then a single ROF
