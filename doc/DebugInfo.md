@@ -52,6 +52,7 @@ GBL fit. It is the seed of the GBL linearization; the GBL correction is not appl
 | `bz` | nominal field, kG (0 for B=0 data) |
 | `tfCounter`, `firstTForbit`, `runNumber` | timing info of the TF |
 | `points` | `std::vector<DbgPoint>`, the points of the GBL trajectory in the order GBL sees them (from the innermost outward) |
+| `cosm` | `DbgCosmic`, cosmic-ext input only (`cosm.valid`): what the selection of the cosmics can cut on. TOF pair (`hasTOFTime`, `scoreTOFPair`, `scoreTOFReversed`), `chi2MatchPolished`, the matcher's `chi2Match`, `chi2Refit`, `flags` (near-beam), times, the reference track (`p`, `pt`, `tgl`, `phi`, `d0`, `z0`), TPC occupancy, and per leg (0 = bottom, 1 = top) the attached TPC clusters (`nTPC`, `nTPCA` on the A side, `nTPCRow63/97/127`) and the ITS / TRD / TOF hits of the input; `nPntTop` = points of the top leg in the fit |
 
 ## `DbgTrack::points`: `DbgPoint`
 

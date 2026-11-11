@@ -35,6 +35,7 @@
 #pragma link C++ class o2::alignrs::TrackSlopes + ;
 #pragma link C++ class o2::alignrs::DbgPoint + ;
 #pragma link C++ class std::vector < o2::alignrs::DbgPoint> + ;
+#pragma link C++ class o2::alignrs::DbgCosmic + ;
 #pragma link C++ class o2::alignrs::DbgTrack + ;
 
 #pragma link C++ class o2::alignrs::TimeSlot + ;
