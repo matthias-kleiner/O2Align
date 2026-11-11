@@ -365,6 +365,10 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     }
     auto& sel = selected.emplace_back(SelectedCluster{.sector = cc.sector, .row = cc.row, .qTot = static_cast<float>(cc.cl.getQtot())});
     mCorrMaps->Transform(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
+    if (params.cosmTPCMaxZOverR > 0.f && std::abs(sel.z) > params.cosmTPCMaxZOverR * std::hypot(sel.x, sel.y)) {
+      selected.pop_back(); // outside of the acceptance of the tracks the correction map was made of
+      continue;
+    }
     applyClusterShift(mClusterShift, sel);
     if (mClusterBias) {
       bool keep = true;
