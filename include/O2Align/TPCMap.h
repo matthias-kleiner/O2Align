@@ -38,6 +38,10 @@ struct TPCMapParams : public o2::conf::ConfigurableParamHelper<TPCMapParams> {
   float injectScaleR = 0.f;  // a radial scale added to the clusters (dX = e x, dY = e y)
   float injectShiftZ = 0.f;  // [cm] a z shift added to the clusters
   float injectScaleZ = 0.f;  // a z scale added to the clusters (dZ = s z, global z)
+  // cosmic-ext input: a TPCFastTransform file (object "ccdb_object") applied to the TPC clusters of every cosmic as a STATIC map
+  // (no derivative, no lumi scaling; the TF's vDrift / t0 of the input as for the ideal map), e.g. our coarse + fine map of one window;
+  // empty: Ruben's ideal transformation (no distortion correction)
+  std::string cosmicCorrMap = "";
 
   O2ParamDef(TPCMapParams, "TPCMapParams");
 };

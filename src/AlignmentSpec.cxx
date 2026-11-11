@@ -714,8 +714,20 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
 void AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo)
 {
   if (!mCosmicTPCMap) {
-    std::unique_ptr<o2::gpu::TPCFastTransform> ideal(o2::tpc::TPCFastTransformHelperO2::instance()->create(0));
-    o2::gpu::TPCFastTransformPOD::create(mCosmicTPCMap, *ideal);
+    if (const auto& mapFile = TPCMapParams::Instance().cosmicCorrMap; mapFile.empty()) {
+      std::unique_ptr<o2::gpu::TPCFastTransform> ideal(o2::tpc::TPCFastTransformHelperO2::instance()->create(0));
+      o2::gpu::TPCFastTransformPOD::create(mCosmicTPCMap, *ideal);
+    } else { // a static correction map (TPCMapParams.cosmicCorrMap)
+      std::unique_ptr<TFile> file(TFile::Open(mapFile.c_str()));
+      std::unique_ptr<o2::gpu::TPCFastTransform> map(file ? file->Get<o2::gpu::TPCFastTransform>("ccdb_object") : nullptr);
+      if (!map) {
+        LOGP(fatal, "No TPCFastTransform ccdb_object in {}", mapFile);
+      }
+      map->rectifyAfterReadingFromFile();
+      o2::gpu::TPCFastTransformPOD::create(mCosmicTPCMap, *map);
+      mCosmicTPCMap->setApplyCorrectionOn();
+      LOGP(info, "Cosmics: TPC clusters transformed with the static correction map {} (no derivative, no lumi scaling)", mapFile);
+    }
     mTPC->setCorrMaps(mCosmicTPCMap.get());
   }
   mCosmicTPCMap->setVDrift(tfInfo.vDrift);
