@@ -286,7 +286,7 @@ class AlignmentSpec final : public Task
   // fill resTrack with the points of the cosmic and the KF fit of them, the reference state is at the highest point
   bool prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtended& cosm, Track& resTrack);
   bool collectCosmicFrames(const o2::dataformats::TrackCosmicsExtended& cosm, const std::array<const TrackD*, 2>& refLeg, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed, std::string& why);
-  bool fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why);
+  bool fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState = nullptr);
   void setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
 
   // write mp2tree.txt/mp2con.txt/mp2param.txt. statWeighted is forwarded to
@@ -642,13 +642,16 @@ bool AlignmentSpec::collectCosmicFrames(const o2::dataformats::TrackCosmicsExten
 
 // KF fit of the ordered points of the cosmic (top leg first, then the bottom one starting at resTrack.invertAt = nTop), the result
 // is the state at info[0]. refDown is the reference in the downward parametrisation, used as the seed.
-bool AlignmentSpec::fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why)
+bool AlignmentSpec::fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState)
 {
   // the bottom leg: outward in the downward parametrisation, then back inward, to its innermost point
   resTrack.track = refDown;
   if (!resTrack.fitTrack(nTop, nTot - 1, false, true) || !resTrack.fitTrack(nTot - 1, nTop, false, true)) {
     why = "KF fit of the bottom leg failed";
     return false;
+  }
+  if (bottomState) { // the bottom leg's own estimate at its innermost point (downward parametrisation)
+    *bottomState = resTrack.track;
   }
   // the top leg: upward, i.e. outward, to the highest point
   resTrack.track.invert();
@@ -702,28 +705,53 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
   refDown.invert();
   const std::array<const TrackD*, 2> refLeg{&refDown, &refUp}; // bottom, top leg: the references in the direction of the legs' points
 
-  std::array<std::vector<FrameInfoExt>, 2> frames;
-  DetID::mask_t contributed;
-  std::string why;
-  if (!collectCosmicFrames(cosm, refLeg, frames, contributed, why)) {
-    return reject(why.c_str());
+  // the points of both legs collected with the references refs, ordered and KF-fitted; bottomState: the bottom leg's own fitted state
+  auto collectAndFit = [&](const std::array<const TrackD*, 2>& refs, TrackD* bottomState) {
+    resTrack = Track{};
+    std::array<std::vector<FrameInfoExt>, 2> frames;
+    DetID::mask_t contributed;
+    std::string why;
+    if (!collectCosmicFrames(cosm, refs, frames, contributed, why)) {
+      return reject(why.c_str());
+    }
+    if (frames[0].empty() || frames[1].empty()) {
+      return reject(fmt::format("single leg: {} bottom, {} top points", frames[0].size(), frames[1].size()).c_str());
+    }
+    if (!isAcceptedDetCombination(contributed)) {
+      return reject(fmt::format("detector combination {} ({} combinations)", contributed.to_string(), mDetCombinations.size()).c_str());
+    }
+    for (auto& legFrames : frames) { // along the Y of the lab frame, downward
+      std::stable_sort(legFrames.begin(), legFrames.end(), [](const auto& a, const auto& b) { return yLab(a) > yLab(b); });
+    }
+    const int nTop = static_cast<int>(frames[1].size()), nTot = nTop + static_cast<int>(frames[0].size());
+    resTrack.info = std::move(frames[1]);
+    resTrack.info.insert(resTrack.info.end(), frames[0].begin(), frames[0].end());
+    resTrack.invertAt = nTop;
+    resTrack.kfFit.chi2 = 0.f;
+    if (!fitCosmicLegs(resTrack, refDown, nTop, nTot, why, bottomState)) {
+      return reject(why.c_str());
+    }
+    return true;
+  };
+  // the TPC per-cluster bias correction (TPCMapParams.clusterBias*) is decided by the prediction, which must be in the frame of the
+  // clusters as transformed here (not the reco's reference track, made with the production map): pass 1 without it (and without the
+  // clusters measured near the sector edge), KF fit; pass 2 with it, the references = the fitted states of pass 1 (the bottom leg's
+  // after its inward pass, the top leg's at the highest point: each propagated only within its own leg, no kink in between)
+  if (!(mTPC && mTPC->hasClusterBias())) {
+    return collectAndFit(refLeg, nullptr);
   }
-  if (frames[0].empty() || frames[1].empty()) {
-    return reject(fmt::format("single leg: {} bottom, {} top points", frames[0].size(), frames[1].size()).c_str());
+  TrackD bottomState;
+  mTPC->setClusterBiasPass(1);
+  if (!collectAndFit(refLeg, &bottomState)) {
+    mTPC->setClusterBiasPass(0);
+    return false;
   }
-  if (!isAcceptedDetCombination(contributed)) {
-    return reject(fmt::format("detector combination {} ({} combinations)", contributed.to_string(), mDetCombinations.size()).c_str());
-  }
-  for (auto& legFrames : frames) { // along the Y of the lab frame, downward
-    std::stable_sort(legFrames.begin(), legFrames.end(), [](const auto& a, const auto& b) { return yLab(a) > yLab(b); });
-  }
-  const int nTop = static_cast<int>(frames[1].size()), nTot = nTop + static_cast<int>(frames[0].size());
-  resTrack.info = std::move(frames[1]);
-  resTrack.info.insert(resTrack.info.end(), frames[0].begin(), frames[0].end());
-  resTrack.invertAt = nTop;
-  resTrack.kfFit.chi2 = 0.f;
-  if (!fitCosmicLegs(resTrack, refDown, nTop, nTot, why)) {
-    return reject(why.c_str());
+  const TrackD topState = resTrack.track; // the KF state at the highest point, upward
+  mTPC->setClusterBiasPass(2);
+  const bool ok = collectAndFit({&bottomState, &topState}, nullptr);
+  mTPC->setClusterBiasPass(0);
+  if (!ok) {
+    return false;
   }
   return true;
 }

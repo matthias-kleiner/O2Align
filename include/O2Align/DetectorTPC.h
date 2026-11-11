@@ -64,6 +64,19 @@ class DetectorTPC final : public Detector
   const o2::gpu::GPUParam* getTPCParam() const { return mTPCParam; }
   /// counts of the per-cluster bias correction (TPCMapParams.clusterBias*): corrected, rejected (d_pred below the cut), no prediction
   std::string getClusterBiasStats() const;
+  /// the per-cluster bias correction is configured (loads the table at the first call)
+  bool hasClusterBias()
+  {
+    if (!mClusterBiasInit) {
+      initClusterBias();
+    }
+    return mClusterBias != nullptr;
+  }
+  /// cosmics with the correction are prepared in two passes (AlignmentSpec::prepareCosmicTrack): 1 = no correction and no cluster
+  /// measured within ClusterBiasPassOneEdgePads of the sector edge (the KF fit for the prediction), 2 = correction + rejection by the
+  /// prediction (the references = the fitted states of pass 1); 0 = outside a cosmic (as 2)
+  void setClusterBiasPass(int pass) { mClusterBiasPass = pass; }
+  static constexpr float ClusterBiasPassOneEdgePads = 2.f;
 
   /// The drift calibration already applied to the correction maps: the fitted VDRIFT correction is
   /// relative to it, hence it is needed to express the result wrt the reference drift velocity.
@@ -120,6 +133,7 @@ class DetectorTPC final : public Detector
   // per-cluster bias correction of the cosmics (TPCMapParams.clusterBias*), loaded at the first cosmic
   void initClusterBias();
   bool mClusterBiasInit{false};
+  int mClusterBiasPass{0};
   std::shared_ptr<const o2::tpc::cluster_bias::ClusterBiasCorrection> mClusterBias; // null: off
   std::array<float, NStacks> mClusterBiasMult{-1.f, -1.f, -1.f, -1.f};               // multStack per stack for the occupancy term (< 0: off)
   std::array<uint64_t, 3> mClusterBiasCount{};                                         // corrected, rejected (d_pred below the cut), no prediction

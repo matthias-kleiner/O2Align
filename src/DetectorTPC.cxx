@@ -362,8 +362,17 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     auto& sel = selected.emplace_back(SelectedCluster{.sector = cc.sector, .row = cc.row, .qTot = static_cast<float>(cc.cl.getQtot())});
     mCorrMaps->Transform(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
     applyClusterShift(mClusterShift, sel);
-    if (mClusterBias && !correctClusterBias(cc.cl, sel)) {
-      selected.pop_back();
+    if (mClusterBias) {
+      bool keep = true;
+      if (mClusterBiasPass == 1) { // the fit for the prediction: no correction, the clusters measured near the sector edge left out
+        const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(sel.row);
+        keep = (0.5 * o2::gpu::GPUTPCGeometry::NPads(sel.row) * padWidth - std::abs(sel.y)) / padWidth >= ClusterBiasPassOneEdgePads;
+      } else {
+        keep = correctClusterBias(cc.cl, sel);
+      }
+      if (!keep) {
+        selected.pop_back();
+      }
     }
   }
   std::sort(selected.begin(), selected.end(), [](const auto& a, const auto& b) { return a.yLab() < b.yLab(); });
