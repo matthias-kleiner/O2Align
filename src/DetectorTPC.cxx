@@ -337,8 +337,12 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
       ++mClusterBiasCount[2]; // kept uncorrected: the supercluster's own propagation decides on it
       return true;
     }
+    // the table is defined on the PAD PLANE (where the charge landed): the prediction there = the cluster's ideal (uncorrected) y +
+    // (predicted - measured), the map being smooth over the residual; in PbPb the map moves clusters by mm, near the edges by ~1 pad
+    float xIdeal = 0.f, yIdeal = 0.f, zIdeal = 0.f;
+    mCorrMaps->TransformIdeal(sel.sector, sel.row, cl.getPad(), cl.getTime(), xIdeal, yIdeal, zIdeal, tOffset);
     const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(sel.row);
-    const double yPred = trk.getY();
+    const double yPred = yIdeal + (trk.getY() - sel.y);
     const double dPred = (0.5 * o2::gpu::GPUTPCGeometry::NPads(sel.row) * padWidth - std::abs(yPred)) / padWidth;
     if (dPred < mapParams.clusterBiasRejectPads) {
       ++mClusterBiasCount[1];
@@ -364,9 +368,11 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     applyClusterShift(mClusterShift, sel);
     if (mClusterBias) {
       bool keep = true;
-      if (mClusterBiasPass == 1) { // the fit for the prediction: no correction, the clusters measured near the sector edge left out
+      if (mClusterBiasPass == 1) { // the fit for the prediction: no correction, the clusters measured near the sector edge (pad plane) left out
         const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(sel.row);
-        keep = (0.5 * o2::gpu::GPUTPCGeometry::NPads(sel.row) * padWidth - std::abs(sel.y)) / padWidth >= ClusterBiasPassOneEdgePads;
+        float xIdeal = 0.f, yIdeal = 0.f, zIdeal = 0.f;
+        mCorrMaps->TransformIdeal(sel.sector, sel.row, cc.cl.getPad(), cc.cl.getTime(), xIdeal, yIdeal, zIdeal, tOffset);
+        keep = (0.5 * o2::gpu::GPUTPCGeometry::NPads(sel.row) * padWidth - std::abs(yIdeal)) / padWidth >= ClusterBiasPassOneEdgePads;
       } else {
         keep = correctClusterBias(cc.cl, sel);
       }
