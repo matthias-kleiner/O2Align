@@ -63,6 +63,42 @@ struct DbgPoint {
   ClassDefNV(DbgPoint, 2)
 };
 
+/// Debug record of the cosmic the track was made of (cosmic-ext input): the quantities of the input the selection can cut on.
+/// The reference is the track the legs were prepared with: `polished` if available, otherwise the matcher's track.
+struct DbgCosmic {
+  bool valid = false;          // the track is a cosmic and this record is filled
+  bool hasTOFTime = false;     // a top-bottom TOF flight pair gave the time
+  bool polished = false;       // the reference is the refit at the TOF time
+  uint8_t flags = 0;           // TrackCosmics flags: 1 = NearBeamBottom, 2 = NearBeamTop
+  float scoreTOFPair = -1.f;   // TrackCosmicsExtended::scoreTOFPair
+  float scoreTOFReversed = -1.f;
+  float chi2MatchPolished = -1.f;
+  float chi2Match = 0.f;       // matcher: top/bottom match
+  float chi2Refit = 0.f;       // matcher: global refit
+  float timeTOFMUS = -1.f;     // TOF time (valid if hasTOFTime)
+  float timeMUS = 0.f;         // matcher's time and its error
+  float timeErrMUS = 0.f;
+  float p = 0.f;               // reference track: momentum, pt, tgl, phi, distance to the beam line and z there
+  float pt = 0.f;
+  float tgl = 0.f;
+  float phi = 0.f;
+  float d0 = 0.f;
+  float z0 = 0.f;
+  float tpcOccBef = -1.f;      // TPC occupancy before / after the cosmic (-1: not in the input)
+  float tpcOccAft = -1.f;
+  // input per leg (0 = bottom, 1 = top): attached TPC clusters (all, on the A side, rows >= 63, 97, 127), ITS / TRD / TOF hits
+  short nTPC[2] = {0, 0};
+  short nTPCA[2] = {0, 0};
+  short nTPCRow63[2] = {0, 0};
+  short nTPCRow97[2] = {0, 0};
+  short nTPCRow127[2] = {0, 0};
+  short nITS[2] = {0, 0};
+  short nTRD[2] = {0, 0};
+  short nTOF[2] = {0, 0};
+  short nPntTop = 0;           // points of the top leg in the fit (the first ones of DbgTrack::points with a detector)
+  ClassDefNV(DbgCosmic, 1)
+};
+
 /// Debug record of a track: its parameters at the reference point (the innermost one) and all its GBL points
 struct DbgTrack : public o2::track::TrackPar {
   o2::dataformats::GlobalTrackID gid{};
@@ -75,7 +111,8 @@ struct DbgTrack : public o2::track::TrackPar {
   uint32_t firstTForbit = 0;
   int runNumber = 0;
   std::vector<DbgPoint> points;
-  ClassDefNV(DbgTrack, 1)
+  DbgCosmic cosm;        // cosmic-ext input only (cosm.valid)
+  ClassDefNV(DbgTrack, 2)
 };
 
 } // namespace o2::alignrs

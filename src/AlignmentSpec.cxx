@@ -418,6 +418,7 @@ class AlignmentSpec final : public Task
   std::vector<Detector*> mDetectors; // all created detectors, in the order of the detector index
 
   o2::gpu::aligned_unique_buffer_ptr<o2::gpu::TPCFastTransformPOD> mCosmicTPCMap; // ideal TPC transformation for cosmics
+  DbgCosmic mDbgCosmic;                       // debug record of the cosmic being processed (valid only while it is)
   std::array<uint64_t, 3> mCosmicsRejected{}; // by the clean selection: no unambiguous TOF pair, near-beam, momentum (cosm* params)
   std::unique_ptr<o2::gpu::GPUParam> mTPCParam;                                   // TPC cluster error parametrization, field-dependent
   o2::tpc::VDriftHelper mTPCVDriftHelper{};                                       // drift calibration accounted by the correction maps
@@ -579,6 +580,7 @@ void AlignmentSpec::processCosmicExt()
     if (buildGBLTrack(resTrack, 0, gblTraj)) { // no vertex: the reference is the highest point of the track
       ++mProcessingStats.nTrcNoPVAcc;
     }
+    mDbgCosmic.valid = false;
   }
   LOGP(info, "Processing stats: {}", mProcessingStats.asString());
   LOGP(info, "Cosmics selection: rejected without an unambiguous TOF pair {}, near-beam {}, below the momentum cut {}", mCosmicsRejected[0],
@@ -690,6 +692,56 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
     ++mCosmicsRejected[2];
     return reject("momentum");
   }
+  if (mParams->debugTracksFraction > 0.f) {
+    auto& dc = mDbgCosmic = DbgCosmic{};
+    dc.hasTOFTime = cosm.hasTOFTime();
+    dc.polished = cosm.chi2MatchPolished >= 0.f;
+    dc.flags = cosm.cosmic.getFlags();
+    dc.scoreTOFPair = cosm.scoreTOFPair;
+    dc.scoreTOFReversed = cosm.scoreTOFReversed;
+    dc.chi2MatchPolished = cosm.chi2MatchPolished;
+    dc.chi2Match = cosm.cosmic.getChi2Match();
+    dc.chi2Refit = cosm.cosmic.getChi2Refit();
+    dc.timeTOFMUS = cosm.timeTOFMUS;
+    dc.timeMUS = cosm.cosmic.getTimeMUS().getTimeStamp();
+    dc.timeErrMUS = cosm.cosmic.getTimeMUS().getTimeStampError();
+    dc.p = srcTrack.getP();
+    dc.pt = srcTrack.getPt();
+    dc.tgl = srcTrack.getTgl();
+    dc.phi = srcTrack.getPhi();
+    dc.d0 = std::hypot(srcTrack.getX(), srcTrack.getY());
+    dc.z0 = srcTrack.getZ();
+    const auto occ = [](const auto& c) { // not in the older versions of the input class
+      if constexpr (requires { c.tpcOccBef; }) {
+        return std::pair<float, float>{c.tpcOccBef, c.tpcOccAft};
+      } else {
+        return std::pair<float, float>{-1.f, -1.f};
+      }
+    }(cosm);
+    dc.tpcOccBef = occ.first;
+    dc.tpcOccAft = occ.second;
+    for (int leg = 0; leg < 2; ++leg) {
+      for (const auto& cc : leg == 0 ? cosm.clTPCBottom : cosm.clTPCTop) {
+        if (cc.isAttached()) {
+          ++dc.nTPC[leg];
+          dc.nTPCA[leg] += cc.sector < 18;
+          dc.nTPCRow63[leg] += cc.row >= 63;
+          dc.nTPCRow97[leg] += cc.row >= 97;
+          dc.nTPCRow127[leg] += cc.row >= 127;
+        }
+      }
+    }
+    for (const auto& c : cosm.clITS) {
+      ++dc.nITS[c.leg != 0];
+    }
+    for (const auto& c : cosm.trdTracklets) {
+      ++dc.nTRD[c.leg != 0];
+    }
+    for (const auto& c : cosm.clTOF) {
+      ++dc.nTOF[c.leg != 0];
+    }
+    dc.valid = true;
+  }
   TrackD refUp = convertTrack<double>(srcTrack);
   refUp.setPID(o2::track::PID::Muon, true);
   if (mFieldOFF && mParams->meanPtB0Cosm > 0.) {
@@ -718,6 +770,7 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
   resTrack.info = std::move(frames[1]);
   resTrack.info.insert(resTrack.info.end(), frames[0].begin(), frames[0].end());
   resTrack.invertAt = nTop;
+  mDbgCosmic.nPntTop = nTop;
   resTrack.kfFit.chi2 = 0.f;
   if (!fitCosmicLegs(resTrack, refDown, nTop, nTot, why)) {
     return reject(why.c_str());
@@ -2031,6 +2084,7 @@ void AlignmentSpec::writeDbgTrack(const Track& resTrack, bool composed, bool acc
   dt.firstTForbit = mTimeInfo.firstTForbit;
   dt.runNumber = mTimeInfo.runNumber;
   dt.points = std::move(dbgPoints);
+  dt.cosm = mDbgCosmic;
   (*mDBGOut) << "gbltrack"
              << "t=" << dt
              << "\n";
