@@ -132,11 +132,12 @@ struct SuperCluster {
   explicit SuperCluster(const SelectedCluster& c) : sector(c.sector), firstRow(c.row) { add(c); }
   void add(const SelectedCluster& c)
   {
-    sumX += c.qTot * c.x;
-    sumY += c.qTot * c.y;
-    sumZ += c.qTot * c.z;
-    sumRow += c.qTot * c.row;
-    charge += c.qTot;
+    const float w = c.qTot > 0.f ? c.qTot : 1.f; // clusters stored w/o the charge: equal weights instead of a NaN position
+    sumX += w * c.x;
+    sumY += w * c.y;
+    sumZ += w * c.z;
+    sumRow += w * c.row;
+    charge += w;
     state |= c.state;
     ++nClusters;
   }
@@ -404,9 +405,9 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
   });
   if (params.verbose > 1) {
     const auto& all = leg == 0 ? cosm.clTPCBottom : cosm.clTPCTop;
-    LOGP(info, "Cosmic TPC leg {}: {} clusters in the input, {} selected, {} used; time {} mus, 1st selected: sector {} row {} x {} y {} z {}; ref: {}", leg, all.size(),
+    LOGP(info, "Cosmic TPC leg {}: {} clusters in the input, {} selected, {} used; time {} mus, 1st selected: sector {} row {} x {} y {} z {} qTot {}; ref: {}", leg, all.size(),
          selected.size(), nClUsed, timeMUS, selected.empty() ? -1 : selected[0].sector, selected.empty() ? -1 : selected[0].row, selected.empty() ? 0.f : selected[0].x,
-         selected.empty() ? 0.f : selected[0].y, selected.empty() ? 0.f : selected[0].z, ref.asString());
+         selected.empty() ? 0.f : selected[0].y, selected.empty() ? 0.f : selected[0].z, selected.empty() ? 0.f : selected[0].qTot, ref.asString());
   }
   return nClUsed;
 }
