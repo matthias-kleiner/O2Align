@@ -291,6 +291,7 @@ class AlignmentSpec final : public Task
   bool fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState = nullptr);
   void cleanCosmicITS(const TrackD& refDown, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed);
   bool cleanCosmicTPC(Track& resTrack, const TrackD& refDown, const o2::dataformats::TrackCosmicsExtended& cosm, std::string& why);
+  int mLastFailedPropPoint{-1}; // fillGBLPoints: slot of Track::info the failed step was going to
   uint64_t mCosmicCounter{0}; // cosmics which reached the TPC cleaning: id in the "tpccl" debug tree
   bool setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
   bool selectStaticTPCMap();
@@ -1049,18 +1050,41 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
 // Then the legs are refitted. With the debug output on, every TPC cluster, kept or dropped, goes to the "tpccl" tree.
 bool AlignmentSpec::cleanCosmicTPC(Track& resTrack, const TrackD& refDown, const o2::dataformats::TrackCosmicsExtended& cosm, std::string& why)
 {
-  const int nTot = static_cast<int>(resTrack.info.size()), nTop = resTrack.invertAt;
   const uint64_t cosmicID = mCosmicCounter++;
   std::vector<gbl::GblPoint> points;
   std::vector<Volume*> volumes;
   std::vector<DbgPoint> dbg;
   GBLStat stat; // not accounted
-  {
+  int nPropDrops = 0;
+  while (true) {
     Track trk = resTrack; // fillGBLPoints works on the track
-    if (!fillGBLPoints(trk, 0, false, points, volumes, stat, 0., &dbg)) {
+    mLastFailedPropPoint = -1;
+    if (fillGBLPoints(trk, 0, false, points, volumes, stat, 0., &dbg)) {
+      break;
+    }
+    // the step to a point failed: a TPC point which cannot be reached is dropped and the legs refitted, instead of losing the cosmic
+    const int iFail = mLastFailedPropPoint, nNow = static_cast<int>(resTrack.info.size()), nTopNow = resTrack.invertAt;
+    if (nPropDrops >= mParams->cosmTPCMaxPropDrops || iFail < 0 || iFail >= nNow || resTrack.info[iFail].detIdx != Detector::DetTPC) {
       return true; // not judged: the final GBL fit decides on this cosmic
     }
+    resTrack.info.erase(resTrack.info.begin() + iFail);
+    const int nTopNew = nTopNow - (iFail < nTopNow ? 1 : 0), nNew = nNow - 1;
+    if (nTopNew <= 0 || nTopNew >= nNew) {
+      why = "single leg after dropping the unreachable TPC points";
+      return false;
+    }
+    resTrack.invertAt = nTopNew;
+    mDbgCosmic.nPntTop = nTopNew;
+    resTrack.kfFit.chi2 = 0.f;
+    if (!fitCosmicLegs(resTrack, refDown, nTopNew, nNew, why)) {
+      return false;
+    }
+    ++nPropDrops;
   }
+  if (nPropDrops > 0 && mParams->verbose > 2) {
+    LOGP(info, "PROPDROP {} TPC points dropped to build the trajectory, {} points left", nPropDrops, resTrack.info.size());
+  }
+  const int nTot = static_cast<int>(resTrack.info.size()), nTop = resTrack.invertAt;
   gbl::GblTrajectory traj(points, !mFieldOFF);
   double chi2 = NAN, lostWeight = NAN;
   int ndf = 0;
@@ -2124,8 +2148,17 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
       // numerically calculates the transport jacobian from prev. point to this point
       // then we actually do the step to the point and accumulate the material
       auto stepTo = [&](double xTo, double alphaTo, float& msErrOut, bool invertFirst) -> bool {
+        const auto logFail = [&](const char* what) {
+          mLastFailedPropPoint = ip;
+          if (mParams->verbose > 2) {
+            LOGP(info, "PROPFAIL {} ip {} of {} invertAt {} invertFirst {} from x {:.3f} alpha {:.4f} y {:.3f} z {:.3f} snp {:.4f} tgl {:.4f} q2pt {:.5f} to x {:.3f} alpha {:.4f} det {} road {} yCl {:.3f} zCl {:.3f}", what, ip, np,
+                 resTrack.invertAt, invertFirst, wTrk.getX(), wTrk.getAlpha(), wTrk.getY(), wTrk.getZ(), wTrk.getSnp(), wTrk.getTgl(), wTrk.getQ2Pt(), xTo, alphaTo, int(frame.detIdx), frame.isTPCRoad(),
+                 frame.cluster.getY(), frame.cluster.getZ());
+          }
+        };
         if (!getTransportJacobian(wTrk, xTo, alphaTo, jacALICE, err, invertFirst)) {
           ++gblStat.failedProp;
+          logFail("jacobian");
           return false;
         }
         if (invertFirst) {
@@ -2136,6 +2169,7 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
         }
         if (!prop->propagateToAlphaX(wTrk, refLin, alphaTo, xTo, false, mParams->maxSnp, mParams->maxStep, 1, mParams->corrType, &lt)) {
           ++gblStat.failedProp;
+          logFail("step");
           return false;
         }
         msErrOut = its::math_utils::MSangle(wTrk.getPID().getMass(), wTrk.getP(), lt.getX2X0());
