@@ -649,25 +649,32 @@ int DetectorITS::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     double chi2{0.};
   };
   std::array<std::vector<Candidate>, 7> perLayer;
+  std::array<std::array<int, 5>, 2> nDrop{}; // [inner barrel, outer layers][stored, no pattern, edge-biased, not propagated, compared]: verbose printout
   for (size_t icl = 0; icl < cosm.clITS.size(); ++icl) {
     const auto& cl = cosm.clITS[icl];
     if (cl.leg != leg || (mCosmGoldActive && !mCosmGoldKeep[icl])) {
       continue;
     }
+    auto& drop = nDrop[cl.chipID < 432 ? 0 : 1];
+    ++drop[0];
     const o2::itsmft::CompClusterExt comp(cl.row, cl.col, cl.pattID, cl.chipID);
     const bool needsPattern = cl.pattID == o2::itsmft::CompCluster::InvalidPatternID || mITSDict->isGroup(cl.pattID);
     if (needsPattern && cl.pattEntry < 0) { // the pattern was not stored (no dictionary at the collection)
+      ++drop[1];
       continue;
     }
     auto pattIt = cosm.itsPatterns.begin() + (needsPattern ? cl.pattEntry : 0);
     auto frame = makeClusterPoint(comp, pattIt, findOverlaps);
     if (frame.cluster.getBits() && frame.cluster.isBitSet(DetectorITS::EdgeFlags::Biased)) {
+      ++drop[2];
       continue;
     }
     o2::track::TrackParCovD trk;
     if (!propagateCosmicRef(ref, frame.alpha, frame.x, trk)) {
+      ++drop[3];
       continue;
     }
+    ++drop[4];
     const double chi2 = trk.getPredictedChi2Quiet(frame.cluster);
     if (params.verbose > 2) { // every stored hit against the reference track: to size the roads / clean the hits
       LOGP(info, "ITSHIT leg {} lr {} chip {} flags {} rofBC {} x {:.4f} alpha {:.5f} y {:.5f} z {:.5f} dy {:.5f} dz {:.5f} trkSy2 {:.3e} trkSz2 {:.3e} clSy2 {:.3e} clSz2 {:.3e} chi2 {:.3f} snp {:.4f} tgl {:.4f} | tTOF {:.4f} tM {:.4f} tMe {:.4f} flagsC {} c2pol {:.3f} p {:.4f} ncl {}",
@@ -678,6 +685,10 @@ int DetectorITS::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     if (chi2 < params.cosmMaxChi2Cl) {
       perLayer[frame.lr].push_back({frame, chi2});
     }
+  }
+  if (params.verbose > 2 && (nDrop[0][0] || nDrop[1][0])) {
+    LOGP(info, "ITSLEG leg {} IB stored {} noPattern {} edgeBiased {} notPropagated {} compared {} OB stored {} noPattern {} edgeBiased {} notPropagated {} compared {} | flagsC {} c2pol {:.3f} p {:.4f} d0 {:.3f}",
+         leg, nDrop[0][0], nDrop[0][1], nDrop[0][2], nDrop[0][3], nDrop[0][4], nDrop[1][0], nDrop[1][1], nDrop[1][2], nDrop[1][3], nDrop[1][4], int(cosm.cosmic.getFlags()), cosm.chi2MatchPolished, ref.getP(), std::hypot(ref.getX(), ref.getY()));
   }
   int nLayers = 0;
   for (auto& cands : perLayer) {
