@@ -289,6 +289,7 @@ class AlignmentSpec final : public Task
   bool prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtended& cosm, Track& resTrack);
   bool collectCosmicFrames(const o2::dataformats::TrackCosmicsExtended& cosm, const std::array<const TrackD*, 2>& refLeg, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed, std::string& why);
   bool fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState = nullptr);
+  void cleanCosmicITS(const TrackD& refDown, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed);
   bool setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
   bool selectStaticTPCMap();
   void processResidualExt();
@@ -680,6 +681,194 @@ bool AlignmentSpec::fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nT
   return true;
 }
 
+// Cleaning of the ITS hits of a cosmic by the ITS itself. The hits of both legs are fitted as one track with the KF and GBL (with the
+// scattering in the ITS), and the hit with the largest unbiased (leave-one-out) residual is dropped while it is off by more than
+// cosmITSCleanMaxResid and cosmITSCleanNSigma of its errors: a reference extrapolated from the TPC is known to ~mm only, the ITS-only
+// fit to tens of um. The outer layers (one hit per layer, the best wrt the reference) are cleaned first. In the inner barrel the
+// hit closest to the reference is often a wrong one: every candidate found in the road is tried there, layer by layer inward, and the
+// one with the smallest unbiased residual wrt the fit of the cleaned hits is added if it is not an outlier. If fewer than
+// cosmITSCleanMinPerLeg hits per leg or cosmITSCleanMinPoints in total are left, or the fit fails, the cosmic goes on without the ITS.
+void AlignmentSpec::cleanCosmicITS(const TrackD& refDown, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed)
+{
+  using HitSet = std::array<std::vector<FrameInfoExt>, 2>; // bottom, top
+  struct Resid {
+    float absRes = 0.f; // the larger of the unbiased |dy|, |dz|
+    float excess = 0.f; // same, counting only the coordinates beyond cosmITSCleanNSigma errors
+  };
+  const auto sameHit = [](const FrameInfoExt& a, const FrameInfoExt& b) {
+    return a.x == b.x && a.alpha == b.alpha && a.cluster.getY() == b.cluster.getY() && a.cluster.getZ() == b.cluster.getZ();
+  };
+  const auto sortLegs = [](HitSet& set) {
+    for (auto& leg : set) {
+      std::stable_sort(leg.begin(), leg.end(), [](const auto& a, const auto& b) { return yLab(a) > yLab(b); });
+    }
+  };
+  const auto enough = [this](const HitSet& set) {
+    const int nTop = static_cast<int>(set[1].size()), nBot = static_cast<int>(set[0].size());
+    return nTop >= mParams->cosmITSCleanMinPerLeg && nBot >= mParams->cosmITSCleanMinPerLeg && nTop + nBot >= mParams->cosmITSCleanMinPoints;
+  };
+  GBLStat stat; // not accounted
+  // KF + GBL fit of the set (top leg first), the unbiased residuals of its hits in this order
+  const auto fitSet = [&](const HitSet& set, std::vector<Resid>& resid, std::string& why) {
+    const int nTop = static_cast<int>(set[1].size()), nTot = nTop + static_cast<int>(set[0].size());
+    Track trk;
+    trk.info = set[1];
+    trk.info.insert(trk.info.end(), set[0].begin(), set[0].end());
+    trk.invertAt = nTop;
+    trk.kfFit.chi2 = 0.f;
+    if (!fitCosmicLegs(trk, refDown, nTop, nTot, why)) {
+      return false;
+    }
+    std::vector<gbl::GblPoint> points;
+    std::vector<Volume*> volumes;
+    std::vector<DbgPoint> dbg;
+    if (!fillGBLPoints(trk, 0, false, points, volumes, stat, 0., &dbg)) {
+      why = "GBL points";
+      return false;
+    }
+    gbl::GblTrajectory traj(points, !mFieldOFF);
+    double chi2 = NAN, lostWeight = NAN;
+    int ndf = 0;
+    if (!traj.isValid() || traj.fit(chi2, ndf, lostWeight)) {
+      why = "GBL fit";
+      return false;
+    }
+    fillDbgFitResults(traj, 1, points, dbg);
+    resid.clear();
+    for (const auto& dp : dbg) { // the measured points are in the order of trk.info, scatterer-only points may be inserted between them
+      if (dp.det < 0) {
+        continue;
+      }
+      auto& r = resid.emplace_back();
+      if (dp.hasMeas() && dp.sigYUnb > 0.f && dp.sigZUnb > 0.f) {
+        const float ry = std::abs(dp.dyUnb), rz = std::abs(dp.dzUnb);
+        r.absRes = std::max(ry, rz);
+        r.excess = std::max(ry > mParams->cosmITSCleanNSigma * dp.sigYUnb ? ry : 0.f, rz > mParams->cosmITSCleanNSigma * dp.sigZUnb ? rz : 0.f);
+      }
+    }
+    if (static_cast<int>(resid.size()) != nTot) {
+      why = "GBL points out of sync";
+      return false;
+    }
+    return true;
+  };
+  // drop the worst outlier and refit until there is none; false if the set gets too small or a fit fails
+  int nDropped = 0;
+  float worstLeft = 0.f;
+  const auto clean = [&](HitSet& set, std::string& why) {
+    std::vector<Resid> resid;
+    while (true) {
+      if (!enough(set)) {
+        why = "too few hits";
+        return false;
+      }
+      if (!fitSet(set, resid, why)) {
+        return false;
+      }
+      const auto worst = std::max_element(resid.begin(), resid.end(), [](const auto& a, const auto& b) { return a.excess < b.excess; });
+      if (worst->excess < mParams->cosmITSCleanMaxResid) {
+        worstLeft = worst->excess;
+        return true;
+      }
+      const int iWorst = static_cast<int>(worst - resid.begin()), nTop = static_cast<int>(set[1].size());
+      if (iWorst < nTop) {
+        set[1].erase(set[1].begin() + iWorst);
+      } else {
+        set[0].erase(set[0].begin() + (iWorst - nTop));
+      }
+      ++nDropped;
+    }
+  };
+
+  HitSet best, outer; // the best hit of each layer as provided by the detector; its outer layers
+  for (int leg = 0; leg < 2; ++leg) {
+    for (const auto& frame : frames[leg]) {
+      if (frame.detIdx == Detector::DetITS) {
+        best[leg].push_back(frame);
+        if (frame.lr >= 3) {
+          outer[leg].push_back(frame);
+        }
+      }
+    }
+  }
+  sortLegs(best);
+  sortLegs(outer);
+  const int nBefore = static_cast<int>(best[0].size() + best[1].size());
+  int nIBTried = 0, nIBAdded = 0;
+  std::string why;
+  HitSet its;
+  bool ok = false;
+  if (mITS && enough(outer) && clean(outer, why)) {
+    // the inner barrel: per leg and layer the candidate which fits the cleaned hits best, from layer 2 inward
+    its = outer;
+    std::vector<Resid> resid;
+    for (int lr = 2; lr >= 0; --lr) {
+      for (int leg = 0; leg < 2; ++leg) {
+        const FrameInfoExt* chosen = nullptr;
+        float chosenRes = 0.f;
+        std::vector<std::array<float, 2>> tried; // unbiased residual and its excess of every candidate: printout
+        for (const auto& cand : mITS->getCosmicCandidates(leg)) {
+          if (cand.lr != lr) {
+            continue;
+          }
+          ++nIBTried;
+          HitSet trial = its;
+          trial[leg].push_back(cand);
+          sortLegs(trial);
+          std::string whyTrial;
+          if (!fitSet(trial, resid, whyTrial)) {
+            continue;
+          }
+          const int iLeg = static_cast<int>(std::find_if(trial[leg].begin(), trial[leg].end(), [&](const auto& f) { return sameHit(f, cand); }) - trial[leg].begin());
+          const auto& r = resid[leg == 1 ? iLeg : static_cast<int>(trial[1].size()) + iLeg];
+          tried.push_back({r.absRes, r.excess});
+          if (r.excess < mParams->cosmITSCleanMaxResid && (!chosen || r.absRes < chosenRes)) {
+            chosen = &cand;
+            chosenRes = r.absRes;
+          }
+        }
+        std::sort(tried.begin(), tried.end());
+        if (chosen && mParams->cosmITSCleanIBAmbiguity > 0.f && tried.size() > 1 && tried[1][0] < mParams->cosmITSCleanIBAmbiguity * tried[0][0]) {
+          chosen = nullptr; // two candidates fit about equally well
+        }
+        if (mParams->verbose > 2 && !tried.empty()) {
+          LOGP(info, "ITSIB leg {} lr {} candidates {} best {:.5f} excess {:.5f} second {:.5f} chosen {} nSet {} p {:.4f} d0 {:.3f}", leg, lr, tried.size(), tried[0][0], tried[0][1],
+               tried.size() > 1 ? tried[1][0] : -1.f, chosen != nullptr, its[0].size() + its[1].size(), refDown.getP(), std::hypot(refDown.getX(), refDown.getY()));
+        }
+        if (chosen) {
+          its[leg].push_back(*chosen);
+          sortLegs(its);
+          ++nIBAdded;
+        }
+      }
+    }
+    ok = clean(its, why); // all together once more
+  } else {
+    // not enough outer-layer hits to stand alone: the best hits of all layers together
+    its = best;
+    nDropped = 0;
+    ok = clean(its, why);
+  }
+  const int nAfter = ok ? static_cast<int>(its[0].size() + its[1].size()) : 0;
+  if (mParams->verbose > 2) {
+    int nIB = 0;
+    for (const auto& leg : its) {
+      nIB += ok ? static_cast<int>(std::count_if(leg.begin(), leg.end(), [](const auto& f) { return f.lr < 3; })) : 0;
+    }
+    LOGP(info, "ITSCLEAN before {} after {} dropped {} ok {} why {} top {} bottom {} worstLeft {:.5f} p {:.4f} d0 {:.3f} ibTried {} ibAdded {} ibKept {}", nBefore, nAfter, nDropped, ok,
+         ok ? "-" : why, its[1].size(), its[0].size(), worstLeft, refDown.getP(), std::hypot(refDown.getX(), refDown.getY()), nIBTried, nIBAdded, nIB);
+  }
+  for (int leg = 0; leg < 2; ++leg) {
+    std::erase_if(frames[leg], [](const auto& frame) { return frame.detIdx == Detector::DetITS; });
+    if (ok) {
+      frames[leg].insert(frames[leg].end(), its[leg].begin(), its[leg].end());
+    }
+  }
+  if (!ok) {
+    contributed.reset(DetID::ITS);
+  }
+}
+
 // Let the detectors provide the points of the 2 legs of the cosmic and fit them with KF, as MatchCosmics::refitWinners does: a track
 // parametrisation cannot describe the motion in the direction opposite to that of the X axis of the tracking frame, which is the case
 // for the points of the top leg if the muon moves downward and vice versa. The reference track (upward, close to the beam line) is
@@ -700,15 +889,26 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
   if (cosm.duplicateOf >= 0) {
     return reject("duplicate");
   }
+  const auto tpcOcc = [](const auto& c) { // max of the occupancies before / after the cosmic, < 0 if unknown (not in the older versions of the input class)
+    if constexpr (requires { c.tpcOccBef; }) {
+      return (c.tpcOccBef < 0.f || c.tpcOccAft < 0.f) ? -1.f : std::max(c.tpcOccBef, c.tpcOccAft);
+    } else {
+      return -1.f;
+    }
+  }(cosm);
   if (mParams->cosmRequireTOFPair && (!cosm.hasTOFTime() || (cosm.scoreTOFReversed >= 0.f && cosm.scoreTOFReversed <= cosm.scoreTOFPair))) {
-    ++mCosmicsRejected[0];
-    return reject("no unambiguous TOF pair");
+    if (cosm.hasTOFTime() || !(mParams->cosmNoTOFMaxTPCOcc > 0.f && tpcOcc >= 0.f && tpcOcc < mParams->cosmNoTOFMaxTPCOcc &&
+          (mParams->cosmNoTOFMaxTimeErr <= 0.f || cosm.cosmic.getTimeMUS().getTimeStampError() < mParams->cosmNoTOFMaxTimeErr))) { // untimed cosmics are accepted at low occupancy
+      ++mCosmicsRejected[0];
+      return reject("no unambiguous TOF pair");
+    }
   }
   if (mParams->cosmMaxDTimeTOF > 0.f && cosm.hasTOFTime() && std::abs(cosm.timeTOFMUS - cosm.cosmic.getTimeMUS().getTimeStamp()) > mParams->cosmMaxDTimeTOF) {
     ++mCosmicsRejected[3];
     return reject("TOF time differs from the matcher's");
   }
-  if (mParams->cosmRejectNearBeam && cosm.cosmic.isNearBeam()) {
+  if (mParams->cosmRejectNearBeam && cosm.cosmic.isNearBeam() &&
+      !(mParams->cosmNearBeamMaxChi2Match > 0.f && cosm.chi2MatchPolished >= 0.f && cosm.chi2MatchPolished < mParams->cosmNearBeamMaxChi2Match)) {
     ++mCosmicsRejected[1];
     return reject("near-beam pair");
   }
@@ -786,6 +986,9 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
     if (!collectCosmicFrames(cosm, refs, frames, contributed, why)) {
       return reject(why.c_str());
     }
+    if (mParams->cosmITSCleanMaxResid > 0.f && contributed[DetID::ITS]) { // the ITS road hits cleaned by the ITS-only fit of both legs
+      cleanCosmicITS(refDown, frames, contributed);
+    }
     if (frames[0].empty() || frames[1].empty()) {
       return reject(fmt::format("single leg: {} bottom, {} top points", frames[0].size(), frames[1].size()).c_str());
     }
@@ -829,7 +1032,6 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
   return true;
 }
 
-// The TPC clusters of cosmics are transformed with the ideal map and the drift parameters of the TPC transformation used in the reconstruction
 // The static TPC correction map of the current TF (mTimeStamp) set to the TPC detector: TPCMapParams.cosmicCorrMap = one FT file (loaded
 // once), a ".txt" list "<tmin> <tmax> <FT file>" [ms] (the map of the window containing the TF time, loaded when the window changes), or
 // empty (the ideal transformation). false: the list has no window containing the TF time.

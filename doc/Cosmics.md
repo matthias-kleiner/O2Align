@@ -37,5 +37,18 @@ Energy loss is propagated with the default sign (along the parametrisation), not
 
 Off by default (`AlignParams`): `cosmRequireTOFPair`, `cosmRejectNearBeam`, `cosmMinP` [GeV], `cosmMaxDTimeTOF` [mus]
 (|TOF time - matcher's time|), `cosmTPCMaxZOverR` (only the TPC clusters with |z| < value * r are used: a correction map made of
-collision tracks is not constrained outside of their acceptance). The debug tree carries the selection variables of each cosmic
+collision tracks is not constrained outside of their acceptance), `cosmNoTOFMaxTPCOcc` (cosmics without a TOF pair accepted below this
+TPC occupancy, if the error of the matcher's time is below `cosmNoTOFMaxTimeErr`, i.e. the time comes from the crossing of the central electrode), `cosmNearBeamMaxChi2Match` (near-beam cosmics kept if their halves match: the others are mostly pairs of collision tracks). The debug tree carries the selection variables of each cosmic
 (`DbgTrack::cosm`, see [DebugInfo.md](DebugInfo.md)).
+
+## ITS hits of cosmics with the field on
+
+The straight-line pre-selection (`cosmiGoldOnly`) is applied for B = 0 only. With the field on: `cosmITSRoad` [cm] accepts the stored
+hits within this distance of the reference (the errors of a TPC-only reference are underestimated, the chi2 cut `cosmMaxChi2Cl` loses
+good hits), and `cosmITSCleanMaxResid` [cm] switches on the cleaning by the ITS itself (`AlignmentSpec::cleanCosmicITS`): KF + GBL fit
+of the ITS hits of both legs as one track, the hit with the largest unbiased residual is dropped while it exceeds this value and
+`cosmITSCleanNSigma` errors; fewer than `cosmITSCleanMinPerLeg` hits on a leg or `cosmITSCleanMinPoints` in total: the cosmic is used
+without the ITS. The outer layers are cleaned first; in the inner barrel every candidate found in the road is tried against the
+fit of the cleaned hits (layer 2 inward) and the one with the smallest unbiased residual is added if it is not an outlier and the next candidate is
+farther by the factor `cosmITSCleanIBAmbiguity`.
+`AlignParams.verbose=3` prints `ITSHIT` / `ITSLEG` / `ITSCLEAN` lines.

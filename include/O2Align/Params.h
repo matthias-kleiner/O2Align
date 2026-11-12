@@ -53,10 +53,19 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   // cosmics: selection of clean cosmics (all off by default)
   bool cosmRequireTOFPair = false; // a top-bottom TOF flight pair gave the cosmic its time (hasTOFTime()) and the same pair in the impossible order is not as good (scoreTOFReversed: an accidental coincidence otherwise)
   bool cosmRejectNearBeam = false; // reject the matcher's near-beam pairs (TrackCosmics::isNearBeam(): legs close to the beam line, mostly collision tracks)
+  float cosmNoTOFMaxTPCOcc = 0.f;      // with cosmRequireTOFPair: accept also the cosmics w/o a TOF pair if the TPC occupancy (max of tpcOccBef, tpcOccAft, clusters per orbit) is known and below this (<= 0: never)
+  float cosmNoTOFMaxTimeErr = 1.f;      // [mus] ... and only if the error of the matcher's time is below this: a cosmic crossing the central electrode gets its time from the two TPC sides (~0.3 mus), a one-side one has none (tens of mus, z unknown); <= 0: no cut
+  float cosmNearBeamMaxChi2Match = 0.f; // with cosmRejectNearBeam: keep the near-beam cosmics whose halves match at the beam line with chi2MatchPolished below this (<= 0: reject all): the rest are mostly pairs of collision tracks
   float cosmMaxDTimeTOF = 0.f;     // [mus] max |TOF time - matcher's time| of a TOF-timed cosmic (<= 0: no cut): the two disagree for one-side cosmics with a wrong pair
   float cosmTPCMaxZOverR = 0.f;    // cosmics: use only the TPC clusters with |z| < this * r (<= 0: all). The correction map is made of collision tracks, |z|/r > ~1 is outside of their acceptance
   float cosmMinP = 0.f;            // [GeV] min momentum of the cosmic's reference track, B on only (<= 0: no cut)
   // cosmics: "golden" selection of the ITS road hits (CosmicsITSClean.h, B=0 only)
+  float cosmITSRoad = 0.f;           // [cm] cosmics: accept the ITS hits within this distance (y and z) of the reference track instead of the cosmMaxChi2Cl cut (<= 0: chi2 cut). The errors of a TPC-only reference are underestimated
+  float cosmITSCleanMaxResid = 0.f;  // [cm] cosmics: ITS-only fit of both legs (KF + GBL), the hit with the largest unbiased residual is dropped while it exceeds this and cosmITSCleanNSigma errors (<= 0: no cleaning)
+  float cosmITSCleanNSigma = 5.f;    // see cosmITSCleanMaxResid
+  float cosmITSCleanIBAmbiguity = 3.f; // cleaning, inner barrel: the chosen candidate is used only if the next one is farther from the fit by this factor (<= 0: no check)
+  int cosmITSCleanMinPerLeg = 2;     // cleaning: min ITS points on each leg, otherwise the cosmic is used w/o the ITS
+  int cosmITSCleanMinPoints = 5;     // cleaning: min ITS points of both legs together
   bool cosmiGoldOnly = true;      // keep only the ITS hits on the straight line of the cosmic, requiring a clean cosmic (see below); false: all road hits
   bool cosmGoldRequireTOF = true; // golden cosmic must have a TOF time (hasTOFTime()): its road is then a single ROF
   float cosmGoldCut = 0.1f;       // golden: max distance [cm] of a hit from the OB straight line in its sensor plane
