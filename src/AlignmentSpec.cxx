@@ -678,15 +678,25 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
   if (cosm.duplicateOf >= 0) {
     return reject("duplicate");
   }
+  const auto tpcOcc = [](const auto& c) { // max of the occupancies before / after the cosmic, < 0 if unknown (not in the older versions of the input class)
+    if constexpr (requires { c.tpcOccBef; }) {
+      return (c.tpcOccBef < 0.f || c.tpcOccAft < 0.f) ? -1.f : std::max(c.tpcOccBef, c.tpcOccAft);
+    } else {
+      return -1.f;
+    }
+  }(cosm);
   if (mParams->cosmRequireTOFPair && (!cosm.hasTOFTime() || (cosm.scoreTOFReversed >= 0.f && cosm.scoreTOFReversed <= cosm.scoreTOFPair))) {
-    ++mCosmicsRejected[0];
-    return reject("no unambiguous TOF pair");
+    if (cosm.hasTOFTime() || !(mParams->cosmNoTOFMaxTPCOcc > 0.f && tpcOcc >= 0.f && tpcOcc < mParams->cosmNoTOFMaxTPCOcc)) { // untimed cosmics are accepted at low occupancy
+      ++mCosmicsRejected[0];
+      return reject("no unambiguous TOF pair");
+    }
   }
   if (mParams->cosmMaxDTimeTOF > 0.f && cosm.hasTOFTime() && std::abs(cosm.timeTOFMUS - cosm.cosmic.getTimeMUS().getTimeStamp()) > mParams->cosmMaxDTimeTOF) {
     ++mCosmicsRejected[3];
     return reject("TOF time differs from the matcher's");
   }
-  if (mParams->cosmRejectNearBeam && cosm.cosmic.isNearBeam()) {
+  if (mParams->cosmRejectNearBeam && cosm.cosmic.isNearBeam() &&
+      !(mParams->cosmNearBeamMaxChi2Match > 0.f && cosm.chi2MatchPolished >= 0.f && cosm.chi2MatchPolished < mParams->cosmNearBeamMaxChi2Match)) {
     ++mCosmicsRejected[1];
     return reject("near-beam pair");
   }
