@@ -48,12 +48,14 @@ bool Track::fitTrack(int frameStart, int frameStop, bool cropOnFailure, bool res
     refLin = &(trkRef = trFit);
   }
   float chi2 = 0.f;
+  failedFrame = -1;
   for (int i = frameStart; i != frameEnd; i += step) {
     const auto& frame = info[i];
     if (!frame.isValid()) { // invalid point
       continue;
     }
     if (!prop->propagateToAlphaX(trFit, refLin, frame.alpha, frame.x, false, params.maxSnp, params.maxStep, 1, params.corrType)) {
+      failedFrame = i;
       if (crop) {
         info.resize(frameStart);
       }
@@ -62,6 +64,7 @@ bool Track::fitTrack(int frameStart, int frameStop, bool cropOnFailure, bool res
     const auto& cluster = frame.cluster;
     chi2 += static_cast<float>(trFit.getPredictedChi2Quiet(cluster));
     if (!trFit.update(cluster)) {
+      failedFrame = i;
       if (crop) {
         info.resize(frameStart);
       }

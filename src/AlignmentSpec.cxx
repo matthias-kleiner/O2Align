@@ -289,6 +289,8 @@ class AlignmentSpec final : public Task
   bool prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtended& cosm, Track& resTrack);
   bool collectCosmicFrames(const o2::dataformats::TrackCosmicsExtended& cosm, const std::array<const TrackD*, 2>& refLeg, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed, std::string& why);
   bool fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState = nullptr);
+  bool fitCosmicLegsOnce(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState);
+  uint64_t mCosmicKFDrops{0}; // TPC points dropped by fitCosmicLegs
   void cleanCosmicITS(const TrackD& refDown, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed);
   bool cleanCosmicTPC(Track& resTrack, const TrackD& refDown, const o2::dataformats::TrackCosmicsExtended& cosm, std::string& why);
   int mLastFailedPropPoint{-1}; // fillGBLPoints: slot of Track::info the failed step was going to
@@ -605,6 +607,9 @@ void AlignmentSpec::processCosmicExt()
   LOGP(info, "Processing stats: {}", mProcessingStats.asString());
   LOGP(info, "Cosmics selection: rejected without an unambiguous TOF pair {}, near-beam {}, below the momentum cut {}, TOF time off the matcher's {}",
        mCosmicsRejected[0], mCosmicsRejected[1], mCosmicsRejected[2], mCosmicsRejected[3]);
+  if (mParams->cosmTPCMaxPropDrops > 0) {
+    LOGP(info, "Cosmics KFDROPS: {} TPC points dropped by the KF fit of the legs so far", mCosmicKFDrops);
+  }
   if (mTPC && !TPCMapParams::Instance().clusterBiasTable.empty()) {
     LOGP(info, "Cosmics TPC cluster bias: {}", mTPC->getClusterBiasStats());
   }
@@ -665,6 +670,38 @@ bool AlignmentSpec::collectCosmicFrames(const o2::dataformats::TrackCosmicsExten
 // KF fit of the ordered points of the cosmic (top leg first, then the bottom one starting at resTrack.invertAt = nTop), the result
 // is the state at info[0]. refDown is the reference in the downward parametrisation, used as the seed.
 bool AlignmentSpec::fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState)
+{
+  // A TPC point the fit cannot reach or use (large local angle: the points of a leg are ordered in the lab, not along the sector's
+  // x) is dropped and the fit repeated, up to cosmTPCMaxPropDrops times, instead of losing the cosmic
+  for (int nDrops = 0;; ++nDrops) {
+    if (fitCosmicLegsOnce(resTrack, refDown, nTop, nTot, why, bottomState)) {
+      return true;
+    }
+    const int iFail = resTrack.failedFrame;
+    if (nDrops >= mParams->cosmTPCMaxPropDrops || iFail < 0 || iFail >= nTot || resTrack.info[iFail].detIdx != Detector::DetTPC) {
+      if (mParams->verbose > 2) {
+        const bool valid = iFail >= 0 && iFail < nTot;
+        LOGP(info, "KFFAIL {} after {} drops at frame {} of {} (nTop {}) det {} x {:.2f} alpha {:.4f} y {:.2f} z {:.2f} road {} | track x {:.2f} alpha {:.4f} snp {:.4f} q2pt {:.5f}", why, nDrops, iFail, nTot, nTop,
+             valid ? int(resTrack.info[iFail].detIdx) : -9, valid ? resTrack.info[iFail].x : 0.f, valid ? resTrack.info[iFail].alpha : 0.f, valid ? resTrack.info[iFail].cluster.getY() : 0.f,
+             valid ? resTrack.info[iFail].cluster.getZ() : 0.f, valid ? resTrack.info[iFail].isTPCRoad() : false, resTrack.track.getX(), resTrack.track.getAlpha(), resTrack.track.getSnp(), resTrack.track.getQ2Pt());
+      }
+      return false;
+    }
+    resTrack.info.erase(resTrack.info.begin() + iFail);
+    nTop -= iFail < nTop ? 1 : 0;
+    --nTot;
+    if (nTop <= 0 || nTop >= nTot) {
+      why = "single leg after dropping the unreachable TPC points";
+      return false;
+    }
+    resTrack.invertAt = nTop;
+    mDbgCosmic.nPntTop = nTop;
+    resTrack.kfFit.chi2 = 0.f;
+    ++mCosmicKFDrops;
+  }
+}
+
+bool AlignmentSpec::fitCosmicLegsOnce(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState)
 {
   // the bottom leg: outward in the downward parametrisation, then back inward, to its innermost point
   resTrack.track = refDown;

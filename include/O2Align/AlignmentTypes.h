@@ -75,6 +75,7 @@ struct Track {
   FitInfo gblFit;                     // gbl fit information
   std::vector<Measurement> points;    // measurment point, at the moment filled in parallel to GBL points but not used (might be used in the future for validation/debug output)
   std::vector<FrameInfoExt> info;     // frame info, owned by the track (detectors append to it)
+  int failedFrame{-1};                // fitTrack: slot of `info` at which the last failed fit stopped (propagation or update), -1 if none
   int invertAt{-1};                   // cosmics: slot of `info` from which the track runs in the inverted (opposite direction) parametrisation, see AlignmentSpec::prepareCosmicTrack; <0: none
 
   /// KF refit over the frames in the inclusive [frameStart, frameStop] slot range of `info`,
