@@ -27,6 +27,16 @@ class SensorTOF final : public Volume
   void defineMatrixT2L() final;
 };
 
+/// A TOF plate (module along z, 0-4: C B A B C) of a supermodule: a fictitious volume between the supermodule and its strips
+/// (AlignParams.tofPlateLevel), no alignable entry in the geometry. Its frame has the orientation of the supermodule and the origin at
+/// the mean centre of its strips, so that its rigid-body DOFs move and rotate the plate as a whole.
+class VolumeTOFPlate final : public Volume
+{
+ public:
+  using Volume::Volume;
+  void defineMatrixL2G() final;
+};
+
 } // namespace o2::alignrs
 
 #endif

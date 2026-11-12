@@ -9,10 +9,12 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
+#include <TGeoManager.h>
 #include <TGeoMatrix.h>
 #include <TGeoPhysicalNode.h>
 #include <TMath.h>
 
+#include "Framework/Logger.h"
 #include "MathUtils/Utils.h"
 #include "O2Align/SensorTOF.h"
 #include "TOFBase/Geo.h"
@@ -23,6 +25,31 @@ namespace o2::alignrs
 void SensorTOF::defineMatrixL2G()
 {
   mL2G = *mPN->GetMatrix();
+}
+
+void VolumeTOFPlate::defineMatrixL2G()
+{
+  mL2G = mParent->getMatrixL2G(); // the supermodule (alignable entry), already defined: parents are finalised first
+  double centre[3] = {0., 0., 0.};
+  int n = 0;
+  forEachChild([&](const Volume* strip) {
+    auto* pne = gGeoManager->GetAlignableEntry(strip->getSymName().c_str());
+    auto* pn = pne ? (pne->GetPhysicalNode() ? pne->GetPhysicalNode() : gGeoManager->MakePhysicalNode(pne->GetTitle())) : nullptr;
+    if (!pn) {
+      LOGP(fatal, "No physical node for the TOF strip {}", strip->getSymName());
+    }
+    const double* t = pn->GetMatrix()->GetTranslation();
+    for (int k = 0; k < 3; ++k) {
+      centre[k] += t[k];
+    }
+    ++n;
+  });
+  if (n) {
+    for (auto& c : centre) {
+      c /= n;
+    }
+    mL2G.SetTranslation(centre);
+  }
 }
 
 void SensorTOF::defineMatrixT2L()

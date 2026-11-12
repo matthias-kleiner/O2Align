@@ -29,6 +29,17 @@
 namespace o2::alignrs
 {
 
+namespace
+{
+/// plate (module along z, 0-4) of the strip with the index 0-90 within its supermodule (19 / 19 / 15 / 19 / 19 strips)
+int plateOfStrip(int stripInSM)
+{
+  return stripInSM < 19 ? 0 : (stripInSM < 38 ? 1 : (stripInSM < 53 ? 2 : (stripInSM < 72 ? 3 : 4)));
+}
+} // namespace
+
+// envelope -> supermodules "TOF/smNN" -> strips "TOF/smNN/stripNN"; with AlignParams.tofPlateLevel a fictitious plate level
+// "TOF/smNN/plateP" (VolumeTOFPlate) between the supermodule and its strips
 Volume::Ptr DetectorTOF::buildHierarchy(Volume::SensorMapping& sensorMap)
 {
   uint32_t gLbl{0};
@@ -43,6 +54,7 @@ Volume::Ptr DetectorTOF::buildHierarchy(Volume::SensorMapping& sensorMap)
   for (int isect = 0; isect < o2::tof::Geo::NSECTORS; ++isect) {
     const auto symSector = std::format("TOF/sm{:02d}", isect);
     Volume* volSector = nullptr;
+    std::array<Volume*, o2::tof::Geo::NPLATES> volPlate{};
     for (int istr = 1; istr <= o2::tof::Geo::NSTRIPXSECTOR; ++istr) {
       const int sid = cnt++; // continuous strip number, must follow the numbering used at the geometry creation
       const auto symStrip = std::format("TOF/sm{:02d}/strip{:02d}", isect, istr);
@@ -55,8 +67,16 @@ Volume::Ptr DetectorTOF::buildHierarchy(Volume::SensorMapping& sensorMap)
         }
         volSector = root->addChild(symSector.c_str(), gLbl++, det, false);
       }
+      Volume* parent = volSector;
+      if (Params::Instance().tofPlateLevel) { // the fictitious plate volume between the supermodule and the strip
+        const int plate = plateOfStrip(istr - 1);
+        if (!volPlate[plate]) {
+          volPlate[plate] = volSector->addChild<VolumeTOFPlate>(std::format("{}/plate{}", symSector, plate).c_str(), Label(det, gLbl++, false), true);
+        }
+        parent = volPlate[plate];
+      }
       const Label lbl(det, sid, true);
-      auto* strip = volSector->addChild<SensorTOF>(symStrip.c_str(), lbl);
+      auto* strip = parent->addChild<SensorTOF>(symStrip.c_str(), lbl);
       strip->setSensorId(sid);
       sensorMap[lbl] = strip;
       mSensors[sid] = strip;
