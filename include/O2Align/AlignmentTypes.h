@@ -39,6 +39,7 @@ struct FrameInfoExt final {
   };
   enum {
     ITSOverlapBit = 0, // the point is on an ITS overlap
+    TPCRoadBit = 1,    // cosmics: the TPC cluster was found in the road, not attached to the leg
     NUserBits
   };
   int8_t lr = Invalid;            // detector-specific layer-like index, -1 = vtx, -2 = invalid point
@@ -55,6 +56,8 @@ struct FrameInfoExt final {
 
   bool isITSOverlap() const { return userBits & (0x1 << ITSOverlapBit); }
   void setITSOverlap() { userBits |= (0x1 << ITSOverlapBit); }
+  bool isTPCRoad() const { return userBits & (0x1 << TPCRoadBit); }
+  void setTPCRoad() { userBits |= (0x1 << TPCRoadBit); }
   ClassDefNV(FrameInfoExt, 3)
 };
 

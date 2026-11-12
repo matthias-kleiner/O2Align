@@ -2123,7 +2123,7 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
       dp.x = frame.x;
       dp.alpha = frame.alpha;
       dp.snp = wTrk.getSnp();
-      dp.flags = (addMeas ? DbgPoint::HasMeas : 0) | (hasScatterer ? DbgPoint::HasKink : 0) | (frame.isVertex() ? DbgPoint::IsVertex : 0) | (frame.isITSOverlap() ? DbgPoint::ITSOverlap : 0);
+      dp.flags = (addMeas ? DbgPoint::HasMeas : 0) | (hasScatterer ? DbgPoint::HasKink : 0) | (frame.isVertex() ? DbgPoint::IsVertex : 0) | (frame.isITSOverlap() ? DbgPoint::ITSOverlap : 0) | (frame.isTPCRoad() ? DbgPoint::TPCRoad : 0);
       if (addMeas) {
         dp.y = cluster.getY();
         dp.z = cluster.getZ();

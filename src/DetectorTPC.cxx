@@ -15,6 +15,7 @@
 #include <memory>
 
 #include <optional>
+#include <unordered_map>
 #include <sstream>
 #include "CommonConstants/LHCConstants.h"
 #include "DataFormatsGlobalTracking/RecoContainer.h"
@@ -108,6 +109,7 @@ struct SelectedCluster {
   float qTot{0.f};
   int16_t state{0};
   float x{0.f}, y{0.f}, z{0.f};
+  bool road{false}; // cosmics: found in the road, not attached to the leg
   /// Y of the cluster in the lab frame, used to order the clusters of a cosmic along its flight
   float yLab() const
   {
@@ -140,6 +142,7 @@ struct SuperCluster {
     sumRow += w * c.row;
     charge += w;
     state |= c.state;
+    road |= c.road;
     ++nClusters;
   }
   std::array<float, 3> position() const { return {static_cast<float>(sumX / charge), static_cast<float>(sumY / charge), static_cast<float>(sumZ / charge)}; }
@@ -148,6 +151,7 @@ struct SuperCluster {
 
   uint8_t sector{0}, firstRow{0};
   int16_t state{0};
+  bool road{false};
   int nClusters{0};
   double sumX{0.}, sumY{0.}, sumZ{0.}, sumRow{0.}, charge{0.};
 };
@@ -201,6 +205,9 @@ FrameInfoExt superClusterFrame(int detIdx, const SuperCluster& sc, const std::ar
   pnt.x = pnt3D[0];
   pnt.alpha = static_cast<float>(sc.alpha());
   pnt.cluster = o2::BaseCluster<float>(static_cast<int16_t>(sc.sector), pnt3D[0], pnt3D[1], pnt3D[2], cov[0], cov[2], cov[1]);
+  if (sc.road) {
+    pnt.setTPCRoad();
+  }
   return pnt;
 }
 } // namespace
@@ -447,10 +454,15 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     return true;
   };
   for (const auto& cc : leg == 0 ? cosm.clTPCBottom : cosm.clTPCTop) {
-    if (!cc.isAttached() || cc.row > params.maxTPCPadRow || !isClusterAccepted(cc.cl, cc.row)) {
+    const bool road = !cc.isAttached();
+    if (road && !(params.cosmTPCUseRoad > 0 && cc.isCorridor() && (params.cosmTPCUseRoad > 1 || !cc.isUsed()))) {
+      continue;
+    }
+    if (cc.row > params.maxTPCPadRow || !isClusterAccepted(cc.cl, cc.row)) {
       continue;
     }
     auto& sel = selected.emplace_back(SelectedCluster{.sector = cc.sector, .row = cc.row, .qTot = static_cast<float>(cc.cl.getQtot())});
+    sel.road = road;
     mCorrMaps->Transform(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
     if (params.cosmTPCMaxZOverR > 0.f && std::abs(sel.z) > params.cosmTPCMaxZOverR * std::hypot(sel.x, sel.y)) {
       selected.pop_back(); // outside of the acceptance of the tracks the correction map was made of
@@ -471,6 +483,49 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
         selected.pop_back();
       }
     }
+  }
+  if (params.cosmTPCUseRoad > 0) {
+    // road clusters: only on the pad rows w/o an attached cluster, per row the one closest to the reference track, inside the window
+    constexpr int NSectorsPerSide = o2::tpc::constants::MAXSECTOR / 2;
+    const auto rowKey = [](const SelectedCluster& c) { return static_cast<int>(c.sector) * 256 + c.row; };
+    std::unordered_map<int, std::pair<int, float>> best; // row -> (index, distance^2); index -1: the row has an attached cluster
+    for (int i = 0; i < static_cast<int>(selected.size()); ++i) {
+      if (!selected[i].road) {
+        best[rowKey(selected[i])] = {-1, 0.f};
+      }
+    }
+    for (int i = 0; i < static_cast<int>(selected.size()); ++i) {
+      const auto& sel = selected[i];
+      if (!sel.road) {
+        continue;
+      }
+      const auto it = best.find(rowKey(sel));
+      if (it != best.end() && it->second.first < 0) {
+        continue;
+      }
+      o2::track::TrackParCovD trk;
+      if (!propagateCosmicRef(ref, o2::math_utils::detail::sector2Angle<double>(sel.sector % NSectorsPerSide), sel.x, trk)) {
+        continue;
+      }
+      const float dy = sel.y - static_cast<float>(trk.getY()), dz = sel.z - static_cast<float>(trk.getZ());
+      if (std::abs(dy) > params.cosmTPCRoadMaxDY || std::abs(dz) > params.cosmTPCRoadMaxDZ) {
+        continue;
+      }
+      const float d2 = dy * dy + dz * dz;
+      if (it == best.end() || d2 < it->second.second) {
+        best[rowKey(sel)] = {i, d2};
+      }
+    }
+    std::vector<SelectedCluster> kept;
+    kept.reserve(selected.size());
+    for (int i = 0; i < static_cast<int>(selected.size()); ++i) {
+      if (!selected[i].road) {
+        kept.push_back(selected[i]);
+      } else if (const auto it = best.find(rowKey(selected[i])); it != best.end() && it->second.first == i) {
+        kept.push_back(selected[i]);
+      }
+    }
+    selected.swap(kept);
   }
   std::sort(selected.begin(), selected.end(), [](const auto& a, const auto& b) { return a.yLab() < b.yLab(); });
 

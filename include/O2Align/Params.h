@@ -57,6 +57,9 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   float cosmNoTOFMaxTimeErr = 1.f;      // [mus] ... and only if the error of the matcher's time is below this: a cosmic crossing the central electrode gets its time from the two TPC sides (~0.3 mus), a one-side one has none (tens of mus, z unknown); <= 0: no cut
   float cosmNearBeamMaxChi2Match = 0.f; // with cosmRejectNearBeam: keep the near-beam cosmics whose halves match at the beam line with chi2MatchPolished below this (<= 0: reject all): the rest are mostly pairs of collision tracks
   float cosmMaxDTimeTOF = 0.f;     // [mus] max |TOF time - matcher's time| of a TOF-timed cosmic (<= 0: no cut): the two disagree for one-side cosmics with a wrong pair
+  int cosmTPCUseRoad = 0;          // cosmics: 0 = only the TPC clusters attached to the legs; 1 = also the clusters of the collector's road not attached to any track; 2 = also those attached to another track (split pieces of the leg, but in collisions mostly other tracks). Only on pad rows w/o an attached cluster, the one closest to the reference
+  float cosmTPCRoadMaxDY = 0.5f;   // [cm] road clusters: max distance from the reference track in y
+  float cosmTPCRoadMaxDZ = 0.5f;   // [cm] ... and in z
   float cosmTPCMaxZOverR = 0.f;    // cosmics: use only the TPC clusters with |z| < this * r (<= 0: all). The correction map is made of collision tracks, |z|/r > ~1 is outside of their acceptance
   float cosmMinP = 0.f;            // [GeV] min momentum of the cosmic's reference track, B on only (<= 0: no cut)
   // cosmics: "golden" selection of the ITS road hits (CosmicsITSClean.h, B=0 only)
