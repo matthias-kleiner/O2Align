@@ -40,7 +40,8 @@ struct TPCMapParams : public o2::conf::ConfigurableParamHelper<TPCMapParams> {
   float injectScaleZ = 0.f;  // a z scale added to the clusters (dZ = s z, global z)
   // cosmic-ext input: a TPCFastTransform file (object "ccdb_object") applied to the TPC clusters of every cosmic as a STATIC map
   // (no derivative, no lumi scaling; the TF's vDrift / t0 of the input as for the ideal map), e.g. our coarse + fine map of one window;
-  // empty: Ruben's ideal transformation (no distortion correction)
+  // empty: Ruben's ideal transformation (no distortion correction). A file ending in ".txt" = a list of such maps, one line
+  // "<tmin> <tmax> <FT file>" per time window [ms, same clock as the TF time stamp]: per TF the map of its window, TFs outside all skipped
   std::string cosmicCorrMap = "";
   // per-cluster bias correction of the reco (cosmic-ext TPC clusters): ClusterBiasCorrection table (O2 tpc-fine-map-gbl-edgetree format);
   // per cluster the table's inward bias at the PREDICTED pad phase + edge part at the predicted distance d_pred [pads] from the nearest

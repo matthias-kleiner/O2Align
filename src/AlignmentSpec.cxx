@@ -18,6 +18,7 @@
 #include <random>
 #include <functional>
 #include <memory>
+#include <tuple>
 // #undef WITH_OPENMP // for testing without OpenMP
 #ifdef WITH_OPENMP
 #include <omp.h>
@@ -287,7 +288,7 @@ class AlignmentSpec final : public Task
   bool prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtended& cosm, Track& resTrack);
   bool collectCosmicFrames(const o2::dataformats::TrackCosmicsExtended& cosm, const std::array<const TrackD*, 2>& refLeg, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed, std::string& why);
   bool fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState = nullptr);
-  void setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
+  bool setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
 
   // write mp2tree.txt/mp2con.txt/mp2param.txt. statWeighted is forwarded to
   // Volume::writeRigidBodyConstraints: false for the immediate, data-independent write done from
@@ -419,6 +420,9 @@ class AlignmentSpec final : public Task
 
   o2::gpu::aligned_unique_buffer_ptr<o2::gpu::TPCFastTransformPOD> mCosmicTPCMap; // ideal TPC transformation for cosmics
   DbgCosmic mDbgCosmic;                       // debug record of the cosmic being processed (valid only while it is)
+  std::vector<std::tuple<long, long, std::string>> mCosmicMapWindows; // TPCMapParams.cosmicCorrMap given as a list: [tmin, tmax) [ms] -> FT file
+  int mCosmicMapWindow = -1;                                          // index of the window whose map is loaded
+  uint64_t mCosmicTFNoMap = 0;                                        // TFs skipped: no window of the list contains their time
   std::array<uint64_t, 4> mCosmicsRejected{}; // by the clean selection: no unambiguous TOF pair, near-beam, momentum, TOF vs matcher time (cosm* params)
   std::unique_ptr<o2::gpu::GPUParam> mTPCParam;                                   // TPC cluster error parametrization, field-dependent
   o2::tpc::VDriftHelper mTPCVDriftHelper{};                                       // drift calibration accounted by the correction maps
@@ -567,11 +571,12 @@ void AlignmentSpec::processCosmicExt()
   ++mProcessingStats.nTF;
   const auto cosmTracks = mRecoData->getCosmicExtTracks();
   LOGP(info, "Received {} cosmic tracks", cosmTracks.size());
-  if (mTPC) {
-    setCosmicTPCTransformation(mRecoData->getCosmicExtTFInfo());
-  }
   std::vector<gbl::GblTrajectory> gblTraj;
   Track resTrack;
+  if (mTPC && !setCosmicTPCTransformation(mRecoData->getCosmicExtTFInfo())) {
+    LOGP(info, "Cosmics: no TPC correction map for the TF time {} ms, its {} cosmics skipped ({} TFs so far)", mTimeStamp, cosmTracks.size(), mCosmicTFNoMap);
+    return;
+  }
   for (const auto& cosm : cosmTracks) {
     ++mProcessingStats.nTrc;
     if (!prepareCosmicTrack(cosm, resTrack)) {
@@ -814,27 +819,60 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
 }
 
 // The TPC clusters of cosmics are transformed with the ideal map and the drift parameters of the TPC transformation used in the reconstruction
-void AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo)
+bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo)
 {
-  if (!mCosmicTPCMap) {
-    if (const auto& mapFile = TPCMapParams::Instance().cosmicCorrMap; mapFile.empty()) {
+  const auto& mapPar = TPCMapParams::Instance().cosmicCorrMap;
+  auto loadMap = [this](const std::string& mapFile) { // a static correction map: correction on, no derivative, no lumi scaling
+    std::unique_ptr<TFile> file(TFile::Open(mapFile.c_str()));
+    std::unique_ptr<o2::gpu::TPCFastTransform> map(file ? file->Get<o2::gpu::TPCFastTransform>("ccdb_object") : nullptr);
+    if (!map) {
+      LOGP(fatal, "No TPCFastTransform ccdb_object in {}", mapFile);
+    }
+    map->rectifyAfterReadingFromFile();
+    o2::gpu::TPCFastTransformPOD::create(mCosmicTPCMap, *map);
+    mCosmicTPCMap->setApplyCorrectionOn();
+    mTPC->setCorrMaps(mCosmicTPCMap.get());
+    LOGP(info, "Cosmics: TPC clusters transformed with the static correction map {} (no derivative, no lumi scaling)", mapFile);
+  };
+  if (mapPar.ends_with(".txt")) { // a list, one line "<tmin> <tmax> <FT file>" per window [ms]: per TF the map of the window containing its time
+    if (mCosmicMapWindows.empty()) {
+      std::ifstream in(mapPar);
+      long tmin = 0, tmax = 0;
+      for (std::string file; in >> tmin >> tmax >> file;) {
+        mCosmicMapWindows.emplace_back(tmin, tmax, file);
+      }
+      if (mCosmicMapWindows.empty()) {
+        LOGP(fatal, "No \"<tmin> <tmax> <FT file>\" line in the map list {}", mapPar);
+      }
+      LOGP(info, "Cosmics: {} time windows with their own TPC correction map in {}", mCosmicMapWindows.size(), mapPar);
+    }
+    int iw = -1;
+    for (int i = 0; i < static_cast<int>(mCosmicMapWindows.size()); ++i) {
+      if (mTimeStamp >= std::get<0>(mCosmicMapWindows[i]) && mTimeStamp < std::get<1>(mCosmicMapWindows[i])) {
+        iw = i;
+        break;
+      }
+    }
+    if (iw < 0) {
+      ++mCosmicTFNoMap;
+      return false;
+    }
+    if (iw != mCosmicMapWindow) {
+      loadMap(std::get<2>(mCosmicMapWindows[iw]));
+      mCosmicMapWindow = iw;
+    }
+  } else if (!mCosmicTPCMap) {
+    if (mapPar.empty()) { // Ruben's ideal transformation
       std::unique_ptr<o2::gpu::TPCFastTransform> ideal(o2::tpc::TPCFastTransformHelperO2::instance()->create(0));
       o2::gpu::TPCFastTransformPOD::create(mCosmicTPCMap, *ideal);
-    } else { // a static correction map (TPCMapParams.cosmicCorrMap)
-      std::unique_ptr<TFile> file(TFile::Open(mapFile.c_str()));
-      std::unique_ptr<o2::gpu::TPCFastTransform> map(file ? file->Get<o2::gpu::TPCFastTransform>("ccdb_object") : nullptr);
-      if (!map) {
-        LOGP(fatal, "No TPCFastTransform ccdb_object in {}", mapFile);
-      }
-      map->rectifyAfterReadingFromFile();
-      o2::gpu::TPCFastTransformPOD::create(mCosmicTPCMap, *map);
-      mCosmicTPCMap->setApplyCorrectionOn();
-      LOGP(info, "Cosmics: TPC clusters transformed with the static correction map {} (no derivative, no lumi scaling)", mapFile);
+      mTPC->setCorrMaps(mCosmicTPCMap.get());
+    } else {
+      loadMap(mapPar);
     }
-    mTPC->setCorrMaps(mCosmicTPCMap.get());
   }
   mCosmicTPCMap->setVDrift(tfInfo.vDrift);
   mCosmicTPCMap->setT0(tfInfo.t0);
+  return true;
 }
 
 void AlignmentSpec::process() // collisions
