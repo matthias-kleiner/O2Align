@@ -27,6 +27,7 @@
 #include "ITSMFTBase/SegmentationAlpide.h"
 #include "ITStracking/IOUtils.h"
 #include "MathUtils/Utils.h"
+#include "O2Align/ResidualReader.h"
 #include "O2Align/DetectorITS.h"
 #include "O2Align/CosmicsITSClean.h"
 #include "DataFormatsITSMFT/DPLAlpideParam.h"
@@ -631,6 +632,41 @@ void DetectorITS::prepareCosmic(const o2::dataformats::TrackCosmicsExtended& cos
 // are grouped by layer. In every layer the cluster closest to the reference track is taken, if its chi2 is acceptable, and the best
 // one among the other candidates which look like the second hit of the overlap with it is added, as for the collision tracks.
 // The clusters biased by the vicinity of the chip edge are discarded, as for the collision tracks.
+// The ITS clusters of a residual track (ResidualReader): sensor = the stored channel, the point in the sensor's reference tracking frame
+// (GeometryTGeo); the files carry no cluster topology, hence the errors are AlignParams.residualITSSigma (+ extraClsErr*ITS). Appended
+// in the order of the layers, the fit of the seed continued outward over them.
+bool DetectorITS::prepareResidualTrack(const ResidualTrack& trk, Track& resTrack)
+{
+  const auto& params = Params::Instance();
+  auto geom = o2::its::GeometryTGeo::Instance();
+  std::vector<FrameInfoExt> frames;
+  for (const auto& p : trk.its) {
+    const int sensID = p.channel;
+    if (sensID < 0 || sensID >= geom->getNumberOfChips()) {
+      continue;
+    }
+    const int lay = geom->getLayer(sensID);
+    const float sig2Y = params.residualITSSigma * params.residualITSSigma + params.extraClsErrYITS[lay] * params.extraClsErrYITS[lay];
+    const float sig2Z = params.residualITSSigma * params.residualITSSigma + params.extraClsErrZITS[lay] * params.extraClsErrZITS[lay];
+    double alpha = geom->getSensorRefAlpha(sensID);
+    math_utils::bringToPMPid(alpha);
+    auto& frame = frames.emplace_back();
+    frame.detIdx = mDetIdx;
+    frame.lr = lay;
+    frame.label = Label(mDetIdx, sensID, true);
+    frame.x = geom->getSensorRefX(sensID);
+    frame.alpha = alpha;
+    frame.cluster = o2::BaseCluster<float>(sensID, frame.x, static_cast<float>(p.y), static_cast<float>(p.z), sig2Y, sig2Z, 0.f);
+  }
+  if (static_cast<int>(frames.size()) < params.minITSClsTrack) {
+    return false;
+  }
+  std::stable_sort(frames.begin(), frames.end(), [](const auto& a, const auto& b) { return a.lr < b.lr; });
+  const size_t nPointsIni = resTrack.info.size();
+  resTrack.info.insert(resTrack.info.end(), frames.begin(), frames.end());
+  return resTrack.continueFitOutward(static_cast<int>(nPointsIni));
+}
+
 int DetectorITS::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& cosm, int leg, const o2::track::TrackParCovD& ref, std::vector<FrameInfoExt>& frames)
 {
   const auto& params = Params::Instance();

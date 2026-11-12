@@ -53,6 +53,7 @@ class DetectorITS : public Detector
   bool prepareTrack(o2::globaltracking::RecoContainer* recoData, const GlobalIDSet& ids, Track& resTrack) final;
   void prepareCosmic(const o2::dataformats::TrackCosmicsExtended& cosm) final;
   int prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& cosm, int leg, const o2::track::TrackParCovD& ref, std::vector<FrameInfoExt>& frames) final;
+  bool prepareResidualTrack(const ResidualTrack& trk, Track& resTrack) final;
   int getMinCosmicMeasurements() const final;
 
   void setTopologyDictionaries(const o2::itsmft::TopologyDictionary* itsDict, const o2::its3::TopologyDictionary* its3Dict)

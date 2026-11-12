@@ -63,6 +63,19 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   int cosmGoldMinOBPerHalf = 1;   // golden: min number of kept OB hits on each half of the cosmic
   int cosmGoldROFWindow = 1;      // golden: kept hits within this many ROFs of the majority ROF (<0: no check)
 
+  // residual-ext (--track-sources residual-ext): collision tracks read from the TPC unbinned residuals (ResidualReader), the TPC clusters
+  // corrected with TPCMapParams.cosmicCorrMap (a static FT or the per-window list), as the cosmics
+  std::string residualFiles = "";    // o2tpc_residuals_*.root file or a text file with one per line
+  int residualTFStep = 1;            // every n-th TF of each file
+  int residualMaxTFPerFile = -1;     // max TFs processed per file (< 0: all)
+  int residualTrackStep = 1;         // every n-th track of a TF
+  bool residualValidatedOnly = true; // only the tracks validated by TrackInterpolation::validateTrack (filterFlag 0)
+  float residualMinPt = 0.f;         // [GeV] min pt of the ITS track (<= 0: no cut)
+  float residualITSSigma = 0.0005f;  // [cm] ITS cluster error (y and z) before extraClsErrY/ZITS: the files carry no cluster topology
+  float residualVertexSigmaXY = 0.f; // [cm] transverse error of the primary vertex point (<= 0: no vertex point; the files carry no covariance)
+  float residualVertexSigmaZ = 0.f;  // [cm] its z error (<= 0: residualVertexSigmaXY)
+  float residualTPCEdgePads = 0.f;   // drop the TPC clusters with a measured pad-plane y closer than this to the sector edge [pads] (global fits: the edge zone out)
+
   bool writeLocalAlignParams = true; // create output AlignParams in local convention.
 
   // ITS overlap handling

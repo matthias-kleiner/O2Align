@@ -53,6 +53,7 @@ class DetectorTPC final : public Detector
   void prepareData(o2::globaltracking::RecoContainer* recoData) final;
   bool prepareTrack(o2::globaltracking::RecoContainer* recoData, const GlobalIDSet& ids, Track& resTrack) final;
   int prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& cosm, int leg, const o2::track::TrackParCovD& ref, std::vector<FrameInfoExt>& frames) final;
+  bool prepareResidualTrack(const ResidualTrack& trk, Track& resTrack) final;
   int getMinCosmicMeasurements() const final;
 
   /// both must be provided by the caller before the 1st prepareTrack call

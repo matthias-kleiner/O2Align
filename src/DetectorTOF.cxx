@@ -18,6 +18,7 @@
 #include "DataFormatsTOF/Cluster.h"
 #include "Framework/Logger.h"
 #include "MathUtils/Utils.h"
+#include "O2Align/ResidualReader.h"
 #include "O2Align/DetectorTOF.h"
 #include "O2Align/Params.h"
 #include "DataFormatsGlobalTracking/TrackCosmicsExtended.h"
@@ -128,6 +129,35 @@ bool DetectorTOF::prepareTrack(o2::globaltracking::RecoContainer* /*recoData*/, 
   resTrack.info.push_back(pnt);
   // continue the fit of the seed prepared by the inner detectors outward, w/o resetting its cov.matrix
   return resTrack.continueFitOutward(static_cast<int>(nPointsIni));
+}
+
+// The TOF cluster of a residual track (ResidualReader, channel = main pad in its sector): the pad's position (as for the cosmics), pad
+// errors; the fit of the seed continued outward over it. Plates excluded by AlignParams.tofExcludePlates give no point.
+bool DetectorTOF::prepareResidualTrack(const ResidualTrack& trk, Track& resTrack)
+{
+  constexpr float SigY2 = o2::tof::Geo::XPAD * o2::tof::Geo::XPAD / 12.f;
+  constexpr float SigZ2 = o2::tof::Geo::ZPAD * o2::tof::Geo::ZPAD / 12.f;
+  for (const auto& p : trk.tof) {
+    if (p.sector < 0 || p.channel < 0) {
+      continue;
+    }
+    const auto pnt = makeClusterPoint(p.sector * o2::tof::Geo::NPADSXSECTOR + p.channel, SigY2, SigZ2, 0.f);
+    if (!pnt.isValid()) {
+      continue;
+    }
+    if (std::abs(pnt.cluster.getY() - p.y) > 1.f || std::abs(pnt.cluster.getZ() - p.z) > 1.f) { // the pad does not reproduce the stored point
+      static int nWarn = 0;
+      if (nWarn++ < 10) {
+        LOGP(warn, "TOF residual point sector {} pad {}: pad position y {} z {} vs stored y {} z {}", p.sector, p.channel, pnt.cluster.getY(),
+             pnt.cluster.getZ(), p.y, p.z);
+      }
+      continue;
+    }
+    const size_t nPointsIni = resTrack.info.size();
+    resTrack.info.push_back(pnt);
+    return resTrack.continueFitOutward(static_cast<int>(nPointsIni));
+  }
+  return false;
 }
 
 // The raw TOF clusters of the cosmic do not carry the errors: those of a pad are used. Among the clusters of the leg (the one matched to

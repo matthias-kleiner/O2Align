@@ -37,6 +37,7 @@ namespace o2::alignrs
 {
 struct Track;
 struct FrameInfoExt;
+struct ResidualTrack;
 
 using GTrackID = o2::dataformats::GlobalTrackID;
 using GlobalIDSet = std::array<GTrackID, GTrackID::NSources>;
@@ -72,6 +73,10 @@ class Detector
   virtual int prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& /*cosm*/, int /*leg*/, const o2::track::TrackParCovD& /*ref*/, std::vector<FrameInfoExt>& /*frames*/) { return 0; }
   /// minimum number of the measurements of both legs of a cosmic for this detector to contribute
   virtual int getMinCosmicMeasurements() const { return 1; }
+  /// residual-ext counterpart of prepareTrack: append the points of this detector of the collision track read from the unbinned
+  /// residuals (ResidualReader), in the outward direction, and continue the KF fit of resTrack.track outward over them (the seed
+  /// prepared by the inner detectors). false: no usable point or the fit failed (resTrack unchanged).
+  virtual bool prepareResidualTrack(const ResidualTrack& /*trk*/, Track& /*resTrack*/) { return false; }
 
   /// build the hierarchy of this detector and graft it under the common root of all detectors.
   /// Returns the top volume of the detector, nullptr if the detector has no volumes at all.

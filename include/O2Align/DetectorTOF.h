@@ -29,6 +29,7 @@ class DetectorTOF final : public Detector
   void prepareData(o2::globaltracking::RecoContainer* recoData) final;
   bool prepareTrack(o2::globaltracking::RecoContainer* recoData, const GlobalIDSet& ids, Track& resTrack) final;
   int prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& cosm, int leg, const o2::track::TrackParCovD& ref, std::vector<FrameInfoExt>& frames) final;
+  bool prepareResidualTrack(const ResidualTrack& trk, Track& resTrack) final;
 
   const std::vector<FrameInfoExt>& getPointsInfo() const { return mTOFPointsInfo; }
 

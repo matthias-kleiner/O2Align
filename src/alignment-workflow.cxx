@@ -35,7 +35,7 @@ void customize(std::vector<ConfigParamSpec>& workflowOptions)
 {
   std::vector<o2::framework::ConfigParamSpec> options{
     {"disable-mc", o2::framework::VariantType::Bool, false, {"enable MC propagation"}},
-    {"track-sources", VariantType::String, std::string{GID::ALL}, {"comma-separated list of track sources to use, cosmic-ext for TrackCosmicExtended"}},
+    {"track-sources", VariantType::String, std::string{GID::ALL}, {"comma-separated list of track sources to use, cosmic-ext for TrackCosmicExtended, residual-ext for the TPC unbinned residuals (AlignParams.residualFiles)"}},
     {"detectors", VariantType::String, "ITS", {"comma-separated list of detectors or their hyphen-separated combinations, e.g. ITS,ITS-TRD,TOF-ITS: the union defines the detectors in the alignment (clusters to load), the tracks must be built by exactly the detectors of one of the listed combinations"}},
     {"with-its3", VariantType::Bool, false, {"ITS3 alignment mode"}},
     {"output", VariantType::String, "", {"output steering"}},
@@ -57,6 +57,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfg)
   const GID::mask_t allowedSourcesClus = GID::getSourcesMask("ITS,TPC,TRD,TOF");
   const auto srcTracks = cfg.options().get<std::string>("track-sources");
   bool isCosmicExt = srcTracks == "cosmic-ext";
+  bool isResidualExt = srcTracks == "residual-ext";
   GID::mask_t dets;
   std::vector<DetID::mask_t> detCombinations;
   for (const auto& combo : o2::utils::Str::tokenize(cfg.options().get<std::string>("detectors"), ',')) {
@@ -84,7 +85,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfg)
     output.set(o2::alignrs::OutputOpt::ProcessData);
   }
   GID::mask_t srcTrc;
-  if (!isCosmicExt) { // the cosmic tracks are read as a whole
+  if (!isCosmicExt && !isResidualExt) { // the cosmic / residual tracks are read as a whole
     srcTrc = allowedSourcesTrc & GID::getSourcesMask(srcTracks);
   }
 
@@ -92,7 +93,9 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfg)
 
   bool requestCTPLumi = false;
 
-  if (output[o2::alignrs::OutputOpt::ProcessData]) {
+  if (output[o2::alignrs::OutputOpt::ProcessData] && isResidualExt) {
+    specs.emplace_back(o2::globaltracking::getNoInpDummyOutSpec(0)); // triggers the single run() reading the residual files
+  } else if (output[o2::alignrs::OutputOpt::ProcessData]) {
     if (!isCosmicExt) {
       if (dets[GID::TPC]) { // the TPC cluster transformation needs the scalers
         auto sclOpt = o2::tpc::CorrectionMapsOptions::parseGlobalOptions(cfg.options());
@@ -111,7 +114,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const& cfg)
     specs.emplace_back(o2::globaltracking::getNoInpDummyOutSpec(0));
   }
 
-  specs.emplace_back(o2::alignrs::getAlignmentSpec(srcTrc, dets, detCombinations, isCosmicExt, useMC, withITS3, requestCTPLumi, output, o2::itsmft::DPLAlpideParamInitializer::isITSStaggeringEnabled(cfg)));
+  specs.emplace_back(o2::alignrs::getAlignmentSpec(srcTrc, dets, detCombinations, isCosmicExt, isResidualExt, useMC, withITS3, requestCTPLumi, output, o2::itsmft::DPLAlpideParamInitializer::isITSStaggeringEnabled(cfg)));
 
   o2::raw::HBFUtilsInitializer hbfIni(cfg, specs);
   return std::move(specs);

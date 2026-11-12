@@ -86,6 +86,7 @@
 #include "O2Align/DetectorPVT.h"
 #include "O2Align/DetectorTPC.h"
 #include "O2Align/TPCMap.h"
+#include "O2Align/ResidualReader.h"
 #include "O2Align/DetectorTRD.h"
 #include "O2Align/DetectorTOF.h"
 
@@ -247,8 +248,8 @@ class AlignmentSpec final : public Task
   AlignmentSpec(AlignmentSpec&&) = delete;
   AlignmentSpec& operator=(const AlignmentSpec&) = delete;
   AlignmentSpec& operator=(AlignmentSpec&&) = delete;
-  AlignmentSpec(std::shared_ptr<DataRequest> dr, std::shared_ptr<o2::base::GRPGeomRequest> gr, GTrackID::mask_t src, DetID::mask_t dmask, std::vector<DetID::mask_t> detCombinations, bool cosmicsExt, bool useMC, bool withITS3, o2::alignrs::OutputEnum out)
-    : mDataRequest(dr), mGGCCDBRequest(gr), mTracksSrcMask(src), mDetCombinations(std::move(detCombinations)), mObligatoryDets(dmask), mCosmicsExt(cosmicsExt), mUseMC(useMC), mIsITS3(withITS3), mOutOpt(out)
+  AlignmentSpec(std::shared_ptr<DataRequest> dr, std::shared_ptr<o2::base::GRPGeomRequest> gr, GTrackID::mask_t src, DetID::mask_t dmask, std::vector<DetID::mask_t> detCombinations, bool cosmicsExt, bool residualExt, bool useMC, bool withITS3, o2::alignrs::OutputEnum out)
+    : mDataRequest(dr), mGGCCDBRequest(gr), mTracksSrcMask(src), mDetCombinations(std::move(detCombinations)), mObligatoryDets(dmask), mCosmicsExt(cosmicsExt), mResidualExt(residualExt), mUseMC(useMC), mIsITS3(withITS3), mOutOpt(out)
   {
     for (const auto& combination : mDetCombinations) { // the detectors present in every accepted combination
       mObligatoryDets &= combination;
@@ -289,6 +290,9 @@ class AlignmentSpec final : public Task
   bool collectCosmicFrames(const o2::dataformats::TrackCosmicsExtended& cosm, const std::array<const TrackD*, 2>& refLeg, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed, std::string& why);
   bool fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState = nullptr);
   bool setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
+  bool selectStaticTPCMap();
+  void processResidualExt();
+  bool prepareResidualTrack(const ResidualTrack& trk, bool useVertex, Track& resTrack);
 
   // write mp2tree.txt/mp2con.txt/mp2param.txt. statWeighted is forwarded to
   // Volume::writeRigidBodyConstraints: false for the immediate, data-independent write done from
@@ -440,6 +444,8 @@ class AlignmentSpec final : public Task
   std::vector<DetID::mask_t> mDetCombinations; // accepted sets of the detectors contributing to a track (empty: any)
   DetID::mask_t mObligatoryDets;               // detectors entering all mDetCombinations: a track is lost if any of them fails (all detectors if no combinations)
   bool mCosmicsExt{false};                     // read TrackCosmicsExtended instead of the collision data
+  bool mResidualExt{false};                    // read the collision tracks from the TPC unbinned residuals (AlignParams.residualFiles), no DPL data input
+  uint64_t mResidualTFNoMap = 0;               // residual-ext TFs skipped: no window of the static TPC map list contains their time
   std::vector<int> mTrackSources;
   int mNThreads{1};
   std::string mConfMacro{};                    // optional user macro configuring the detectors
@@ -551,6 +557,11 @@ void AlignmentSpec::executeConfigMacro()
 void AlignmentSpec::run(ProcessingContext& pc)
 {
   if (mOutOpt[o2::alignrs::OutputOpt::ProcessData]) { // produce mille data for pede input
+    if (mResidualExt) { // no DPL data input: the residual files are read here, all in this single call
+      updateTimeDependentParams(pc);
+      processResidualExt();
+      return;
+    }
     o2::globaltracking::RecoContainer recoData;
     mRecoData = &recoData;
     mRecoData->collectData(pc, *mDataRequest); // call this before updateTimeDependentParams() as some calib CCDB objects are fetched there
@@ -819,7 +830,10 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
 }
 
 // The TPC clusters of cosmics are transformed with the ideal map and the drift parameters of the TPC transformation used in the reconstruction
-bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo)
+// The static TPC correction map of the current TF (mTimeStamp) set to the TPC detector: TPCMapParams.cosmicCorrMap = one FT file (loaded
+// once), a ".txt" list "<tmin> <tmax> <FT file>" [ms] (the map of the window containing the TF time, loaded when the window changes), or
+// empty (the ideal transformation). false: the list has no window containing the TF time.
+bool AlignmentSpec::selectStaticTPCMap()
 {
   const auto& mapPar = TPCMapParams::Instance().cosmicCorrMap;
   auto loadMap = [this](const std::string& mapFile) { // a static correction map: correction on, no derivative, no lumi scaling
@@ -832,9 +846,9 @@ bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFI
     o2::gpu::TPCFastTransformPOD::create(mCosmicTPCMap, *map);
     mCosmicTPCMap->setApplyCorrectionOn();
     mTPC->setCorrMaps(mCosmicTPCMap.get());
-    LOGP(info, "Cosmics: TPC clusters transformed with the static correction map {} (no derivative, no lumi scaling)", mapFile);
+    LOGP(info, "TPC clusters transformed with the static correction map {} (no derivative, no lumi scaling)", mapFile);
   };
-  if (mapPar.ends_with(".txt")) { // a list, one line "<tmin> <tmax> <FT file>" per window [ms]: per TF the map of the window containing its time
+  if (mapPar.ends_with(".txt")) {
     if (mCosmicMapWindows.empty()) {
       std::ifstream in(mapPar);
       long tmin = 0, tmax = 0;
@@ -844,7 +858,7 @@ bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFI
       if (mCosmicMapWindows.empty()) {
         LOGP(fatal, "No \"<tmin> <tmax> <FT file>\" line in the map list {}", mapPar);
       }
-      LOGP(info, "Cosmics: {} time windows with their own TPC correction map in {}", mCosmicMapWindows.size(), mapPar);
+      LOGP(info, "{} time windows with their own TPC correction map in {}", mCosmicMapWindows.size(), mapPar);
     }
     int iw = -1;
     for (int i = 0; i < static_cast<int>(mCosmicMapWindows.size()); ++i) {
@@ -854,7 +868,6 @@ bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFI
       }
     }
     if (iw < 0) {
-      ++mCosmicTFNoMap;
       return false;
     }
     if (iw != mCosmicMapWindow) {
@@ -870,8 +883,134 @@ bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFI
       loadMap(mapPar);
     }
   }
+  return true;
+}
+
+// The cosmics' TPC transformation: the static map of the TF (selectStaticTPCMap) with the TF's drift calibration of the input
+bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo)
+{
+  if (!selectStaticTPCMap()) {
+    ++mCosmicTFNoMap;
+    return false;
+  }
   mCosmicTPCMap->setVDrift(tfInfo.vDrift);
   mCosmicTPCMap->setT0(tfInfo.t0);
+  return true;
+}
+
+// residual-ext: the collision tracks of the TPC unbinned residual files (AlignParams.residualFiles), every residualTFStep-th TF (at most
+// residualMaxTFPerFile per file) and every residualTrackStep-th track; per TF the static TPC map of its time (selectStaticTPCMap), per
+// track the points of the requested detectors fitted as a collision track (prepareResidualTrack), one single-track GBL trajectory
+// each, with the primary vertex point if residualVertexSigmaXY > 0 (and the mean vertex in the hierarchy: usePVConstraintMinTracks > 0).
+void AlignmentSpec::processResidualExt()
+{
+  const auto& par = *mParams;
+  if (!mTPC) {
+    LOGP(fatal, "residual-ext needs the TPC among the detectors");
+  }
+  const bool useVertex = par.residualVertexSigmaXY > 0.f;
+  if (useVertex && !(mPVT && mPVT->getTopVolume())) {
+    LOGP(fatal, "residual-ext with the vertex point (residualVertexSigmaXY > 0) needs the mean vertex: AlignParams.usePVConstraintMinTracks > 0");
+  }
+  const auto files = ResidualReader::inputFiles(par.residualFiles);
+  ResidualReader reader;
+  std::vector<ResidualTrack> tracks;
+  std::vector<gbl::GblTrajectory> gblTraj;
+  std::vector<Track> resTracks;
+  const double orbitResetMS = o2::base::GRPGeomHelper::instance().getOrbitResetTimeMUS() * 1e-3;
+  for (const auto& file : files) {
+    if (!reader.open(file)) {
+      continue;
+    }
+    long nDone = 0;
+    for (long entry = 0; entry < reader.getEntries(); entry += std::max(1, par.residualTFStep)) {
+      if (par.residualMaxTFPerFile >= 0 && nDone >= par.residualMaxTFPerFile) {
+        break;
+      }
+      if (!reader.readTimeFrame(entry, tracks) || tracks.empty()) {
+        continue;
+      }
+      ++nDone;
+      ++mProcessingStats.nTF;
+      mTimeInfo.firstTForbit = tracks.front().orbit; // for the debug records
+      mTimeInfo.tfCounter = static_cast<uint32_t>(entry);
+      mTimeStamp = static_cast<long>(orbitResetMS + tracks.front().orbit * o2::constants::lhc::LHCOrbitMUS * 1e-3);
+      if (!selectStaticTPCMap()) {
+        ++mResidualTFNoMap;
+        continue;
+      }
+      resTracks.clear();
+      for (size_t it = 0; it < tracks.size(); it += std::max(1, par.residualTrackStep)) {
+        const auto& trk = tracks[it];
+        ++mProcessingStats.nTrc;
+        if ((par.residualValidatedOnly && trk.filterFlag != 0) || (par.residualMinPt > 0.f && trk.itsOuter.getPt() < par.residualMinPt)) {
+          continue;
+        }
+        auto& resTrack = resTracks.emplace_back();
+        resTrack.gid = GTrackID(static_cast<uint32_t>(it), GTrackID::ITSTPC);
+        if (!prepareResidualTrack(trk, useVertex, resTrack)) {
+          resTracks.pop_back();
+        }
+      }
+      for (auto& resTrack : resTracks) {
+        const bool hasVertex = resTrack.info.front().isVertex();
+        if (buildGBLTrack(resTrack, resTrack.info.front().isValid() ? 0 : 1, gblTraj, 0.)) { // no mean-vertex prior
+          ++(hasVertex ? mProcessingStats.nTrcSinglePVAcc : mProcessingStats.nTrcNoPVAcc);
+        }
+      }
+      writeMilleRecords(gblTraj);
+      gblTraj.clear();
+    }
+    LOGP(info, "residual-ext {}: {} TFs processed; Processing stats: {}", file, nDone, mProcessingStats.asString());
+  }
+  if (mResidualTFNoMap) {
+    LOGP(info, "residual-ext: {} TFs without a TPC map (time outside the windows of the map list)", mResidualTFNoMap);
+  }
+  LOGP(info, "Processing stats: {}", mProcessingStats.asString());
+  mGBLStatSingle.print("Single-track");
+}
+
+// One residual track as a collision track: seed = the ITS track at its outer end (covariance reset), the detectors (radial order) append
+// their points outward continuing the fit, then the inward refit to the innermost point (or the slot of the vertex point), and the update
+// with the primary vertex (stored position, covariance from residualVertexSigmaXY / Z). false: rejected.
+bool AlignmentSpec::prepareResidualTrack(const ResidualTrack& trk, bool useVertex, Track& resTrack)
+{
+  const auto& par = *mParams;
+  resTrack.track = trk.itsOuter;
+  resTrack.track.setPID(o2::track::PID::Pion, true);
+  resetTrackCovariance(resTrack.track);
+  resTrack.kfFit.chi2 = 0.f;
+  const bool withVertex = useVertex && trk.hasVertex;
+  if (withVertex) {
+    resTrack.info.emplace_back(); // the slot of the vertex point
+  }
+  int nOK = 0;
+  DetID::mask_t contributed;
+  for (auto* det : mDetectors) { // in the order of the radial position
+    const int detID = det->getO2DetID();
+    if (detID < 0) {
+      continue;
+    }
+    if (det->prepareResidualTrack(trk, resTrack)) {
+      contributed.set(detID);
+      ++nOK;
+    } else if (mObligatoryDets[detID]) {
+      return false;
+    }
+  }
+  if (!nOK || !isAcceptedDetCombination(contributed) || !resTrack.track.isValid() ||
+      !resTrack.fitTrack(static_cast<int>(resTrack.info.size()) - 1, withVertex ? 1 : 0, false, true)) {
+    return false;
+  }
+  if (withVertex) { // the stored vertex (in its frame) to the lab; a failed update leaves the slot invalid: the track w/o the vertex
+    double sa = 0., ca = 0.;
+    o2::math_utils::sincosd(trk.vertex.alpha, sa, ca);
+    const double sigZ = par.residualVertexSigmaZ > 0.f ? par.residualVertexSigmaZ : par.residualVertexSigmaXY;
+    o2::dataformats::VertexBase vtx;
+    vtx.setXYZ(static_cast<float>(trk.vertex.x * ca - trk.vertex.y * sa), static_cast<float>(trk.vertex.x * sa + trk.vertex.y * ca), static_cast<float>(trk.vertex.z));
+    vtx.setCov(par.residualVertexSigmaXY * par.residualVertexSigmaXY, 0.f, par.residualVertexSigmaXY * par.residualVertexSigmaXY, 0.f, 0.f, sigZ * sigZ);
+    resTrack.updateWithVertex(vtx);
+  }
   return true;
 }
 
@@ -1160,7 +1299,7 @@ void AlignmentSpec::updateTimeDependentParams(ProcessingContext& pc)
     if (mTRD) {
       pc.inputs().get<o2::trd::CalVdriftExB*>("calvdexb"); // triggers finaliseCCDB
     }
-    if (mTPC && !mCosmicsExt) { // cosmics: the ideal map, set per TF
+    if (mTPC && !mCosmicsExt && !mResidualExt) { // cosmics, residual-ext: the static (or ideal) map, set per TF
       updateTPCCalibration(pc); // must precede initOnFirstTF: the drift calibration DOFs need the maps
     }
     if (mITS && mCosmicsExt) {
@@ -1226,7 +1365,7 @@ void AlignmentSpec::initOnFirstTF()
   if (mTRD) {
     mTRD->initCalib();
   }  
-  if (!mOutOpt[o2::alignrs::OutputOpt::MilleRes] && !mCosmicsExt) { // the vertexer is not used for cosmics
+  if (!mOutOpt[o2::alignrs::OutputOpt::MilleRes] && !mCosmicsExt && !mResidualExt) { // the vertexer is not used for cosmics / residual-ext
     initVertexer();
   }
 }
@@ -1623,7 +1762,7 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
     refLin = &(trkRef = wTrk);
   }
   // the MC index of the ITS part, needed only by the MC-based exact ITS3 misalignment simulation
-  const auto itsGID = resTrack.gid.isIndexSet() ? mRecoData->getITSContributorGID(resTrack.gid) : GTrackID{};
+  const auto itsGID = (resTrack.gid.isIndexSet() && mRecoData) ? mRecoData->getITSContributorGID(resTrack.gid) : GTrackID{}; // no RecoContainer for residual-ext
   const size_t iTrk = itsGID.isIndexSet() ? itsGID.getIndex() : 0;
   points.clear();
   points.reserve(np - ipStart);
@@ -2515,7 +2654,7 @@ void AlignmentSpec::finaliseCCDB(ConcreteDataMatcher& matcher, void* obj)
   }
 }
 
-DataProcessorSpec getAlignmentSpec(GTrackID::mask_t srcTracks, GTrackID::mask_t detectors, const std::vector<DetID::mask_t>& detCombinations, bool cosmicsExt, bool useMC, bool withITS3, bool requestCTPLumi, o2::alignrs::OutputEnum out, bool itsStag)
+DataProcessorSpec getAlignmentSpec(GTrackID::mask_t srcTracks, GTrackID::mask_t detectors, const std::vector<DetID::mask_t>& detCombinations, bool cosmicsExt, bool residualExt, bool useMC, bool withITS3, bool requestCTPLumi, o2::alignrs::OutputEnum out, bool itsStag)
 {
   auto dataRequest = std::make_shared<DataRequest>();
   dataRequest->setITSPerLayer(itsStag);
@@ -2523,7 +2662,10 @@ DataProcessorSpec getAlignmentSpec(GTrackID::mask_t srcTracks, GTrackID::mask_t 
   auto detMask = GTrackID::getSourcesDetectorsMask(detectors);
 
   if (out[o2::alignrs::OutputOpt::ProcessData]) {
-    if (cosmicsExt) {
+    if (residualExt) { // no data input: the residual files are read by the task, triggered once by the dummy
+      dataRequest->inputs.emplace_back("dummy", "GLO", "DUMMY_OUT", 0);
+      dataRequest->inputs.emplace_back("meanvtx", "GLO", "MEANVERTEX", 0, Lifetime::Condition, ccdbParamSpec("GLO/Calib/MeanVertex", {}, 1));
+    } else if (cosmicsExt) {
       dataRequest->requestCosmicExtTracks(useMC);
     } else {
       dataRequest->requestTracks(srcTracks, useMC);
@@ -2546,7 +2688,7 @@ DataProcessorSpec getAlignmentSpec(GTrackID::mask_t srcTracks, GTrackID::mask_t 
     if (cosmicsExt && detMask[DetID::ITS]) {
       dataRequest->inputs.emplace_back("cldictITS", "ITS", "CLUSDICT", 0, Lifetime::Condition, ccdbParamSpec("ITS/Calib/ClusterDictionary"));
     }
-    if (detMask[DetID::TPC] && !cosmicsExt) {
+    if (detMask[DetID::TPC] && !cosmicsExt && !residualExt) {
       // the cluster transformation: the maps are delivered per TF, the drift calibration they
       // account for is read from the CCDB just to be able to interpret the fitted drift correction
       o2::tpc::VDriftHelper::requestCCDBInputs(dataRequest->inputs);
@@ -2585,7 +2727,7 @@ DataProcessorSpec getAlignmentSpec(GTrackID::mask_t srcTracks, GTrackID::mask_t 
     .name = "barrel-alignment",
     .inputs = dataRequest->inputs,
     .outputs = {},
-    .algorithm = AlgorithmSpec{adaptFromTask<AlignmentSpec>(dataRequest, ggRequest, srcTracks, detMask, detCombinations, cosmicsExt, useMC, withITS3, out)},
+    .algorithm = AlgorithmSpec{adaptFromTask<AlignmentSpec>(dataRequest, ggRequest, srcTracks, detMask, detCombinations, cosmicsExt, residualExt, useMC, withITS3, out)},
     .options = opts};
 }
 } // namespace o2::alignrs

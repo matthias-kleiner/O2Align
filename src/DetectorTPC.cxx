@@ -31,6 +31,7 @@
 #include "MathUtils/Utils.h"
 #include "O2Align/AlignmentTypes.h"
 #include "O2Align/ClusterBiasCorrection.h"
+#include "O2Align/ResidualReader.h"
 #include "O2Align/DetectorTPC.h"
 #include "O2Align/Params.h"
 #include "O2Align/SensorTPC.h"
@@ -307,6 +308,91 @@ bool DetectorTPC::prepareTrack(o2::globaltracking::RecoContainer* recoData, cons
     return false;
   }
   resTrack.track = trkParam; // the seed is replaced only by a successful fit
+  resTrack.kfFit.chi2 += chi2;
+  return true;
+}
+
+// The TPC clusters of a residual track (ResidualReader): IDEAL positions (the residual file's reference drift), corrected here with the
+// static map set as mCorrMaps (TransformXYZ: as Transform does after the pad / time conversion), shifted by the TPCMap cluster shift if
+// any, merged to superclusters and fitted outward from the seed prepared by the inner detectors, as prepareTrack. Rows outside
+// [minTPCPadRow, maxTPCPadRow], the stack-edge rows (discardEdgePadrows), the clusters flagged by validateTrack and those measured
+// within max(discardEdgePadDepth, residualTPCEdgePads) pads from the sector edge (pad-plane y) are not used.
+bool DetectorTPC::prepareResidualTrack(const ResidualTrack& trk, Track& resTrack)
+{
+  const auto& params = Params::Instance();
+  if (!mCorrMaps || !mTPCParam) {
+    LOGP(fatal, "TPC correction maps ({}) and GPUParam ({}) must be set before processing TPC tracks", (void*)mCorrMaps, (void*)mTPCParam);
+  }
+  if (static_cast<int>(trk.tpc.size()) < params.minTPCClusters) {
+    return false;
+  }
+  std::vector<const ResidualTPCCluster*> clusters;
+  clusters.reserve(trk.tpc.size());
+  for (const auto& c : trk.tpc) {
+    clusters.push_back(&c);
+  }
+  std::stable_sort(clusters.begin(), clusters.end(), [](const auto* a, const auto* b) { return a->row < b->row; }); // outward
+  const float edgeCut = std::max(static_cast<float>(params.discardEdgePadDepth), params.residualTPCEdgePads);
+  auto prop = o2::base::PropagatorD::Instance();
+  auto trkParam = resTrack.track;
+  o2::track::TrackParD trkRef, *refLin = nullptr;
+  if (params.useStableRef) {
+    refLin = &(trkRef = trkParam);
+  }
+  float chi2 = 0.f;
+  const size_t nPointsIni = resTrack.info.size();
+  size_t iNext = 0;
+  auto nextCluster = [&]() -> std::optional<SelectedCluster> {
+    while (iNext < clusters.size()) {
+      const auto& c = *clusters[iNext++];
+      if (c.row > params.maxTPCPadRow) {
+        iNext = clusters.size();
+        break;
+      }
+      if (c.rejected || c.row < params.minTPCPadRow || (params.discardEdgePadrows > 0 && getDistanceToStackEdge(c.row) < params.discardEdgePadrows)) {
+        continue;
+      }
+      if (edgeCut > 0.f) {
+        const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(c.row);
+        if ((0.5 * o2::gpu::GPUTPCGeometry::NPads(c.row) * padWidth - std::abs(c.y)) / padWidth < edgeCut) {
+          continue;
+        }
+      }
+      SelectedCluster sel{.sector = static_cast<uint8_t>(c.sector), .row = static_cast<uint8_t>(c.row)};
+      sel.x = c.x;
+      sel.y = c.y;
+      sel.z = c.z;
+      mCorrMaps->TransformXYZ(c.sector, c.row, sel.x, sel.y, sel.z);
+      applyClusterShift(mClusterShift, sel);
+      return sel;
+    }
+    return std::nullopt;
+  };
+  int npntCut = params.minTPCClusters;
+  const int npoints = forEachSuperCluster(nextCluster, params.maxTPCRowsCombined, npntCut, [&](const SuperCluster& sc) {
+    const auto pnt3D = sc.position();
+    if (!prop->propagateToAlphaX(trkParam, refLin, sc.alpha(), pnt3D[0], false, params.maxSnp, params.maxStep, 1, params.corrType)) {
+      return false;
+    }
+    const auto cov = superClusterCov(*mTPCParam, sc, pnt3D[2], trkParam.getSnp(), trkParam.getTgl());
+    const std::array<double, 2> pos{pnt3D[1], pnt3D[2]};
+    const std::array<double, 3> covD{cov[0], cov[1], cov[2]};
+    chi2 += static_cast<float>(trkParam.getPredictedChi2Quiet(pos, covD));
+    if (!trkParam.update(pos, covD)) {
+      return false;
+    }
+    if (refLin) {
+      refLin->setY(pos[0]);
+      refLin->setZ(pos[1]);
+    }
+    resTrack.info.push_back(superClusterFrame(mDetIdx, sc, pnt3D, cov));
+    return true;
+  });
+  if (npoints < npntCut) {
+    resTrack.info.resize(nPointsIni);
+    return false;
+  }
+  resTrack.track = trkParam;
   resTrack.kfFit.chi2 += chi2;
   return true;
 }

@@ -25,6 +25,7 @@ set(O2_ALIGN_PUBLIC_LIBRARIES
     O2::TOFBase
     O2::GPUTracking
     O2::TPCCalibration
+    O2::SpacePoints
     O2::Framework
     O2::GlobalTrackingWorkflowReaders
     O2::GlobalTrackingWorkflowHelpers
@@ -56,6 +57,7 @@ add_library(O2Align SHARED
             src/WeakModes.cxx
             src/ProcessingStats.cxx
             src/TPCMap.cxx
+            src/ResidualReader.cxx
             src/AlignmentSpec.cxx)
 #add_library(O2::Align ALIAS O2Align)
 
