@@ -92,6 +92,7 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
 
   // TOF
   int minTOFClusters = 1; // min TOF clusters to accept track
+  int tofExcludePlates = 0; // bit mask of the TOF plates (modules along z, 0-4; 0 and 4 = the outer ones) whose clusters are not used, e.g. 17 = 0 and 4
 
   // propagation opt
   double maxSnp = 0.85;

@@ -65,13 +65,16 @@ Volume::Ptr DetectorTOF::buildHierarchy(Volume::SensorMapping& sensorMap)
 }
 
 // Point of a TOF cluster with the given main contributing channel and errors, in the tracking frame of its strip;
-// invalid if the strip is not in the hierarchy. The position is fully defined by the channel.
+// invalid if the strip is not in the hierarchy or its plate excluded (AlignParams.tofExcludePlates). The position is fully defined by the channel.
 FrameInfoExt DetectorTOF::makeClusterPoint(int channel, float sigY2, float sigZ2, float sigYZ) const
 {
   const auto& params = Params::Instance();
   FrameInfoExt pnt;
   int detInd[5] = {};
   o2::tof::Geo::getVolumeIndices(channel, detInd);
+  if ((params.tofExcludePlates >> detInd[1]) & 1) { // AlignParams.tofExcludePlates
+    return pnt;
+  }
   const int sector = channel / o2::tof::Geo::NPADSXSECTOR;
   const int sid = o2::tof::Geo::getStripNumberPerSM(detInd[1], detInd[2]) + sector * o2::tof::Geo::NSTRIPXSECTOR;
   if (sid < 0 || sid >= static_cast<int>(mSensors.size()) || !mSensors[sid]) {
