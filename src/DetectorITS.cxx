@@ -669,6 +669,12 @@ int DetectorITS::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
       continue;
     }
     const double chi2 = trk.getPredictedChi2Quiet(frame.cluster);
+    if (params.verbose > 2) { // every stored hit against the reference track: to size the roads / clean the hits
+      LOGP(info, "ITSHIT leg {} lr {} chip {} flags {} rofBC {} x {:.4f} alpha {:.5f} y {:.5f} z {:.5f} dy {:.5f} dz {:.5f} trkSy2 {:.3e} trkSz2 {:.3e} clSy2 {:.3e} clSz2 {:.3e} chi2 {:.3f} snp {:.4f} tgl {:.4f} | tTOF {:.4f} tM {:.4f} tMe {:.4f} flagsC {} c2pol {:.3f} p {:.4f} ncl {}",
+           leg, int(frame.lr), cl.chipID, int(cl.flags), cl.rofBC, frame.x, frame.alpha, frame.cluster.getY(), frame.cluster.getZ(), frame.cluster.getY() - trk.getY(), frame.cluster.getZ() - trk.getZ(),
+           trk.getSigmaY2(), trk.getSigmaZ2(), frame.cluster.getSigmaY2(), frame.cluster.getSigmaZ2(), chi2, trk.getSnp(), trk.getTgl(), cosm.timeTOFMUS, cosm.cosmic.getTimeMUS().getTimeStamp(),
+           cosm.cosmic.getTimeMUS().getTimeStampError(), int(cosm.cosmic.getFlags()), cosm.chi2MatchPolished, ref.getP(), cosm.clITS.size());
+    }
     if (chi2 < params.cosmMaxChi2Cl) {
       perLayer[frame.lr].push_back({frame, chi2});
     }
