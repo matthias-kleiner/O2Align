@@ -53,6 +53,8 @@ class DetectorITS : public Detector
   bool prepareTrack(o2::globaltracking::RecoContainer* recoData, const GlobalIDSet& ids, Track& resTrack) final;
   void prepareCosmic(const o2::dataformats::TrackCosmicsExtended& cosm) final;
   int prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& cosm, int leg, const o2::track::TrackParCovD& ref, std::vector<FrameInfoExt>& frames) final;
+  /// all the hits of the leg of the current cosmic found in the road by prepareCosmicLeg, not only the best one of each layer
+  const std::vector<FrameInfoExt>& getCosmicCandidates(int leg) const { return mCosmCandidates[leg]; }
   int getMinCosmicMeasurements() const final;
 
   void setTopologyDictionaries(const o2::itsmft::TopologyDictionary* itsDict, const o2::its3::TopologyDictionary* its3Dict)
@@ -95,6 +97,7 @@ class DetectorITS : public Detector
   std::array<int, o2::itsmft::MaxClusLayers> mITSLayerOffsets{};
   std::vector<FrameInfoExt> mITSPointsInfo;
   std::vector<char> mRequestedChip; // per chip: the track must be contributed by at least one of the flagged chips; empty = no requirement
+  std::array<std::vector<FrameInfoExt>, 2> mCosmCandidates; // per leg: all the hits of the current cosmic in the road (several per layer in the inner barrel)
   bool mCosmGoldActive{false};      // the golden selection is applied to the current cosmic
   std::vector<bool> mCosmGoldKeep;  // per clITS of the current cosmic: hit kept by the golden selection (all false if the cosmic is not golden)
 };

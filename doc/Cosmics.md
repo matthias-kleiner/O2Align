@@ -48,4 +48,6 @@ hits within this distance of the reference (the errors of a TPC-only reference a
 good hits), and `cosmITSCleanMaxResid` [cm] switches on the cleaning by the ITS itself (`AlignmentSpec::cleanCosmicITS`): KF + GBL fit
 of the ITS hits of both legs as one track, the hit with the largest unbiased residual is dropped while it exceeds this value and
 `cosmITSCleanNSigma` errors; fewer than `cosmITSCleanMinPerLeg` hits on a leg or `cosmITSCleanMinPoints` in total: the cosmic is used
-without the ITS. `AlignParams.verbose=3` prints `ITSHIT` / `ITSLEG` / `ITSCLEAN` lines.
+without the ITS. The outer layers are cleaned first; in the inner barrel every candidate found in the road is tried against the
+fit of the cleaned hits (layer 2 inward) and the one with the smallest unbiased residual is added if it is not an outlier.
+`AlignParams.verbose=3` prints `ITSHIT` / `ITSLEG` / `ITSCLEAN` lines.

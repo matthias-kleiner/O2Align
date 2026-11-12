@@ -649,6 +649,7 @@ int DetectorITS::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     double chi2{0.};
   };
   std::array<std::vector<Candidate>, 7> perLayer;
+  mCosmCandidates[leg].clear();
   std::array<std::array<int, 5>, 2> nDrop{}; // [inner barrel, outer layers][stored, no pattern, edge-biased, not propagated, compared]: verbose printout
   for (size_t icl = 0; icl < cosm.clITS.size(); ++icl) {
     const auto& cl = cosm.clITS[icl];
@@ -684,6 +685,7 @@ int DetectorITS::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     }
     const bool inRoad = params.cosmITSRoad > 0.f ? (std::abs(frame.cluster.getY() - trk.getY()) < params.cosmITSRoad && std::abs(frame.cluster.getZ() - trk.getZ()) < params.cosmITSRoad) : chi2 < params.cosmMaxChi2Cl;
     if (inRoad) {
+      mCosmCandidates[leg].push_back(frame);
       perLayer[frame.lr].push_back({frame, chi2});
     }
   }
