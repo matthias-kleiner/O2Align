@@ -614,7 +614,7 @@ std::string DetectorITS::reportDOFSummary() const
 void DetectorITS::prepareCosmic(const o2::dataformats::TrackCosmicsExtended& cosm)
 {
   const auto& params = Params::Instance();
-  mCosmGoldActive = params.cosmiGoldOnly;
+  mCosmGoldActive = params.cosmiGoldOnly && std::abs(o2::base::PropagatorD::Instance()->getNominalBz()) < 0.1; // the straight line is for B = 0 only
   if (!mCosmGoldActive) {
     return;
   }
@@ -682,7 +682,8 @@ int DetectorITS::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
            trk.getSigmaY2(), trk.getSigmaZ2(), frame.cluster.getSigmaY2(), frame.cluster.getSigmaZ2(), chi2, trk.getSnp(), trk.getTgl(), cosm.timeTOFMUS, cosm.cosmic.getTimeMUS().getTimeStamp(),
            cosm.cosmic.getTimeMUS().getTimeStampError(), int(cosm.cosmic.getFlags()), cosm.chi2MatchPolished, ref.getP(), cosm.clITS.size());
     }
-    if (chi2 < params.cosmMaxChi2Cl) {
+    const bool inRoad = params.cosmITSRoad > 0.f ? (std::abs(frame.cluster.getY() - trk.getY()) < params.cosmITSRoad && std::abs(frame.cluster.getZ() - trk.getZ()) < params.cosmITSRoad) : chi2 < params.cosmMaxChi2Cl;
+    if (inRoad) {
       perLayer[frame.lr].push_back({frame, chi2});
     }
   }

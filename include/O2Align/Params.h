@@ -60,6 +60,11 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   float cosmTPCMaxZOverR = 0.f;    // cosmics: use only the TPC clusters with |z| < this * r (<= 0: all). The correction map is made of collision tracks, |z|/r > ~1 is outside of their acceptance
   float cosmMinP = 0.f;            // [GeV] min momentum of the cosmic's reference track, B on only (<= 0: no cut)
   // cosmics: "golden" selection of the ITS road hits (CosmicsITSClean.h, B=0 only)
+  float cosmITSRoad = 0.f;           // [cm] cosmics: accept the ITS hits within this distance (y and z) of the reference track instead of the cosmMaxChi2Cl cut (<= 0: chi2 cut). The errors of a TPC-only reference are underestimated
+  float cosmITSCleanMaxResid = 0.f;  // [cm] cosmics: ITS-only fit of both legs (KF + GBL), the hit with the largest unbiased residual is dropped while it exceeds this and cosmITSCleanNSigma errors (<= 0: no cleaning)
+  float cosmITSCleanNSigma = 5.f;    // see cosmITSCleanMaxResid
+  int cosmITSCleanMinPerLeg = 2;     // cleaning: min ITS points on each leg, otherwise the cosmic is used w/o the ITS
+  int cosmITSCleanMinPoints = 5;     // cleaning: min ITS points of both legs together
   bool cosmiGoldOnly = true;      // keep only the ITS hits on the straight line of the cosmic, requiring a clean cosmic (see below); false: all road hits
   bool cosmGoldRequireTOF = true; // golden cosmic must have a TOF time (hasTOFTime()): its road is then a single ROF
   float cosmGoldCut = 0.1f;       // golden: max distance [cm] of a hit from the OB straight line in its sensor plane
