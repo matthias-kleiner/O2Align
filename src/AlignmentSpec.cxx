@@ -290,6 +290,8 @@ class AlignmentSpec final : public Task
   bool collectCosmicFrames(const o2::dataformats::TrackCosmicsExtended& cosm, const std::array<const TrackD*, 2>& refLeg, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed, std::string& why);
   bool fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState = nullptr);
   void cleanCosmicITS(const TrackD& refDown, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed);
+  bool cleanCosmicTPC(Track& resTrack, const TrackD& refDown, const o2::dataformats::TrackCosmicsExtended& cosm, std::string& why);
+  uint64_t mCosmicCounter{0}; // cosmics which reached the TPC cleaning: id in the "tpccl" debug tree
   bool setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
   bool selectStaticTPCMap();
   void processResidualExt();
@@ -1013,8 +1015,15 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
   // clusters as transformed here (not the reco's reference track, made with the production map): pass 1 without it (and without the
   // clusters measured near the sector edge), KF fit; pass 2 with it, the references = the fitted states of pass 1 (the bottom leg's
   // after its inward pass, the top leg's at the highest point: each propagated only within its own leg, no kink in between)
+  const auto cleanTPC = [&]() { // isolated TPC outliers dropped, the legs refitted
+    if (!(mTPC && mParams->cosmTPCCleanNSigma > 0.f)) {
+      return true;
+    }
+    std::string why;
+    return cleanCosmicTPC(resTrack, refDown, cosm, why) ? true : reject(why.c_str());
+  };
   if (!(mTPC && mTPC->hasClusterBias())) {
-    return collectAndFit(refLeg, nullptr);
+    return collectAndFit(refLeg, nullptr) && cleanTPC();
   }
   TrackD bottomState;
   mTPC->setClusterBiasPass(1);
@@ -1029,7 +1038,132 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
   if (!ok) {
     return false;
   }
-  return true;
+  return cleanTPC();
+}
+
+// Cleaning of the TPC clusters of a cosmic: the fitted track (all detectors) gets a GBL fit, and a TPC cluster is dropped if its unbiased
+// residual differs from the median of the unbiased residuals of its neighbours along the leg in the same sector (up to 3 on each side
+// within cosmTPCCleanMaxDX in x) by more than cosmTPCCleanNSigma of its errors, in y or z. The cut is local on purpose: a residual
+// distortion of the correction map displaces neighbouring clusters together (measured: a quarter of the clusters beyond 4 sigma from the
+// helix, most of them at the outer ends of the legs and in OROC3) and is what the map fit needs, a wrong or merged cluster stands alone.
+// Then the legs are refitted. With the debug output on, every TPC cluster, kept or dropped, goes to the "tpccl" tree.
+bool AlignmentSpec::cleanCosmicTPC(Track& resTrack, const TrackD& refDown, const o2::dataformats::TrackCosmicsExtended& cosm, std::string& why)
+{
+  const int nTot = static_cast<int>(resTrack.info.size()), nTop = resTrack.invertAt;
+  const uint64_t cosmicID = mCosmicCounter++;
+  std::vector<gbl::GblPoint> points;
+  std::vector<Volume*> volumes;
+  std::vector<DbgPoint> dbg;
+  GBLStat stat; // not accounted
+  {
+    Track trk = resTrack; // fillGBLPoints works on the track
+    if (!fillGBLPoints(trk, 0, false, points, volumes, stat, 0., &dbg)) {
+      return true; // not judged: the final GBL fit decides on this cosmic
+    }
+  }
+  gbl::GblTrajectory traj(points, !mFieldOFF);
+  double chi2 = NAN, lostWeight = NAN;
+  int ndf = 0;
+  if (!traj.isValid() || traj.fit(chi2, ndf, lostWeight)) {
+    return true;
+  }
+  fillDbgFitResults(traj, 1, points, dbg);
+  std::vector<const DbgPoint*> meas; // the points of resTrack.info, in its order (scatterer-only points skipped)
+  for (const auto& dp : dbg) {
+    if (dp.det >= 0) {
+      meas.push_back(&dp);
+    }
+  }
+  if (static_cast<int>(meas.size()) != nTot) {
+    return true;
+  }
+  const auto isTPC = [&](int i) { return resTrack.info[i].detIdx == Detector::DetTPC && meas[i]->hasMeas() && meas[i]->sigYUnb > 0.f && meas[i]->sigZUnb > 0.f; };
+  std::vector<int8_t> status(nTot, -1); // -1: not a TPC cluster, 0: kept, 1 / 2 / 3: dropped in y / z / both, 4: kept, too few neighbours
+  std::vector<float> locY(nTot, 0.f), locZ(nTot, 0.f);
+  std::vector<int8_t> nNeighb(nTot, 0);
+  int nDropped = 0, nTPC = 0;
+  for (int i = 0; i < nTot; ++i) {
+    if (!isTPC(i)) {
+      continue;
+    }
+    ++nTPC;
+    const bool top = i < nTop;
+    const auto& fi = resTrack.info[i];
+    std::vector<float> ny, nz;
+    for (int dir = -1; dir <= 1; dir += 2) {
+      int found = 0;
+      for (int j = i + dir; j >= (top ? 0 : nTop) && j < (top ? nTop : nTot) && found < 3; j += dir) {
+        if (!isTPC(j) || resTrack.info[j].alpha != fi.alpha) {
+          continue;
+        }
+        if (std::abs(resTrack.info[j].x - fi.x) > mParams->cosmTPCCleanMaxDX) {
+          break;
+        }
+        ny.push_back(meas[j]->dyUnb);
+        nz.push_back(meas[j]->dzUnb);
+        ++found;
+      }
+    }
+    nNeighb[i] = static_cast<int8_t>(ny.size());
+    if (static_cast<int>(ny.size()) < mParams->cosmTPCCleanMinNeighb) {
+      status[i] = 4;
+      locY[i] = meas[i]->dyUnb;
+      locZ[i] = meas[i]->dzUnb;
+      continue;
+    }
+    std::sort(ny.begin(), ny.end());
+    std::sort(nz.begin(), nz.end());
+    const auto median = [](const std::vector<float>& v) { return v.size() % 2 ? v[v.size() / 2] : 0.5f * (v[v.size() / 2 - 1] + v[v.size() / 2]); };
+    locY[i] = meas[i]->dyUnb - median(ny);
+    locZ[i] = meas[i]->dzUnb - median(nz);
+    const bool badY = std::abs(locY[i]) > mParams->cosmTPCCleanNSigma * meas[i]->sigYUnb, badZ = std::abs(locZ[i]) > mParams->cosmTPCCleanNSigma * meas[i]->sigZUnb;
+    status[i] = static_cast<int8_t>((badY ? 1 : 0) + (badZ ? 2 : 0));
+    nDropped += status[i] > 0;
+  }
+  if (mDBGOut && mParams->debugTracksFraction > 0.f && (mParams->debugTracksFraction >= 1.f || std::uniform_real_distribution<float>(0.f, 1.f)(mDbgRng) < mParams->debugTracksFraction)) {
+    const float p = static_cast<float>(refDown.getP()), tgl = static_cast<float>(refDown.getTgl());
+    const float occ = mDbgCosmic.valid ? std::max(mDbgCosmic.tpcOccBef, mDbgCosmic.tpcOccAft) : -1.f;
+    const int tier = cosm.cosmic.isNearBeam() ? 3 : (cosm.hasTOFTime() ? 1 : 2);
+    for (int i = 0; i < nTot; ++i) {
+      if (status[i] < 0) {
+        continue;
+      }
+      const auto& fi = resTrack.info[i];
+      const auto& dp = *meas[i];
+      const int st = status[i], leg = i < nTop ? 1 : 0, nnb = nNeighb[i], road = fi.isTPCRoad(), sector = dp.sens, stack = fi.lr, nDrop = nDropped, nCl = nTPC, idx = i;
+      const float x = fi.x, alpha = fi.alpha, y = fi.cluster.getY(), z = fi.cluster.getZ();
+      const float xLab = x * std::cos(alpha) - y * std::sin(alpha), yLabV = x * std::sin(alpha) + y * std::cos(alpha);
+      const float dy = dp.dyUnb, dz = dp.dzUnb, sy = dp.sigYUnb, sz = dp.sigZUnb, ly = locY[i], lz = locZ[i], snp = dp.snp, sigY = dp.sigY, sigZ = dp.sigZ;
+      const uint32_t tfc = mTimeInfo.tfCounter;
+      (*mDBGOut) << "tpccl"
+                 << "cosmic=" << cosmicID << "tf=" << tfc << "idx=" << idx << "leg=" << leg << "status=" << st << "road=" << road << "sector=" << sector << "stack=" << stack
+                 << "nNeighb=" << nnb << "x=" << x << "alpha=" << alpha << "y=" << y << "z=" << z << "xLab=" << xLab << "yLab=" << yLabV
+                 << "dy=" << dy << "dz=" << dz << "sigYUnb=" << sy << "sigZUnb=" << sz << "locY=" << ly << "locZ=" << lz << "sigY=" << sigY << "sigZ=" << sigZ << "snp=" << snp
+                 << "p=" << p << "tgl=" << tgl << "occ=" << occ << "tier=" << tier << "nCl=" << nCl << "nDropped=" << nDrop << "\n";
+    }
+  }
+  if (nDropped == 0) {
+    return true;
+  }
+  std::vector<FrameInfoExt> kept;
+  kept.reserve(nTot - nDropped);
+  int nTopKept = 0;
+  for (int i = 0; i < nTot; ++i) {
+    if (status[i] > 0 && status[i] < 4) {
+      continue;
+    }
+    kept.push_back(resTrack.info[i]);
+    nTopKept += i < nTop;
+  }
+  if (nTopKept == 0 || nTopKept == static_cast<int>(kept.size())) {
+    why = "single leg after the TPC cleaning";
+    return false;
+  }
+  resTrack.info = std::move(kept);
+  resTrack.invertAt = nTopKept;
+  mDbgCosmic.nPntTop = nTopKept;
+  resTrack.kfFit.chi2 = 0.f;
+  return fitCosmicLegs(resTrack, refDown, nTopKept, static_cast<int>(resTrack.info.size()), why);
 }
 
 // The static TPC correction map of the current TF (mTimeStamp) set to the TPC detector: TPCMapParams.cosmicCorrMap = one FT file (loaded
