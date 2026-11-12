@@ -63,6 +63,7 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   float cosmITSRoad = 0.f;           // [cm] cosmics: accept the ITS hits within this distance (y and z) of the reference track instead of the cosmMaxChi2Cl cut (<= 0: chi2 cut). The errors of a TPC-only reference are underestimated
   float cosmITSCleanMaxResid = 0.f;  // [cm] cosmics: ITS-only fit of both legs (KF + GBL), the hit with the largest unbiased residual is dropped while it exceeds this and cosmITSCleanNSigma errors (<= 0: no cleaning)
   float cosmITSCleanNSigma = 5.f;    // see cosmITSCleanMaxResid
+  float cosmITSCleanIBAmbiguity = 3.f; // cleaning, inner barrel: the chosen candidate is used only if the next one is farther from the fit by this factor (<= 0: no check)
   int cosmITSCleanMinPerLeg = 2;     // cleaning: min ITS points on each leg, otherwise the cosmic is used w/o the ITS
   int cosmITSCleanMinPoints = 5;     // cleaning: min ITS points of both legs together
   bool cosmiGoldOnly = true;      // keep only the ITS hits on the straight line of the cosmic, requiring a clean cosmic (see below); false: all road hits

@@ -784,6 +784,7 @@ void AlignmentSpec::cleanCosmicITS(const TrackD& refDown, std::array<std::vector
       for (int leg = 0; leg < 2; ++leg) {
         const FrameInfoExt* chosen = nullptr;
         float chosenRes = 0.f;
+        std::vector<std::array<float, 2>> tried; // unbiased residual and its excess of every candidate: printout
         for (const auto& cand : mITS->getCosmicCandidates(leg)) {
           if (cand.lr != lr) {
             continue;
@@ -798,10 +799,19 @@ void AlignmentSpec::cleanCosmicITS(const TrackD& refDown, std::array<std::vector
           }
           const int iLeg = static_cast<int>(std::find_if(trial[leg].begin(), trial[leg].end(), [&](const auto& f) { return sameHit(f, cand); }) - trial[leg].begin());
           const auto& r = resid[leg == 1 ? iLeg : static_cast<int>(trial[1].size()) + iLeg];
+          tried.push_back({r.absRes, r.excess});
           if (r.excess < mParams->cosmITSCleanMaxResid && (!chosen || r.absRes < chosenRes)) {
             chosen = &cand;
             chosenRes = r.absRes;
           }
+        }
+        std::sort(tried.begin(), tried.end());
+        if (chosen && mParams->cosmITSCleanIBAmbiguity > 0.f && tried.size() > 1 && tried[1][0] < mParams->cosmITSCleanIBAmbiguity * tried[0][0]) {
+          chosen = nullptr; // two candidates fit about equally well
+        }
+        if (mParams->verbose > 2 && !tried.empty()) {
+          LOGP(info, "ITSIB leg {} lr {} candidates {} best {:.5f} excess {:.5f} second {:.5f} chosen {} nSet {} p {:.4f} d0 {:.3f}", leg, lr, tried.size(), tried[0][0], tried[0][1],
+               tried.size() > 1 ? tried[1][0] : -1.f, chosen != nullptr, its[0].size() + its[1].size(), refDown.getP(), std::hypot(refDown.getX(), refDown.getY()));
         }
         if (chosen) {
           its[leg].push_back(*chosen);
