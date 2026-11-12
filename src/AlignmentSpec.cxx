@@ -2009,7 +2009,22 @@ bool AlignmentSpec::getTransportJacobian(const TrackD& track, double xTo, double
       xPlus(iPar) += h;
       xMinus(iPar) -= h;
       if (!propagate(xPlus) || !propagate(xMinus)) {
-        return false;
+        // the initial step may be too large for a track close to the limits of the propagation (snp +- 0.05 at |snp| ~ 0.85 leaves the
+        // maxSnp range after the rotation to the next sector): shrink it before giving up on the 1st extrapolation
+        bool ok = false;
+        if (iExt == 0) {
+          for (int iShrink = 0; iShrink < 12 && !ok; ++iShrink) {
+            h /= mParams->ridderShrinkFac;
+            xPlus = x0;
+            xMinus = x0;
+            xPlus(iPar) += h;
+            xMinus(iPar) -= h;
+            ok = propagate(xPlus) && propagate(xMinus);
+          }
+        }
+        if (!ok) {
+          return false;
+        }
       }
       cur.col(0) = (xPlus - xMinus) / (2.0 * h);
       if (!iExt) {
