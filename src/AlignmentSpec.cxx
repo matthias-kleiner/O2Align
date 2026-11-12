@@ -686,7 +686,8 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
     }
   }(cosm);
   if (mParams->cosmRequireTOFPair && (!cosm.hasTOFTime() || (cosm.scoreTOFReversed >= 0.f && cosm.scoreTOFReversed <= cosm.scoreTOFPair))) {
-    if (cosm.hasTOFTime() || !(mParams->cosmNoTOFMaxTPCOcc > 0.f && tpcOcc >= 0.f && tpcOcc < mParams->cosmNoTOFMaxTPCOcc)) { // untimed cosmics are accepted at low occupancy
+    if (cosm.hasTOFTime() || !(mParams->cosmNoTOFMaxTPCOcc > 0.f && tpcOcc >= 0.f && tpcOcc < mParams->cosmNoTOFMaxTPCOcc &&
+          (mParams->cosmNoTOFMaxTimeErr <= 0.f || cosm.cosmic.getTimeMUS().getTimeStampError() < mParams->cosmNoTOFMaxTimeErr))) { // untimed cosmics are accepted at low occupancy
       ++mCosmicsRejected[0];
       return reject("no unambiguous TOF pair");
     }

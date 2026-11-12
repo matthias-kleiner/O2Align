@@ -54,6 +54,7 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   bool cosmRequireTOFPair = false; // a top-bottom TOF flight pair gave the cosmic its time (hasTOFTime()) and the same pair in the impossible order is not as good (scoreTOFReversed: an accidental coincidence otherwise)
   bool cosmRejectNearBeam = false; // reject the matcher's near-beam pairs (TrackCosmics::isNearBeam(): legs close to the beam line, mostly collision tracks)
   float cosmNoTOFMaxTPCOcc = 0.f;      // with cosmRequireTOFPair: accept also the cosmics w/o a TOF pair if the TPC occupancy (max of tpcOccBef, tpcOccAft, clusters per orbit) is known and below this (<= 0: never)
+  float cosmNoTOFMaxTimeErr = 1.f;      // [mus] ... and only if the error of the matcher's time is below this: a cosmic crossing the central electrode gets its time from the two TPC sides (~0.3 mus), a one-side one has none (tens of mus, z unknown); <= 0: no cut
   float cosmNearBeamMaxChi2Match = 0.f; // with cosmRejectNearBeam: keep the near-beam cosmics whose halves match at the beam line with chi2MatchPolished below this (<= 0: reject all): the rest are mostly pairs of collision tracks
   float cosmMaxDTimeTOF = 0.f;     // [mus] max |TOF time - matcher's time| of a TOF-timed cosmic (<= 0: no cut): the two disagree for one-side cosmics with a wrong pair
   float cosmTPCMaxZOverR = 0.f;    // cosmics: use only the TPC clusters with |z| < this * r (<= 0: all). The correction map is made of collision tracks, |z|/r > ~1 is outside of their acceptance
