@@ -1868,6 +1868,7 @@ AlignmentSpec::PointGlobals AlignmentSpec::buildPointGlobals(const FrameInfoExt&
     // The Z "measurement" follows the track, whatever the alignment. The y still depends on the z of the measuring structure:
     // a TRD tracklet is the y at the pad-row centre of tilted pads, y_meas = y_hit - tilt * (z_hit - z_row) + tilt * (z_trk - z_row)
     // after the tilt correction, so a displacement that changes the z residual of the row by dz changes the y residual by -tilt * dz.
+    // Without the correction (track more than a pad length off) y does not depend on the row z: tiltDz = 0.
     globals.der.row(0) -= frame.tiltDz * globals.der.row(1);
     globals.der.row(1).setZero();
   }

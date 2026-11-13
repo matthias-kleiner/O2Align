@@ -50,7 +50,7 @@ struct FrameInfoExt final {
   float alpha{-999.f};            // rotation angle of the tracking frame
   o2::BaseCluster<float> cluster; // cluster info
   bool zFromTrack{false};         // the Z is not measured but taken from the track (TRD): no Z derivatives wrt the alignment
-  float tiltDz{0.f};              // zFromTrack: dy/dz of the measured y wrt the z of the measuring structure (TRD pad tilt)
+  float tiltDz{0.f};              // zFromTrack: dy/dz of the measured y wrt the z of the measuring structure (TRD pad tilt, 0 if not corrected)
   std::string asString() const;
   bool isValid() const { return lr > Invalid; }
   bool isVertex() const { return lr == Vertex; }

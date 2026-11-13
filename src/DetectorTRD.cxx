@@ -161,7 +161,7 @@ FrameInfoExt DetectorTRD::makeTrackletPoint(const o2::trd::Tracklet64& trackletR
   pnt.x = static_cast<float>(traXYZ[0]);
   pnt.alpha = static_cast<float>(alpSens);
   pnt.zFromTrack = true; // posZ is the track Z at the tracklet: it does not depend on the chamber position
-  pnt.tiltDz = static_cast<float>(tilt); // but the tilt-corrected y does, through the z of the pad row
+  pnt.tiltDz = tiltCorr != 0. ? static_cast<float>(tilt) : 0.f; // but the tilt-corrected y does, through the z of the pad row
   pnt.cluster = o2::BaseCluster<float>(static_cast<int16_t>(trkltDet), static_cast<float>(traXYZ[0]), static_cast<float>(posY), static_cast<float>(posZ),
                                        cov[0] + params.extraClsErrYTRD * params.extraClsErrYTRD,
                                        cov[2] + params.extraClsErrZTRD * params.extraClsErrZTRD, cov[1]);
