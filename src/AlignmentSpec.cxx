@@ -2235,6 +2235,8 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
   track::TrackLTIntegral lt;
   lt.setTimeNotNeeded();
   bool inverted = false; // cosmics: the parametrisation was inverted at resTrack.invertAt
+  float prevMsErr = 0.f;  // scattering angle on the previous GBL point (0: none)
+  TrackD prevTrk;         // track at the previous GBL point
   for (int ip = ipStart; ip < np; ++ip) {
     const auto& frame = resTrack.info[ip];
     if (!frame.isValid()) {
@@ -2365,6 +2367,22 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
         return false;
       }
       inverted |= invertHere;
+      // A cosmic whose bottom leg has a single point: the junction step is also the last step. It is not split (the gap is the
+      // interior of the detector) and the last point carries no scatterer, so its material goes on the last top-leg point,
+      // combined with the scatterer already there; with only the first point before it, it is lost and counted.
+      if (lastPoint && invertHere && msErr > mParams->minMS) {
+        if (points.size() > 1) {
+          const double msTot = std::sqrt(double(prevMsErr) * prevMsErr + double(msErr) * msErr);
+          points.back().addScatterer(Eigen::Vector2d::Zero(), getScatteringPrecision(prevTrk, msTot));
+          lt.clearFast();
+          if (dbgPoints) {
+            auto dpIt = std::find_if(dbgPoints->rbegin(), dbgPoints->rend(), [](const DbgPoint& dp) { return !dp.isSamePoint(); });
+            dpIt->flags |= DbgPoint::HasKink;
+          }
+        } else {
+          ++gblStat.lastMSLost;
+        }
+      }
     }
 
     // wTrk is now in the measurment frame
@@ -2463,6 +2481,8 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
     }
     if (!samePoint) {
       points.push_back(point);
+      prevMsErr = hasScatterer ? msErr : 0.f;
+      prevTrk = wTrk;
     }
     if (refLin) { // displace the reference to the measurement, as done in the KF refit
       refLin->setY(cluster.getY());
