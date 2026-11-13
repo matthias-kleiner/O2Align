@@ -2272,6 +2272,30 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
           dp.flags = msErr1 > mParams->minMS ? DbgPoint::HasKink : 0;
         }
         points.push_back(midPoint);
+      } else if (invertHere && mParams->cosmJunctionAtPCA) {
+        // the junction of the legs at the closest approach to the beam line: in the frame along the track direction the closest
+        // approach is at x ~ 0 (snp ~ 0 there, always reachable); the top half of the interior material goes on this point
+        const double alphaPCA = wTrk.getPhi();
+        TrackD tmp = wTrk;
+        if (tmp.rotateParam(alphaPCA) && tmp.getX() > 2.) {
+          float msErr1 = 0.f;
+          if (!stepTo(0., alphaPCA, msErr1, false)) {
+            return false;
+          }
+          gbl::GblPoint midPoint(jacGBL);
+          if (msErr1 > mParams->minMS) {
+            midPoint.addScatterer(Eigen::Vector2d::Zero(), getScatteringPrecision(wTrk, msErr1));
+            lt.clearFast();
+          }
+          if (dbgPoints) {
+            auto& dp = dbgPoints->emplace_back();
+            dp.x = wTrk.getX();
+            dp.alpha = wTrk.getAlpha();
+            dp.snp = wTrk.getSnp();
+            dp.flags = msErr1 > mParams->minMS ? DbgPoint::HasKink : 0;
+          }
+          points.push_back(midPoint);
+        }
       }
       if (!stepTo(frame.x, frame.alpha, msErr, invertHere)) {
         return false;
