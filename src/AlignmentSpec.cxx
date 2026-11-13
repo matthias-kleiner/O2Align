@@ -294,6 +294,10 @@ class AlignmentSpec final : public Task
   void cleanCosmicITS(const TrackD& refDown, std::array<std::vector<FrameInfoExt>, 2>& frames, DetID::mask_t& contributed);
   bool cleanCosmicTPC(Track& resTrack, const TrackD& refDown, const o2::dataformats::TrackCosmicsExtended& cosm, std::string& why);
   int mLastFailedPropPoint{-1}; // fillGBLPoints: slot of Track::info the failed step was going to
+  // fillGBLPoints: sign of the energy-loss correction of the steps (Propagator signCorr). 0 = from the direction of x (outward = loss),
+  // right for a track from the vertex; a cosmic is followed in the time order of the muon (top leg first) through both parametrisations,
+  // so every step is a loss (-1), also the steps of the top leg, which go inward in the upward parametrisation
+  int mGBLELossSign{0};
   uint64_t mCosmicCounter{0}; // cosmics which reached the TPC cleaning: id in the "tpccl" debug tree
   bool setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
   bool selectStaticTPCMap();
@@ -324,7 +328,7 @@ class AlignmentSpec final : public Task
   // into a single thin scatterer at `frame` (see Params::splitMSThreshold/splitMSStepMinDX).
   // Runs only a cheap, jacobian-free trial propagation; on true, xMid/alphaMid locate the split
   // point in the track's current (pre-step) tracking frame, radius being frame-independent.
-  bool needsSplitScatterer(const TrackD& track, const FrameInfoExt& frame, double& xMid, double& alphaMid) const;
+  bool needsSplitScatterer(const TrackD& track, const FrameInfoExt& frame, double& xMid, double& alphaMid, bool lastPoint = false, float* msFull = nullptr) const;
 
   // refit the primary vertex vtxOrig (reference ivref) with its contributors, each refitted with its
   // own ITS clusters independently of the tracks prepared for the alignment, the result is put to
@@ -703,9 +707,11 @@ bool AlignmentSpec::fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nT
 
 bool AlignmentSpec::fitCosmicLegsOnce(Track& resTrack, const TrackD& refDown, int nTop, int nTot, std::string& why, TrackD* bottomState)
 {
-  // the bottom leg: outward in the downward parametrisation, then back inward, to its innermost point
+  // the bottom leg: outward in the downward parametrisation, then back inward, to its innermost point. Energy loss in the time order
+  // of the muon (it comes from the top): lost along the bottom leg outward, regained going back inward and along the top leg upward
+  // (the Propagator's default would lose energy on the way up)
   resTrack.track = refDown;
-  if (!resTrack.fitTrack(nTop, nTot - 1, false, true) || !resTrack.fitTrack(nTot - 1, nTop, false, true)) {
+  if (!resTrack.fitTrack(nTop, nTot - 1, false, true, -1) || !resTrack.fitTrack(nTot - 1, nTop, false, true, +1)) {
     why = "KF fit of the bottom leg failed";
     return false;
   }
@@ -714,7 +720,7 @@ bool AlignmentSpec::fitCosmicLegsOnce(Track& resTrack, const TrackD& refDown, in
   }
   // the top leg: upward, i.e. outward, to the highest point
   resTrack.track.invert();
-  if (!resTrack.fitTrack(nTop - 1, 0, false, false)) {
+  if (!resTrack.fitTrack(nTop - 1, 0, false, false, +1)) {
     why = "KF fit of the top leg failed";
     return false;
   }
@@ -1988,7 +1994,7 @@ bool AlignmentSpec::getTransportJacobian(const TrackD& track, double xTo, double
       tmp.invert();
       ref.invert();
     }
-    if (!prop->propagateToAlphaX(tmp, refLin, alphaTo, xTo, false, mParams->maxSnp, mParams->maxStep, 1, mParams->corrType)) {
+    if (!prop->propagateToAlphaX(tmp, refLin, alphaTo, xTo, false, mParams->maxSnp, mParams->maxStep, 1, mParams->corrType, nullptr, mGBLELossSign)) {
       return false;
     }
     p = gbl::Vector5d(tmp.getParams());
@@ -2073,22 +2079,27 @@ bool AlignmentSpec::getTransportJacobian(const TrackD& track, double xTo, double
   return true;
 }
 
-bool AlignmentSpec::needsSplitScatterer(const TrackD& track, const FrameInfoExt& frame, double& xMid, double& alphaMid) const
+bool AlignmentSpec::needsSplitScatterer(const TrackD& track, const FrameInfoExt& frame, double& xMid, double& alphaMid, bool lastPoint, float* msFull) const
 {
   auto prop = o2::base::PropagatorD::Instance();
   TrackD trial = track;
   track::TrackLTIntegral ltTrial;
   ltTrial.setTimeNotNeeded();
-  if (!prop->propagateToAlphaX(trial, nullptr, frame.alpha, frame.x, false, mParams->maxSnp, mParams->maxStep, 1, mParams->corrType, &ltTrial)) {
+  if (!prop->propagateToAlphaX(trial, nullptr, frame.alpha, frame.x, false, mParams->maxSnp, mParams->maxStep, 1, mParams->corrType, &ltTrial, mGBLELossSign)) {
     return false; // let the real propagation below fail and report it
   }
   const double rPrev = track.getR(), rNext = trial.getR();
-  if (std::abs(rNext - rPrev) <= mParams->splitMSStepMinDX) {
+  // the last point cannot carry a scatterer (a kink there has no downstream measurement): without the split the material crossed on
+  // the way to it (e.g. TPC outer wall + TRD before the TOF) would be dropped, whatever its amount
+  if (std::abs(rNext - rPrev) <= (lastPoint ? 0.1 : mParams->splitMSStepMinDX)) {
     return false;
   }
   const float msErrTrial = its::math_utils::MSangle(trial.getPID().getMass(), trial.getP(), ltTrial.getX2X0());
-  if (msErrTrial <= mParams->splitMSThreshold) {
+  if (msErrTrial <= (lastPoint ? mParams->minMS : mParams->splitMSThreshold)) {
     return false;
+  }
+  if (msFull) {
+    *msFull = msErrTrial;
   }
   alphaMid = track.getAlpha(); // the split point stays in the pre-step tracking frame
   return track.getXatLabR(0.5 * (rPrev + rNext), xMid, prop->getNominalBz());
@@ -2168,6 +2179,7 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
     return false;
   }
   auto prop = o2::base::PropagatorD::Instance();
+  mGBLELossSign = resTrack.invertAt >= 0 ? -1 : 0; // cosmic: time order of the muon, see mGBLELossSign
   auto wTrk = resTrack.track; // working copy, the seed must be preserved
   o2::track::TrackParD trkRef, *refLin = nullptr;
   if (mParams->useStableRef) {
@@ -2219,7 +2231,7 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
             refLin->invert();
           }
         }
-        if (!prop->propagateToAlphaX(wTrk, refLin, alphaTo, xTo, false, mParams->maxSnp, mParams->maxStep, 1, mParams->corrType, &lt)) {
+        if (!prop->propagateToAlphaX(wTrk, refLin, alphaTo, xTo, false, mParams->maxSnp, mParams->maxStep, 1, mParams->corrType, &lt, mGBLELossSign)) {
           ++gblStat.failedProp;
           logFail("step");
           return false;
@@ -2233,10 +2245,16 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
       // scatterer there would have zero lever arm to `frame` but the full gap as lever arm to the
       // previous point, biasing the correlation GBL builds between the kink and the two offsets.
       double xMid = 0., alphaMid = 0.;
-      if (!invertHere && needsSplitScatterer(wTrk, frame, xMid, alphaMid)) { // not at the inversion: the gap there is the whole interior of the detector
+      // the last point: the material of the whole step goes to the mid point (none can be put at the last point itself)
+      const bool lastPoint = ip == np - 1;
+      float msFull = 0.f;
+      if (!invertHere && needsSplitScatterer(wTrk, frame, xMid, alphaMid, lastPoint, &msFull)) { // not at the inversion: the gap there is the whole interior of the detector
         float msErr1 = 0.f;
         if (!stepTo(xMid, alphaMid, msErr1, false)) {
           return false;
+        }
+        if (lastPoint) {
+          msErr1 = msFull;
         }
         // the mid point is pushed unconditionally so that the frame's point below always gets its
         // jacobian from the immediately preceding list point (this leg's, not the full prev->frame
