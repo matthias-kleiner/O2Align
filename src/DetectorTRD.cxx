@@ -138,8 +138,10 @@ FrameInfoExt DetectorTRD::makeTrackletPoint(const o2::trd::Tracklet64& trackletR
   const o2::trd::PadPlane* pad = geo->getPadPlane(trkltDet);
   const double tilt = std::tan(TMath::DegToRad() * pad->getTiltingAngle()); // tilt is signed and returned in degrees
   const double padLength = pad->getRowSize(trackletRaw.getPadRow());
+  // the tilted pads report the y at the pad-row centre: corrected with the track z, as in O2 (GPUTRDTracker, TrackInterpolation),
+  // only for a track within one pad length of the row centre (otherwise the tracklet is not from this track's row)
   double tiltCorr = tilt * (traXYZ[2] - trkParam.getZ());
-  if (std::abs(traXYZ[2] - trkParam.getZ()) < padLength) { // RS do we need this?
+  if (!(std::abs(traXYZ[2] - trkParam.getZ()) < padLength)) {
     tiltCorr = 0.;
   }
   double posY = traXYZ[1] - tiltCorr;
@@ -159,6 +161,7 @@ FrameInfoExt DetectorTRD::makeTrackletPoint(const o2::trd::Tracklet64& trackletR
   pnt.x = static_cast<float>(traXYZ[0]);
   pnt.alpha = static_cast<float>(alpSens);
   pnt.zFromTrack = true; // posZ is the track Z at the tracklet: it does not depend on the chamber position
+  pnt.tiltDz = static_cast<float>(tilt); // but the tilt-corrected y does, through the z of the pad row
   pnt.cluster = o2::BaseCluster<float>(static_cast<int16_t>(trkltDet), static_cast<float>(traXYZ[0]), static_cast<float>(posY), static_cast<float>(posZ),
                                        cov[0] + params.extraClsErrYTRD * params.extraClsErrYTRD,
                                        cov[2] + params.extraClsErrZTRD * params.extraClsErrZTRD, cov[1]);

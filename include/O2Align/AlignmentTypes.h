@@ -50,6 +50,7 @@ struct FrameInfoExt final {
   float alpha{-999.f};            // rotation angle of the tracking frame
   o2::BaseCluster<float> cluster; // cluster info
   bool zFromTrack{false};         // the Z is not measured but taken from the track (TRD): no Z derivatives wrt the alignment
+  float tiltDz{0.f};              // zFromTrack: dy/dz of the measured y wrt the z of the measuring structure (TRD pad tilt)
   std::string asString() const;
   bool isValid() const { return lr > Invalid; }
   bool isVertex() const { return lr == Vertex; }
@@ -58,7 +59,7 @@ struct FrameInfoExt final {
   void setITSOverlap() { userBits |= (0x1 << ITSOverlapBit); }
   bool isTPCRoad() const { return userBits & (0x1 << TPCRoadBit); }
   void setTPCRoad() { userBits |= (0x1 << TPCRoadBit); }
-  ClassDefNV(FrameInfoExt, 3)
+  ClassDefNV(FrameInfoExt, 4)
 };
 
 struct FitInfo final {
