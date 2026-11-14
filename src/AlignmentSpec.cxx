@@ -377,9 +377,6 @@ class AlignmentSpec final : public Task
   void buildVertexTrajectories(std::vector<Track>& resTracks, bool hasPVConstraint, const std::vector<std::vector<Track*>>& commonVertexGroups, std::vector<gbl::GblTrajectory>& gblTraj);
   void writeMilleRecords(std::vector<gbl::GblTrajectory>& gblTraj);
 
-  // build track to vertex association
-  void buildT2V();
-
   /// global (alignment + calibration) derivatives of one measured point, with their labels
   struct PointGlobals {
     std::vector<int> labels;
@@ -390,8 +387,8 @@ class AlignmentSpec final : public Task
   // through the derivatives of the point (globals), the exact ITS3 model, if requested, by its own
   // evaluators. The exact Legendre shift can push a measurement outside of the ITS3 acceptance:
   // false is to discard the track.
-  bool applyMisalignment(Eigen::Vector2d& res, const FrameInfoExt& frame, const TrackD& wTrk, size_t iTrk, const PointGlobals& globals);
-  bool applyExactMisalignment(Eigen::Vector2d& res, const FrameInfoExt& frame, const TrackD& wTrk, size_t iTrk, const Volume& halfBarrel, const SensorMisalignment& model);
+  bool applyMisalignment(Eigen::Vector2d& res, const FrameInfoExt& frame, const TrackD& wTrk, GTrackID itsGID, const PointGlobals& globals);
+  bool applyExactMisalignment(Eigen::Vector2d& res, const FrameInfoExt& frame, const TrackD& wTrk, GTrackID itsGID, const Volume& halfBarrel, const SensorMisalignment& model);
   // fit result minus the reference run and the injected misalignment, label by label
   std::map<uint32_t, double> subtractInjected(const std::map<uint32_t, double>& fitted) const;
   // sensor-level closure summary of the subtracted result, logged and written to Params::closureOutJson
@@ -416,8 +413,6 @@ class AlignmentSpec final : public Task
   std::unique_ptr<o2::utils::TreeStreamRedirector> mDBGOut;
   std::mt19937 mDbgRng;                       // selection of the tracks for the debug output
   std::unique_ptr<Mille::MilleRecord> mMille; // Millepede binary, open for the whole run
-  std::vector<dataformats::VertexBase> mPVMC;
-  std::vector<int> mT2PVMC;
   bool mIsITS3{true};
   o2::globaltracking::RecoContainer* mRecoData = nullptr;
   std::unique_ptr<steer::MCKinematicsReader> mcReader;
@@ -742,9 +737,6 @@ void AlignmentSpec::process() // collisions
   ++mProcessingStats.nTF;
   for (auto* det : mDetectors) {
     det->prepareData(mRecoData);
-  }
-  if (mParams->usePVConstraintMinTracks > 0) {
-    buildT2V(); // RSTODO for data
   }
   LOGP(info, "Starting fits with {} threads", mNThreads);
   std::vector<gbl::GblTrajectory> gblTraj;
@@ -1542,9 +1534,8 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
   if (mParams->useStableRef) {
     refLin = &(trkRef = wTrk);
   }
-  // the MC index of the ITS part, needed only by the MC-based exact ITS3 misalignment simulation
+  // Preserve the contributor source as well as its index for the MC-based exact ITS3 misalignment simulation
   const auto itsGID = resTrack.gid.isIndexSet() ? mRecoData->getITSContributorGID(resTrack.gid) : GTrackID{};
-  const size_t iTrk = itsGID.isIndexSet() ? itsGID.getIndex() : 0;
   points.clear();
   points.reserve(np - ipStart);
   resTrack.points.clear();
@@ -1684,7 +1675,7 @@ bool AlignmentSpec::fillGBLPoints(Track& resTrack, int ipStart, bool skipFirstMe
       res << cluster.getY() - wTrk.getY(), cluster.getZ() - wTrk.getZ();
 
       // here we can apply some misalignment on the measurment
-      if (mMisalignment && !frame.isVertex() && !applyMisalignment(res, frame, wTrk, iTrk, globals)) {
+      if (mMisalignment && !frame.isVertex() && !applyMisalignment(res, frame, wTrk, itsGID, globals)) {
         return false;
       }
       if (!getMeasurementPrecision(cluster, prec)) {
@@ -2138,46 +2129,11 @@ void AlignmentSpec::writeDbgTrack(const Track& resTrack, bool composed, bool acc
              << "\n";
 }
 
-void AlignmentSpec::buildT2V()
-{
-  const auto& itsTracks = mRecoData->getITSTracks();
-  mT2PVMC.clear();
-  mT2PVMC.resize(itsTracks.size(), -1);
-  if (mUseMC) {
-    mPVMC.reserve(mcReader->getNEvents(0));
-    for (int iEve{0}; iEve < mcReader->getNEvents(0); ++iEve) {
-      const auto& eve = mcReader->getMCEventHeader(0, iEve);
-      dataformats::VertexBase vtx;
-      constexpr float err{22e-4f};
-      vtx.setX((float)eve.GetX());
-      vtx.setY((float)eve.GetY());
-      vtx.setZ((float)eve.GetZ());
-      vtx.setSigmaX(err);
-      vtx.setSigmaY(err);
-      vtx.setSigmaZ(err);
-      mPVMC.push_back(vtx);
-    }
-    const auto& mcLbls = mRecoData->getITSTracksMCLabels();
-    for (size_t iTrk{0}; iTrk < mcLbls.size(); ++iTrk) {
-      const auto& lbl = mcLbls[iTrk];
-      if (!lbl.isValid() || !lbl.isCorrect()) {
-        continue;
-      }
-      const auto& mcTrk = mcReader->getTrack(lbl);
-      if (mcTrk->isPrimary()) {
-        mT2PVMC[iTrk] = lbl.getEventID();
-      }
-    }
-  } else {
-    LOGP(warn, "Data PV to track TODO");
-  }
-}
-
 // The misalignment is injected as a shift of the measured residual, with the sign of the derivatives
 // of the prediction: res += d(pred)/d(DOF) * value, so that a consistent fit returns the injected values.
 // The derivatives are those of the fit itself (PointGlobals): the rigid-body DOFs of the leaf and all
 // its ancestors and the calibration DOFs of the parent of the leaf, no Z shift where Z is not measured.
-bool AlignmentSpec::applyMisalignment(Eigen::Vector2d& res, const FrameInfoExt& frame, const TrackD& wTrk, size_t iTrk, const PointGlobals& globals)
+bool AlignmentSpec::applyMisalignment(Eigen::Vector2d& res, const FrameInfoExt& frame, const TrackD& wTrk, GTrackID itsGID, const PointGlobals& globals)
 {
   const Eigen::Vector2d resOrig = res;
   for (size_t k = 0; k < globals.labels.size(); ++k) {
@@ -2187,7 +2143,7 @@ bool AlignmentSpec::applyMisalignment(Eigen::Vector2d& res, const FrameInfoExt& 
   }
   const auto* leaf = mChip2Hiearchy.at(frame.label); // the same volume as in buildPointGlobals
   if (const auto* exact = mMisalignment->getExact(leaf->getParent())) {
-    if (!applyExactMisalignment(res, frame, wTrk, iTrk, *leaf->getParent(), *exact)) {
+    if (!applyExactMisalignment(res, frame, wTrk, itsGID, *leaf->getParent(), *exact)) {
       return false;
     }
   }
@@ -2212,7 +2168,7 @@ bool AlignmentSpec::applyMisalignment(Eigen::Vector2d& res, const FrameInfoExt& 
 //    measurement outside of the ITS3 acceptance
 //  - in-extensional: the displacement field u(phi,z) = (u_phi, u_z, u_r),
 //    dy = -u_phi + y' * u_r,  dz = -u_z + z' * u_r
-bool AlignmentSpec::applyExactMisalignment(Eigen::Vector2d& res, const FrameInfoExt& frame, const TrackD& wTrk, size_t iTrk, const Volume& halfBarrel, const SensorMisalignment& model)
+bool AlignmentSpec::applyExactMisalignment(Eigen::Vector2d& res, const FrameInfoExt& frame, const TrackD& wTrk, GTrackID itsGID, const Volume& halfBarrel, const SensorMisalignment& model)
 {
   const int sensorID = halfBarrel.getSensorId();
   const MisalignmentFrame misFrame{
@@ -2225,8 +2181,25 @@ bool AlignmentSpec::applyExactMisalignment(Eigen::Vector2d& res, const FrameInfo
   if (model.hasLegendre) { // the load has checked that the MC is available
     const auto prop = o2::base::PropagatorD::Instance();
 
-    const auto lbl = mRecoData->getITSTracksMCLabels()[iTrk];
-    if (lbl.isFake()) {
+    // ITSAB indices refer to a different label array; this model needs a standalone ITS track.
+    if (!itsGID.isIndexSet() || itsGID.getSource() != GTrackID::ITS) {
+      return false;
+    }
+    const auto labels = mRecoData->getITSTracksMCLabels();
+    const auto index = static_cast<size_t>(itsGID.getIndex());
+    if (index >= labels.size()) {
+      return false;
+    }
+    const auto& lbl = labels[index];
+    if (!lbl.isValid() || !lbl.isCorrect()) {
+      return false;
+    }
+    if (!mcReader || !mcReader->isInitialized()) {
+      return false;
+    }
+    const auto source = static_cast<size_t>(lbl.getSourceID());
+    const auto event = static_cast<size_t>(lbl.getEventID());
+    if (source >= mcReader->getNSources() || event >= mcReader->getNEvents(source)) {
       return false;
     }
     const auto mcTrk = mcReader->getTrack(lbl);
