@@ -1479,14 +1479,17 @@ bool AlignmentSpec::refitPV(const PVertex& vtxOrig, int ivref, PVertex& vtxRefit
       tracksPVRefit.push_back(tr);
     }
   }
+  ++mProcessingStats.nPVRefitTried;
   if (!mVertexer.prepareVertexRefit(tracksPVRefit, vtxOrig)) {
-    LOGP(warn, "Abandon the refit of {} #{}: only {} contributors are usable", vtxOrig.asString(), ivref, nUsed);
+    ++mProcessingStats.nPVRefitFailed;
+    LOGP(debug, "Failed to prepare the refit of {} #{} with {} selected tracks", vtxOrig.asString(), ivref, nUsed);
     return false;
   }
   // refitVertexFull (rather than refitVertex) is used since the alignment may shift the vertex
   vtxRefit = mVertexer.refitVertexFull({}, vtxOrig);
   if (vtxRefit.getChi2() < 0.f) {
-    LOGP(warn, "Failed to refit {} #{} with {} selectedtracks", vtxOrig.asString(), ivref, nUsed);
+    ++mProcessingStats.nPVRefitFailed;
+    LOGP(debug, "Failed to refit {} #{} with {} selected tracks", vtxOrig.asString(), ivref, nUsed);
     return false;
   }
   if (mParams->verbose > 0) {
@@ -1770,14 +1773,20 @@ bool AlignmentSpec::fitGBLTrajectory(gbl::GblTrajectory& traj, float kfChi2Ndf, 
   if (fitDone) {
     *fitDone = false;
   }
+  const bool multiTrack = &gblStat == &mGBLStatVertex;
+  auto& nTried = multiTrack ? mProcessingStats.nGBLFitMulti : mProcessingStats.nGBLFitSingle;
+  auto& nFailed = multiTrack ? mProcessingStats.nGBLFitMultiFail : mProcessingStats.nGBLFitSingleFail;
+  ++nTried;
   if (!traj.isValid()) {
     ++gblStat.construct;
+    ++nFailed;
     return false;
   }
   double chi2 = NAN, lostWeight = NAN;
   int ndf = 0;
   if (auto ierr = traj.fit(chi2, ndf, lostWeight); ierr) {
     ++gblStat.fitFail;
+    ++nFailed;
     if (mOutOpt[o2::alignrs::OutputOpt::VerboseGBL]) {
       LOGP(error, "GBL fit failed with ierr={}", ierr);
       traj.printTrajectory(5);
@@ -1793,10 +1802,11 @@ bool AlignmentSpec::fitGBLTrajectory(gbl::GblTrajectory& traj, float kfChi2Ndf, 
     fitOut = {.chi2Ndf = (float)(chi2 / ndf), .chi2 = (float)chi2, .ndf = ndf};
   }
   if (!ndf || chi2 / ndf > mParams->maxChi2Ndf) {
+    ++nFailed;
     if (gblStat.chi2Rej++ < 10) {
-      LOGP(warn, "GBL fit exceeded red chi2 {} (ndf {})", ndf ? chi2 / ndf : -1., ndf);
+      LOGP(debug, "GBL fit exceeded red chi2 {} (ndf {})", ndf ? chi2 / ndf : -1., ndf);
       if (kfChi2Ndf > 0 && std::abs(kfChi2Ndf - 1) < 0.02) {
-        LOGP(warn, "\tGBL is far away from good KF fit!!!!");
+        LOGP(debug, "\tGBL is far away from good KF fit!!!!");
       }
     }
     return false;
