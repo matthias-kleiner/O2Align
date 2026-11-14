@@ -128,14 +128,15 @@ float DetectorTRD::trackletAngularPull(const o2::trd::Tracklet64& trackletRaw, c
   return (trkltLoc.getDy() + dyTiltCorr - mRecoParam.convertAngleToDy(snp)) / std::sqrt(mRecoParam.getDyRes(snp, 0));
 }
 
-// Point of a tracklet given the track state at its X: the track provides the Z, its error and the angles needed for the
-// tilt correction and the covariance
 float DetectorTRD::getZCorrCoeffNRC() const
 {
   const float c = Params::Instance().TRDNonRCCorrDzDtgl;
   return c < -990.f ? mRecoParam.getZCorrCoeffNRC() : c;
 }
 
+// Point of a tracklet, defined as in the Kalman update of O2 (TRDGlobalTrackingSpec): y and z of the tracklet (z = pad-row centre,
+// moving with the chamber) in the tracking frame; the track state at its X gives the tilt correction of y, the angular pull and
+// the covariance. See doc/TRD.md.
 FrameInfoExt DetectorTRD::makeTrackletPoint(const o2::trd::Tracklet64& trackletRaw, const std::array<double, 3>& traXYZ, double alpSens, const o2::track::TrackParCovD& trkParam, float angularPull) const
 {
   const auto& params = Params::Instance();
@@ -144,26 +145,24 @@ FrameInfoExt DetectorTRD::makeTrackletPoint(const o2::trd::Tracklet64& trackletR
   const o2::trd::PadPlane* pad = geo->getPadPlane(trkltDet);
   const double tilt = std::tan(TMath::DegToRad() * pad->getTiltingAngle()); // tilt is signed and returned in degrees
   const double padLength = pad->getRowSize(trackletRaw.getPadRow());
+  const double snp = trkParam.getSnp();
   // the tilted pads report the y at the pad-row centre: corrected with the track z, as in O2 (GPUTRDTracker, TrackInterpolation),
   // only for a track within one pad length of the row centre (otherwise the tracklet is not from this track's row) and with a z
   // error well below the pad length
   const double dzRow = traXYZ[2] - trkParam.getZ();
   const bool applyTilt = std::abs(dzRow) < padLength && trkParam.getSigmaZ2() < padLength * padLength / 12.;
-  const double tiltCorr = applyTilt ? tilt * dzRow : 0.;
-  double posY = traXYZ[1] - tiltCorr;
-  const double posZ = traXYZ[2] + getZCorrCoeffNRC() * trkParam.getTgl(); // pad-row centre, as in O2 (TRDGlobalTrackingSpec), error l^2/12
+  double posY = traXYZ[1] - (applyTilt ? tilt * dzRow : 0.);
+  const double posZ = traXYZ[2] + getZCorrCoeffNRC() * trkParam.getTgl(); // pad-row centre, error l^2/12
   // correction for DVT, equivalent to a shift in X at which Y is evaluated: dY = tg_phi * dvt
   if (std::abs(params.TRDCorrDVT) > 1e-9f) {
-    const double snp = trkParam.getSnp();
     posY += snp / std::sqrt((1. - snp) * (1. + snp)) * params.TRDCorrDVT;
   }
   // angular pull as in O2 (rec.trd.useAngularPull): error of y increased with it, >=3 also the y shifted
-  const float snp = static_cast<float>(trkParam.getSnp());
   if (params.TRDUseAngularPull >= 3) {
-    posY -= angularPull * mRecoParam.getCorrYDy(snp);
+    posY -= angularPull * mRecoParam.getCorrYDy(static_cast<float>(snp));
   }
   std::array<float, 3> cov{};
-  mRecoParam.recalcTrkltCov(static_cast<float>(tilt), snp, static_cast<float>(padLength), cov, params.TRDUseAngularPull != 0 ? angularPull : 0.f);
+  mRecoParam.recalcTrkltCov(static_cast<float>(tilt), static_cast<float>(snp), static_cast<float>(padLength), cov, params.TRDUseAngularPull != 0 ? angularPull : 0.f);
 
   FrameInfoExt pnt;
   pnt.detIdx = mDetIdx;

@@ -55,6 +55,10 @@ accepts tracks seen by ITS alone, by ITS+TRD, or by ITS+TOF. An ITS-TPC-TRD-TOF 
 since ITS+TRD+TOF is not in the list, while an ITS-TPC-TRD track passes: TPC is not participating,
 so it counts as ITS+TRD. The track source must of course be among `--track-sources`.
 
+TRD points follow the tracklet definition of the O2 Kalman update (z = pad-row centre, pad tilt, angular pull), see
+[doc/TRD.md](doc/TRD.md). Since 2026-11-14 `AlignParams.TRDNonRCCorrDzDtgl` defaults to the O2 value (1.4, was 0) and
+`AlignParams.TRDUseAngularPull` to 3; `mp2data.bin` recorded before that has to be regenerated for TRD.
+
 Plain lists (`--detectors ITS,TPC`) thus accept only tracks having exactly the ITS, or exactly the
 TPC, points; to also accept the tracks with both, add `ITS-TPC`.
 
