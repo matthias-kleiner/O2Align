@@ -1150,13 +1150,11 @@ AlignmentSpec::PointGlobals AlignmentSpec::buildPointGlobals(const FrameInfoExt&
     globals.der.middleCols(curCol, nd) = calDer;
     curCol += nd;
   }
-  if (frame.zFromTrack) {
-    // The Z "measurement" follows the track, whatever the alignment. The y still depends on the z of the measuring structure:
-    // a TRD tracklet is the y at the pad-row centre of tilted pads, y_meas = y_hit - tilt * (z_hit - z_row) + tilt * (z_trk - z_row)
-    // after the tilt correction, so a displacement that changes the z residual of the row by dz changes the y residual by -tilt * dz.
+  if (frame.tiltDz != 0.f) {
+    // TRD: the z of the tracklet is the pad-row centre, it moves with the chamber (row 1). The tilt-corrected y depends on it too:
+    // y_meas = y_trklt - tilt * (z_row - z_trk), so a displacement that changes the z residual by dz changes the y residual by -tilt * dz.
     // Without the correction (track more than a pad length off) y does not depend on the row z: tiltDz = 0.
     globals.der.row(0) -= frame.tiltDz * globals.der.row(1);
-    globals.der.row(1).setZero();
   }
   if (!globals.labels.empty()) {
     for (auto* volume = tileVol; volume && !volume->isRoot(); volume = volume->getParent()) {
@@ -2111,7 +2109,7 @@ void AlignmentSpec::writeDbgTrack(const Track& resTrack, bool composed, bool acc
   int nMeasured = 0;
   for (const auto& frame : resTrack.info) {
     if (frame.isValid()) {
-      nMeasured += frame.zFromTrack ? 1 : 2;
+      nMeasured += 2;
     }
   }
   dt.kfFit.ndf = std::max(nMeasured - 5, 0);

@@ -484,3 +484,22 @@ Found in a code review of `ea32487`; each one checked on the laptop.
   on the last top-leg point, combined with the scatterer there. Those cosmics (0.6 %): χ²/ndf 5.46 → 4.33, ⟨pull²⟩ of
   the lone point 116 → 60.
 - All four together on that piece (w01_0, TPC-TRD-TOF, ideal map): 11 523 → 11 611 fits, identity errors 83 → 0.
+
+## 2026-11-14: TRD tracklet z is the pad-row centre
+
+- `solB0A1` (B0 + B± data, TRD supermodules free, no constraints): `millepede_labeled.res` gave TY of the TRD supermodules
+  of −1070…+1088 cm (e.g. sm00 −438, sm17 −839), while TOF came out small. TY of a supermodule is a shift along the beam.
+  Cause: the TRD point took its z from the track (`zFromTrack`, since `0ee2cc9`), so the z residual was identically
+  zero, its derivatives were zeroed, and a beam-axis displacement was seen only through the pad tilt (dy/dz = tan 2–3°).
+  O2 (`TRDGlobalTrackingSpec.cxx`, Kalman update) uses the calibrated tracklet z, i.e. the pad-row centre, with σz² = l²/12.
+  The point now has z = row centre (`traXYZ[2]`, which carries the chamber alignment) + `TRDNonRCCorrDzDtgl`·tgl, the z
+  derivatives are kept, the tilt term on y is unchanged. `zFromTrack` removed; the KF refit also no longer shrinks σz with a
+  no-information z update, and the ndf counts 2 coordinates per TRD point. Not yet rerun on `solB0A1`.
+- Cross-check of the tracklet point with the O2 Kalman update (`TRDGlobalTrackingSpec.cxx`): the z of non-row-crossing
+  tracklets is corrected with `getZCorrCoeffNRC()` (1.4 per unit tgl) in O2, our default was 0 — harmless with z from the
+  track, a z bias once z is the row centre; `AlignParams.TRDNonRCCorrDzDtgl` now defaults to the O2 value (<-990). O2 (default
+  `useAngularPull=3`) also increases σy with the angular pull and shifts y by `-pull*getCorrYDy(snp)`; both are now
+  applied (`AlignParams.TRDUseAngularPull`, 0 = off). Still different from O2: chamber occupancy, pile-up y correction and error.
+- The TRD tracklet error parameters (`trkltResRPhiIdeal`, `trkltResVsTanPhiMisalign`, pile-up ranges) come from the
+  `GPU_rec_trd.*` configurable params, not from `AlignParams`: to reproduce the errors of the reconstruction, pass the same
+  `GPU_rec_trd.*` keys to the workflow.

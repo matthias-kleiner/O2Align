@@ -82,7 +82,8 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   int minTRDTracklets = 3;        // min TRD tracklets to accept the track
   float TRDAngularPullNSigma = 2.f; // max |angular pull| (tracklet dy vs track snp) of a TRD tracklet to be accepted in the track fit, <=0: no cut
   float TRDCorrDVT = 0.f;         // correction to Vdrift*t (equivalent to a shift in X at which Y is evaluated)
-  float TRDNonRCCorrDzDtgl = 0.f; // correction in Z proportional to tgl for non-row-crossing tracklets
+  float TRDNonRCCorrDzDtgl = -999.f; // correction in Z proportional to tgl for non-row-crossing tracklets, <-990: as in O2 (GPUTRDRecoParam::getZCorrCoeffNRC)
+  int TRDUseAngularPull = 3;      // as O2 rec.trd.useAngularPull: 0 = tracklet error w/o angular pull; >0 = error increased with the angular pull; 3, 4 = also y corrected with it
 
   // TOF
   int minTOFClusters = 1; // min TOF clusters to accept track
