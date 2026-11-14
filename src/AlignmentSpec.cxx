@@ -1469,7 +1469,7 @@ bool AlignmentSpec::refitPV(const PVertex& vtxOrig, int ivref, PVertex& vtxRefit
     nUsed++;
   }
   if (nUsed < mParams->usePVConstraintMinTracks) {
-    LOGP(info, "Abandon the refit of {} #{}: only {} contributors are usable", vtxOrig.asString(), ivref, nUsed);
+    LOGP(debug, "Abandon the refit of {} #{}: only {} contributors are usable", vtxOrig.asString(), ivref, nUsed);
     return false;
   }
   // copy validated tracks to the vector used for the vertex refit
