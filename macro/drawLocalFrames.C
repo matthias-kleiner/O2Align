@@ -17,7 +17,7 @@
 //                      "ITS/ITSULayer6/ITSUHalfBarrel0/ITSUStave0/ITSUHalfStave0/ITSUModule0/ITSUChip4",
 //                      "ITS/ITSULayer0/ITSUHalfBarrel0/ITSUStave3/ITSUChip4",
 //                      "TRD/sm02/st3/pl0","TOF/sm03/strip35"})
-// draws the doc/local_frames.pdf
+// draws the doc/local_frames_ITS.pdf
 //
 // At zero angles: lab Z right, lab Y up, lab X into the screen.
 // Azimuth rotates about lab Y from this view; elevation tilts the camera up.
