@@ -21,5 +21,21 @@
   {
     "match": "TOF/sm[0-9]+/strip[0-9]+",
     "rigidBody": "fixed"
+  },
+  {
+    "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]",
+    "rigidBody": "fixed"
+  },
+  {
+    "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+",
+    "rigidBody": "fixed"
+  },
+  {
+    "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUHalfStave[0-1]",
+    "rigidBody": "fixed"
+  },
+  {
+    "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUHalfStave[0-1]/ITSUModule[0-6]",
+    "rigidBody": "fixed"
   }
 ]
