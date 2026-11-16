@@ -102,8 +102,8 @@ endif()
 
 # target_compile_options(O2Align PRIVATE -O0 -g)
 # target_compile_options(O2exe-alignment-workflow PRIVATE -O0 -g)
- target_compile_options(O2Align PRIVATE -g -fno-omit-frame-pointer)
- target_compile_options(O2exe-alignment-workflow PRIVATE -g -fno-omit-frame-pointer)
+target_compile_options(O2Align PRIVATE -g -fno-omit-frame-pointer)
+target_compile_options(O2exe-alignment-workflow PRIVATE -g -fno-omit-frame-pointer)
 
 install(TARGETS O2Align
         EXPORT AlignTargets
