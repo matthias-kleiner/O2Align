@@ -16,8 +16,12 @@ for det in ITS TRD TOF MFT MCH ; do
   if [[ -f "$algName" ]] ; then
      [[ ! -d ${DESTCDB}/$det/Calib/Align ]] && mkdir -p ${DESTCDB}/${det}/Calib/Align
      cp $algName ${DESTCDB}/${det}/Calib/Align/snapshot.root
-     [[ "0$REMAP" != "0" ]] && REMAP+=","
-     REMAP+="${det}/Calib/Align"
+     echo "Copied $algName to ${DESTCDB}/${det}/Calib/Align/snapshot.root"
+  fi
+  if [[ -f ${DESTCDB}/${det}/Calib/Align/snapshot.root ]] ; then
+    echo "Adding ${DESTCDB}/${det}/Calib/Align to REMAP"
+    [[ "0$REMAP" != "0" ]] && REMAP+=","
+    REMAP+="${det}/Calib/Align"
   fi
 done
 
