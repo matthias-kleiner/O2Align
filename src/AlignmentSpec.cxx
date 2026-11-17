@@ -52,6 +52,7 @@
 #include "DetectorsCommonDataFormats/DetID.h"
 #include "DetectorsBase/Propagator.h"
 #include "DetectorsBase/GRPGeomHelper.h"
+#include "DetectorsBase/GeometryManager.h"
 #include "DataFormatsCalibration/MeanVertexObject.h"
 #include "DetectorsVertexing/PVertexer.h"
 #include "ReconstructionDataFormats/PrimaryVertex.h"
@@ -1047,6 +1048,10 @@ void AlignmentSpec::initOnFirstTF()
   mParams->printKeyValues(true, true);
   if (mITS) {
     o2::its::GeometryTGeo::Instance()->fillMatrixCache(o2::math_utils::bit2Mask(o2::math_utils::TransformType::T2L, o2::math_utils::TransformType::L2G, o2::math_utils::TransformType::T2G));
+  }
+  if (mParams->corrType == static_cast<int>(o2::base::PropagatorD::MatCorrType::USEMatCorrTGeo) && mNThreads > 1) {
+    // per-thread TGeo navigators: mutex-free material queries from the OpenMP regions (serial call, geometry is loaded)
+    o2::base::GeometryManager::setMaxThreads(mNThreads);
   }
   buildHierarchy();
   if (mITS) {
