@@ -503,3 +503,10 @@ Found in a code review of `ea32487`; each one checked on the laptop.
 - The TRD tracklet error parameters (`trkltResRPhiIdeal`, `trkltResVsTanPhiMisalign`, pile-up ranges) come from the
   `GPU_rec_trd.*` configurable params, not from `AlignParams`: to reproduce the errors of the reconstruction, pass the same
   `GPU_rec_trd.*` keys to the workflow.
+- `weakModes.pdf` of `solB0A1` showed TOF amplitudes of up to 4e7 µm (`bowing`, `radialPolar_r*t2`, `twist`), while the TOF
+  corrections are a few mm and `rmsDisplacement` is 3.3 mm. TOF is a thin cylinder (r = 370–383 cm), so `bowing`,
+  `radialPolar_r0t2`, `radialPolar_r1t2` (and `twist`/`tangentialPolar_r0t1`, `radialPolar_r0t1`/`radialPolar_r1t1`) are
+  the same field (correlation ±1.0000, conditioning 6e-17): the fit with a 1e-8 SVD cut returned huge amplitudes cancelling
+  each other. The SVD cut is now 1e-3 and the diagonal of the resolution matrix is reported per mode (`resolution`,
+  `determined`); modes with resolution < 0.5 are flagged in the log and drawn in grey by `drawWeakModes.C`.
+
