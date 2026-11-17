@@ -9,7 +9,7 @@ ALGDIR=`realpath $ALGDIR`
 echo "Source alignment dir: $ALGDIR"
 echo "Destination CCDB dir: $DESTCDB"
 
-REMAP=""
+REMAPCRE=""
 
 for det in ITS TRD TOF MFT MCH ; do
   algName="${ALGDIR}/${det}_alignment.root"
@@ -19,15 +19,15 @@ for det in ITS TRD TOF MFT MCH ; do
      echo "Copied $algName to ${DESTCDB}/${det}/Calib/Align/snapshot.root"
   fi
   if [[ -f ${DESTCDB}/${det}/Calib/Align/snapshot.root ]] ; then
-    echo "Adding ${DESTCDB}/${det}/Calib/Align to REMAP"
-    [[ "0$REMAP" != "0" ]] && REMAP+=","
-    REMAP+="${det}/Calib/Align"
+    echo "Adding ${DESTCDB}/${det}/Calib/Align to REMAPCRE"
+    [[ "0$REMAPCRE" != "0" ]] && REMAPCRE+=","
+    REMAPCRE+="${det}/Calib/Align"
   fi
 done
 
-if [[ "0$REMAP" != "0" ]] ; then
-  REMAP="--condition-remap file://${DESTCDB}=${REMAP}"
-  echo "Remapping CCDB to $REMAP"
+if [[ "0$REMAPCRE" != "0" ]] ; then
+  REMAPCRE="--condition-remap file://${DESTCDB}=${REMAPCRE}"
+  echo "Remapping CCDB for o2-create-aligned-geometry-workflowto $REMAPCRE"
 else
   echo "No <det>_alignment.root file was found in the $ALGDIR"
   exit 1  
@@ -41,7 +41,7 @@ else
 fi
 
 [[ -f o2sim_geometry-aligned.root ]] && rm o2sim_geometry-aligned.root
-o2-create-aligned-geometry-workflow -b --run $REMAP --condition-timestamp $TIMESTAMP
+o2-create-aligned-geometry-workflow -b --run $REMAPCRE --condition-timestamp $TIMESTAMP
 
 [[ ! -f o2sim_geometry-aligned.root ]] && { echo "failed to create aligned geometry" ; exit 1; }
 [[ ! -d ${DESTCDB}/GLO/Config/GeometryAligned ]] && mkdir -p ${DESTCDB}/GLO/Config/GeometryAligned
