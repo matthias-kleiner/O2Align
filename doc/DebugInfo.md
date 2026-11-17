@@ -159,3 +159,11 @@ t->Scan("t.gid.asString():t.gblFit.chi2Ndf:Max$(abs(points.dyFit/points.sigY))",
 With `--output MisRes` and `AlignParams.misAlgJson`, one entry per point to which a misalignment was injected is written to the same
 file: the shifted residual `dy,dz`, the injected shift `ddy,ddz`, the detector `det`, sensor `sens`, `z` and `phi`. See
 [MisalignmentTest.md](MisalignmentTest.md).
+
+## TRD / TOF residual histograms
+
+[macro/trdTofResid.C](../macro/trdTofResid.C) fills from `gbltrack` (a file, or a text file with one root file per line) the `dPre`, `dUnb`
+or `dFit` residuals of the measured TRD and TOF points into an `o2::HistoManager`: per TRD chamber and per TOF sector and Z slice dY vs `snp`
+and dZ vs the track `tgl`, with `FitSlicesY` mean/sigma histograms (IDs `Sect*10000 + Lr*1000 + St*100 + iYZ*10`, `+1` mean, `+2` sigma;
+Lr 0-5 TRD layer, 6 TOF). `trdTofResid(inp, out, geom, resType, ...)` books/fills/fits, `drawTRDTOFResid(cfgKeyValues, pdf)` superimposes
+several managers listed in the `checkresid.ext_*` keys, as `o2-check-resid-workfow --draw-external-only` does, one pdf page per sector and layer.
