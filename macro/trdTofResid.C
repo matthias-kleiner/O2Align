@@ -41,6 +41,7 @@
 #include <TGeoPhysicalNode.h>
 #include <TH1.h>
 #include <TH2F.h>
+#include <TProfile.h>
 #include <TLatex.h>
 #include <TLegend.h>
 #include <TLegendEntry.h>
@@ -181,20 +182,20 @@ TOFSlices makeTOFSlices(int nSlices)
 
 /// books dY vs snp and dZ vs tgl for one chamber / slice, tgl in [tglMin, tglMax]
 void bookPair(o2::HistoManager& hm, int id, const std::string& name, const std::string& title, int resType, int nSnp, float maxSnp,
-              int nTgl, float tglMin, float tglMax, int nBinRes, float resRange)
+              int nTgl, float tglMin, float tglMax, int nBinRes, float resRangeY, float resRangeZ)
 {
   for (int iyz = 0; iyz < 2; ++iyz) {
     const std::string rname = fmt::format("d{}{}", iyz ? 'Z' : 'Y', ResTypeName[resType]);
     const std::string nm = fmt::format("{}_{}", name, rname);
     const std::string tit = fmt::format("{} {}", title, rname);
     const std::string ytit = fmt::format("{} (cm)", iyz ? "#DeltaZ" : "#DeltaY");
-    TH2F* h2 = iyz == 0 ? new TH2F(nm.c_str(), fmt::format("{};snp;{}", tit, ytit).c_str(), nSnp, -maxSnp, maxSnp, nBinRes, -resRange, resRange)
-                        : new TH2F(nm.c_str(), fmt::format("{};tg#lambda;{}", tit, ytit).c_str(), nTgl, tglMin, tglMax, nBinRes, -resRange, resRange);
+    TH2F* h2 = iyz == 0 ? new TH2F(nm.c_str(), fmt::format("{};snp;{}", tit, ytit).c_str(), nSnp, -maxSnp, maxSnp, nBinRes, -resRangeY, resRangeY)
+                        : new TH2F(nm.c_str(), fmt::format("{};tg#lambda;{}", tit, ytit).c_str(), nTgl, tglMin, tglMax, nBinRes, -resRangeZ, resRangeZ);
     hm.addHisto(h2, id + iyz * 10);
   }
 }
 
-void bookHistos(o2::HistoManager& hm, const TOFSlices& ts, int resType, int nSnp, float maxSnp, int nTglBins, int nBinRes, float resRange)
+void bookHistos(o2::HistoManager& hm, const TOFSlices& ts, int resType, int nSnp, float maxSnp, int nTglBins, int nBinRes, float resRangeY, float resRangeZ)
 {
   auto* trdGeo = o2::trd::Geometry::instance();
   for (int isect = 0; isect < NSect; ++isect) {
@@ -208,7 +209,7 @@ void bookHistos(o2::HistoManager& hm, const TOFSlices& ts, int resType, int nSnp
         const float x = o2::trd::Geometry::getTime0(ilr);
         const float z0 = trdGeo->getRowEnd(ilr, ist), z1 = trdGeo->getRow0(ilr, ist);
         bookPair(hm, histoID(isect, ilr, ist, 0), fmt::format("trd_s{:02d}_l{}_st{}", isect, ilr, ist), fmt::format("{} ch{}", symChamber, det),
-                 resType, nSnp, maxSnp, nTglBins, std::min(z0, z1) / x, std::max(z0, z1) / x, nBinRes, resRange);
+                 resType, nSnp, maxSnp, nTglBins, std::min(z0, z1) / x, std::max(z0, z1) / x, nBinRes, resRangeY, resRangeZ);
       }
     }
     for (int is = 0; is < ts.nSlices; ++is) {
@@ -218,7 +219,7 @@ void bookHistos(o2::HistoManager& hm, const TOFSlices& ts, int resType, int nSnp
       }
       const auto& lim = ts.zLoHiR[is];
       bookPair(hm, histoID(isect, LrTOF, is, 0), fmt::format("tof_s{:02d}_z{}", isect, is), fmt::format("TOF/sm{:02d}/strip{}:{}", isect, rng[0], rng[1]),
-               resType, nSnp, maxSnp, nTglBins, lim[0] / lim[2], lim[1] / lim[2], nBinRes, resRange);
+               resType, nSnp, maxSnp, nTglBins, lim[0] / lim[2], lim[1] / lim[2], nBinRes, resRangeY, resRangeZ);
     }
   }
 }
@@ -277,39 +278,64 @@ void fillHistos(TChain* chain, o2::HistoManager& hm, const TOFSlices& ts, int re
   chain->ResetBranchAddresses();
 }
 
-/// FitSlicesY of all the base 2D histograms of the manager, mean/sigma added with IDs +1/+2
-void postProcessHistos(o2::HistoManager& hm, float resRange, int minSliceStat)
+/// profile of the 2D histogram converted to TH1D: mean (error of the mean) or sigma (spread, error sigma/sqrt(2n)) per bin; empty bins have zero error
+TH1* profileToTH1(TH2F* h2, bool sigma, const char* name)
+{
+  auto* prf = h2->ProfileX(Form("%s_pfx%d", h2->GetName(), (int)sigma), 1, -1, sigma ? "s" : "");
+  auto* h1 = new TH1D(name, h2->GetTitle(), h2->GetNbinsX(), h2->GetXaxis()->GetXmin(), h2->GetXaxis()->GetXmax());
+  h1->SetDirectory(nullptr);
+  for (int i = 1; i <= h1->GetNbinsX(); ++i) {
+    const double n = prf->GetBinEntries(i);
+    if (n < 2) { // the spread of a single entry is undefined
+      continue;
+    }
+    h1->SetBinContent(i, sigma ? prf->GetBinError(i) : prf->GetBinContent(i));
+    h1->SetBinError(i, sigma ? prf->GetBinError(i) / std::sqrt(2. * n) : prf->GetBinError(i));
+  }
+  delete prf;
+  return h1;
+}
+
+/// mean/sigma of all the base 2D histograms of the manager, added with IDs +1/+2: FitSlicesY (gaus within the Y range of the
+/// histogram) if it has at least minEntriesFit entries, otherwise the profile converted to TH1D (mean and spread)
+void postProcessHistos(o2::HistoManager& hm, int minSliceStat, int minEntriesFit)
 {
   printf("Fitting histos\n");
-  auto gs = std::make_unique<TF1>("gs", "gaus", -resRange, resRange);
   TObjArray arr;
   arr.SetOwner(true);
   for (int isect = 0; isect < NSect; ++isect) {
     for (int ilr = 0; ilr <= LrTOF; ++ilr) {
-      for (int ist = 0; ist < (ilr == LrTOF ? 100 : NTRDSt); ++ist) {
+      for (int ist = 0; ist < (ilr == LrTOF ? 10 : NTRDSt); ++ist) {
         for (int iyz = 0; iyz < 2; ++iyz) {
           const int id = histoID(isect, ilr, ist, iyz);
           auto* h2 = hm.getHisto2F(id);
-          if (!h2) {
+          if (!h2 || h2->GetEntries() < 1) {
             continue;
           }
-          if (h2->GetEntries() < 1) {
-            continue;
+          TH1 *hmean = nullptr, *hsig = nullptr;
+          if (h2->GetEntries() < minEntriesFit) {
+            hmean = profileToTH1(h2, false, Form("%s_1", h2->GetName()));
+            hsig = profileToTH1(h2, true, Form("%s_2", h2->GetName()));
+          } else {
+            const double rng = h2->GetYaxis()->GetXmax();
+            TF1 gs("gs", "gaus", -rng, rng);
+            h2->FitSlicesY(&gs, 0, -1, minSliceStat, "QNR", &arr);
+            hmean = (TH1*)arr.RemoveAt(1);
+            hsig = (TH1*)arr.RemoveAt(2);
+            arr.Delete();
           }
-          h2->FitSlicesY(gs.get(), 0, -1, minSliceStat, "QNR", &arr);
-          if (auto* hmean = (TH1*)arr.RemoveAt(1)) {
+          if (hmean) {
             hmean->SetTitle(Form("<%s>", h2->GetTitle()));
             hmean->SetXTitle(h2->GetXaxis()->GetTitle());
             hmean->SetYTitle(Form("<%s>", h2->GetYaxis()->GetTitle()));
             hm.addHisto(hmean, id + 1);
           }
-          if (auto* hsig = (TH1*)arr.RemoveAt(2)) {
+          if (hsig) {
             hsig->SetTitle(Form("#sigma(%s)", h2->GetTitle()));
             hsig->SetXTitle(h2->GetXaxis()->GetTitle());
             hsig->SetYTitle(Form("#sigma(%s)", h2->GetYaxis()->GetTitle()));
             hm.addHisto(hsig, id + 2);
           }
-          arr.Delete();
         }
       }
     }
@@ -326,15 +352,20 @@ void postProcessHistos(o2::HistoManager& hm, float resRange, int minSliceStat)
 /// maxSnp, nSnp          : |snp| range and number of snp bins
 /// nTglBins              : number of tgl bins (limits from the Z extent of the chamber / TOF slice divided by X)
 /// nTOFSlices            : number of TOF Z slices
-/// nBinRes, resRange     : bins and half-range (cm) of the residual axis, the range of the gaussian fit
-/// minSliceStat          : minimal number of entries of the slice to be fitted
+/// nBinRes, resRangeY/Z   : bins and half-ranges (cm) of the residual axes of dY and dZ, also the ranges of the gaussian fits
+/// minEntriesFit         : histograms with fewer entries use the profile (mean and spread) instead of FitSlicesY
+/// minSliceStat          : minimal number of non-empty bins in the slice to be fitted
 /// onlyAccepted          : skip the tracks rejected by the chi2 cut of the GBL fit
 /// maxTracks             : process at most that many tracks (<=0: all)
 void trdTofResid(const char* inpName, const char* outName = "trdTofResid_hman.root", const char* geomName = "", int resType = 0,
-                 float maxSnp = 0.4, int nSnp = 7, int nTglBins = 5, int nTOFSlices = 5, int nBinRes = 100, float resRange = 3,
-                 int minSliceStat = 30, bool onlyAccepted = true, long maxTracks = -1)
+                 float maxSnp = 0.4, int nSnp = 7, int nTglBins = 5, int nTOFSlices = 5, int nBinRes = 100, float resRangeY = 3,
+                 float resRangeZ = 5, int minSliceStat = 3, int minEntriesFit = 100, bool onlyAccepted = true, long maxTracks = -1)
 {
   using namespace trdtof;
+  if (nTOFSlices < 1 || nTOFSlices > 10) {
+    printf("nTOFSlices must be within 1:10\n");
+    return;
+  }
   if (resType < 0 || resType > 2) {
     printf("resType must be 0 (dPre), 1 (dUnb) or 2 (dFit)\n");
     return;
@@ -347,10 +378,10 @@ void trdTofResid(const char* inpName, const char* outName = "trdTofResid_hman.ro
   const auto ts = makeTOFSlices(nTOFSlices);
   o2::HistoManager hm("", outName);
   hm.SetName(gSystem->BaseName(outName));
-  bookHistos(hm, ts, resType, nSnp, maxSnp, nTglBins, nBinRes, resRange);
+  bookHistos(hm, ts, resType, nSnp, maxSnp, nTglBins, nBinRes, resRangeY, resRangeZ);
   fillHistos(chain, hm, ts, resType, onlyAccepted, maxTracks);
   delete chain;
-  postProcessHistos(hm, resRange, minSliceStat);
+  postProcessHistos(hm, minSliceStat, minEntriesFit);
   hm.write(outName);
   printf("Saved %d histograms to %s\n", hm.getNHistos(), outName);
 }
@@ -417,7 +448,8 @@ void drawOnPad(const std::vector<std::unique_ptr<o2::HistoManager>>& hmv, int id
       }
     }
     gr->SetMarkerStyle(markers[i]);
-    gr->SetMarkerSize(0.6);
+    gr->SetMarkerSize(1.0);
+    gr->SetLineWidth(2);
     gr->SetMarkerColor(colors[i]);
     gr->SetLineColor(colors[i]);
     drawn[i] = gr;
@@ -449,6 +481,16 @@ void drawOnPad(const std::vector<std::unique_ptr<o2::HistoManager>>& hmv, int id
   for (int ib = 1; ib <= frame->GetNbinsX(); ++ib) { // empty frame whose line is clipped away
     frame->SetBinContent(ib, lo - 10. * (hi - lo));
   }
+  gPad->SetLeftMargin(0.2);
+  gPad->SetBottomMargin(0.17);
+  gPad->SetTopMargin(0.1);
+  gPad->SetRightMargin(0.03);
+  for (auto* ax : {frame->GetXaxis(), frame->GetYaxis()}) {
+    ax->SetTitleSize(0.065);
+    ax->SetLabelSize(0.055);
+  }
+  frame->GetXaxis()->SetTitleOffset(1.1);
+  frame->GetYaxis()->SetTitleOffset(1.5);
   frame->SetLineColorAlpha(kWhite, 0.);
   frame->Draw();
   for (auto* gr : drawn) {
@@ -465,9 +507,11 @@ void drawOnPad(const std::vector<std::unique_ptr<o2::HistoManager>>& hmv, int id
 /// by trdTofResid, into pdfName: one page per sector and TRD layer / TOF, 4 rows (mean dY, sigma dY, mean dZ, sigma dZ) and
 /// one column per TRD stack / TOF Z slice.
 /// cfgKeyValues : "checkresid.ext_hm_list=a.root,b.root;checkresid.ext_leg_list=...;..." (empty: the keys are taken as they are)
+/// rerunPostProcess : refit/reconvert the 2D histograms of the loaded managers (minSliceStat, minEntriesFit as in trdTofResid)
 /// maxMeanY, maxSigY, maxMeanZ, maxSigZ : fixed vertical ranges (cm), 0 = automatic
-void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTofResid.pdf", float maxMeanY = 0.f, float maxSigY = 0.f,
-                     float maxMeanZ = 0.f, float maxSigZ = 0.f, int sectMin = 0, int sectMax = 17)
+void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTofResid.pdf", bool rerunPostProcess = false, float maxMeanY = 0.f,
+                     float maxSigY = 0.f, float maxMeanZ = 0.f, float maxSigZ = 0.f, int sectMin = 0, int sectMax = 17, int minSliceStat = 3,
+                     int minEntriesFit = 100)
 {
   using namespace trdtof;
   if (cfgKeyValues && cfgKeyValues[0]) {
@@ -530,6 +574,9 @@ void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTo
       hm.reset();
       continue;
     }
+    if (rerunPostProcess) {
+      postProcessHistos(*hm, minSliceStat, minEntriesFit);
+    }
     hm->SetName(useLeg ? vecLegends[i].c_str() : hmNames[i].c_str());
     hmColor[i] = useColors ? colors[i] : hcol[i % hcol.size()];
     hmMarker[i] = useMarkers ? markers[i] : 20 + i + (i % 2) * 4;
@@ -538,7 +585,7 @@ void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTo
   }
 
   gStyle->SetOptStat(0);
-  gStyle->SetTitleFontSize(0.07);
+  gStyle->SetTitleFontSize(0.06);
   gStyle->SetTitleW(0.95);
   gStyle->SetTitleX(0.5);
   gStyle->SetTitleAlign(23);
@@ -550,7 +597,7 @@ void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTo
   for (int isect = sectMin; isect <= sectMax; ++isect) {
     for (int ilr = 0; ilr <= LrTOF; ++ilr) {
       int nCol = 0;
-      for (int ist = 0; ist < (ilr == LrTOF ? 100 : NTRDSt); ++ist) {
+      for (int ist = 0; ist < (ilr == LrTOF ? 10 : NTRDSt); ++ist) {
         for (const auto& hm : hmv) {
           if (hm && hm->getHisto(histoID(isect, ilr, ist, 0) + 1)) {
             nCol = ist + 1;
@@ -558,6 +605,7 @@ void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTo
         }
       }
       if (nCol) {
+        nCol = ilr == LrTOF ? nCol : NTRDSt; // all the stacks of a TRD layer
         pages.push_back({isect, ilr, nCol});
       }
     }
@@ -566,8 +614,8 @@ void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTo
     printf("No histograms to draw\n");
     return;
   }
-  TCanvas canv("ctrdtof", "", 1200, 1560); // same aspect ratio as the ROOT pdf page (20x26), else the content is misplaced
-  canv.SetCanvasSize(1200, 1560);              // the exact size, w/o it the pdf content is shifted
+  TCanvas canv("ctrdtof", "", 2000, 2600); // same aspect ratio as the ROOT pdf page (20x26), else the content is misplaced
+  canv.SetCanvasSize(2000, 2600);              // the exact size, w/o it the pdf content is shifted
   const float rowMax[4] = {maxMeanY, maxSigY, maxMeanZ, maxSigZ};
   for (size_t ip = 0; ip < pages.size(); ++ip) {
     const auto [isect, ilr, nCol] = pages[ip];
@@ -605,4 +653,10 @@ void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTo
   }
   const int nPages = pages.size();
   printf("Wrote %d pages to %s\n", nPages, pdfName);
+}
+
+/// Called by ROOT when the macro is given as `root trdTofResid.C+ -e '...'` (the function named as the file is executed): only loads the macro.
+void trdTofResid()
+{
+  printf("trdTofResid(inp, out, geom, resType, ...) fills and fits, drawTRDTOFResid(cfgKeyValues, pdf, ...) draws, see the header of trdTofResid.C\n");
 }
