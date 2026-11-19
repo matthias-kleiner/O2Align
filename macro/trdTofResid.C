@@ -424,10 +424,52 @@ std::optional<int> parseColor(const std::string& token)
   return std::nullopt;
 }
 
+/// range of a row of pads (one sector and layer, all stacks/slices and managers) from the bins with a successful fit:
+/// mean: +-(|median| + 4 MAD); sigma: [max(0, median - 4 MAD), median + 4 MAD]. Returns {0, 0} if there are no bins.
+std::array<float, 2> rowRange(const std::vector<std::unique_ptr<o2::HistoManager>>& hmv, int isect, int ilr, int nCol, int iyz, bool isSigma)
+{
+  std::vector<double> vals;
+  for (int ic = 0; ic < nCol; ++ic) {
+    for (const auto& hm : hmv) {
+      auto* h = hm ? hm->getHisto(histoID(isect, ilr, ic, iyz) + 1 + isSigma) : nullptr;
+      if (!h) {
+        continue;
+      }
+      for (int ib = 1; ib <= h->GetNbinsX(); ++ib) {
+        if (h->GetBinError(ib) > 0.) {
+          vals.push_back(h->GetBinContent(ib));
+        }
+      }
+    }
+  }
+  if (vals.empty()) {
+    return {0.f, 0.f};
+  }
+  auto median = [](std::vector<double>& v) {
+    const size_t n = v.size() / 2;
+    std::nth_element(v.begin(), v.begin() + n, v.end());
+    double m = v[n];
+    if (v.size() % 2 == 0) {
+      m = 0.5 * (m + *std::max_element(v.begin(), v.begin() + n));
+    }
+    return m;
+  };
+  const double med = median(vals);
+  for (auto& v : vals) {
+    v = std::abs(v - med);
+  }
+  const double mad = median(vals);
+  if (isSigma) {
+    return {(float)std::max(0., med - 4. * mad), (float)(med + 4. * mad)};
+  }
+  const float lim = std::abs(med) + 4. * mad;
+  return {-lim, lim};
+}
+
 /// draws, superimposed, the histograms with the given ID of all the managers on the current pad, skipping the bins w/o a successful
-/// fit; fixedMax>0: range [-fixedMax, fixedMax] (mean) or [0, fixedMax] (sigma), otherwise it is set from the content.
+/// fit; yRange (lo < hi) is the vertical range, otherwise it is set from the content.
 /// Returns the graph of each manager actually drawn (the pad owns them).
-void drawOnPad(const std::vector<std::unique_ptr<o2::HistoManager>>& hmv, int id, bool isSigma, float fixedMax, const std::vector<int>& colors, const std::vector<int>& markers, std::vector<TGraphErrors*>& drawn)
+void drawOnPad(const std::vector<std::unique_ptr<o2::HistoManager>>& hmv, int id, bool isSigma, std::array<float, 2> yRange, const std::vector<int>& colors, const std::vector<int>& markers, std::vector<TGraphErrors*>& drawn)
 {
   drawn.assign(hmv.size(), nullptr);
   float vmin = 1e9, vmax = -1e9;
@@ -465,9 +507,9 @@ void drawOnPad(const std::vector<std::unique_ptr<o2::HistoManager>>& hmv, int id
     return;
   }
   float lo = vmin, hi = vmax;
-  if (fixedMax > 0.f) {
-    lo = isSigma ? 0.f : -fixedMax;
-    hi = fixedMax;
+  if (yRange[1] > yRange[0]) {
+    lo = yRange[0];
+    hi = yRange[1];
   } else if (vmax > vmin) {
     const float mrg = 0.15f * (vmax - vmin);
     lo = isSigma ? 0.f : vmin - mrg;
@@ -508,7 +550,8 @@ void drawOnPad(const std::vector<std::unique_ptr<o2::HistoManager>>& hmv, int id
 /// one column per TRD stack / TOF Z slice.
 /// cfgKeyValues : "checkresid.ext_hm_list=a.root,b.root;checkresid.ext_leg_list=...;..." (empty: the keys are taken as they are)
 /// rerunPostProcess : refit/reconvert the 2D histograms of the loaded managers (minSliceStat, minEntriesFit as in trdTofResid)
-/// maxMeanY, maxSigY, maxMeanZ, maxSigZ : fixed vertical ranges (cm), 0 = automatic
+/// maxMeanY, maxSigY, maxMeanZ, maxSigZ : fixed vertical ranges (cm), 0 = automatic: per row of a page (all stacks and managers)
+///   median and MAD of the plotted bins, mean: +-(|median| + 4 MAD), sigma: [max(0, median - 4 MAD), median + 4 MAD]
 void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTofResid.pdf", bool rerunPostProcess = false, float maxMeanY = 0.f,
                      float maxSigY = 0.f, float maxMeanZ = 0.f, float maxSigZ = 0.f, int sectMin = 0, int sectMax = 17, int minSliceStat = 3,
                      int minEntriesFit = 100)
@@ -540,15 +583,13 @@ void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTo
     printf("Warning: %zu marker IDs provided for %d external histomanagers, will use automatic markers\n", markerIDs.size(), nhm);
   }
   std::vector<int> colors, markers;
-  if (useColors) {
-    for (const auto& cn : colorNames) {
-      auto c = parseColor(cn);
+  if (useColors) { // an unrecognized name falls back to the automatic color of that entry only
+    for (size_t i = 0; i < colorNames.size(); ++i) {
+      auto c = parseColor(colorNames[i]);
       if (!c) {
-        printf("Warning: unrecognized EColor name '%s', will use automatic colors\n", cn.c_str());
-        useColors = false;
-        break;
+        printf("Warning: unrecognized EColor name '%s', will use the automatic color for entry %zu\n", colorNames[i].c_str(), i);
       }
-      colors.push_back(*c);
+      colors.push_back(c ? *c : -1);
     }
   }
   if (useMarkers) {
@@ -578,7 +619,7 @@ void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTo
       postProcessHistos(*hm, minSliceStat, minEntriesFit);
     }
     hm->SetName(useLeg ? vecLegends[i].c_str() : hmNames[i].c_str());
-    hmColor[i] = useColors ? colors[i] : hcol[i % hcol.size()];
+    hmColor[i] = useColors && colors[i] >= 0 ? colors[i] : hcol[i % hcol.size()];
     hmMarker[i] = useMarkers ? markers[i] : 20 + i + (i % 2) * 4;
     hm->setMarkerStyle(hmMarker[i], 0.6);
     hm->setColor(hmColor[i]);
@@ -624,14 +665,19 @@ void drawTRDTOFResid(const char* cfgKeyValues = "", const char* pdfName = "trdTo
     bool legDrawn = false;
     for (int ir = 0; ir < 4; ++ir) {
       const int iyz = ir / 2, isSigma = ir % 2;
+      std::array<float, 2> yRange = rowRange(hmv, isect, ilr, nCol, iyz, isSigma);
+      if (rowMax[ir] > 0.f) { // explicit fixed range overrides the median/MAD one
+        yRange = {isSigma ? 0.f : -rowMax[ir], rowMax[ir]};
+      }
       for (int ic = 0; ic < nCol; ++ic) {
         canv.cd(ir * nCol + ic + 1);
         std::vector<TGraphErrors*> drawn;
-        drawOnPad(hmv, histoID(isect, ilr, ic, iyz) + 1 + isSigma, isSigma, rowMax[ir], hmColor, hmMarker, drawn);
+        drawOnPad(hmv, histoID(isect, ilr, ic, iyz) + 1 + isSigma, isSigma, yRange, hmColor, hmMarker, drawn);
         if (legDrawn || std::none_of(drawn.begin(), drawn.end(), [](const TGraphErrors* g) { return g != nullptr; })) {
           continue;
         }
         auto* lg = new TLegend(0.12, 0.13, 0.9, 0.13 + std::min(0.5f, nhm * 0.2f / 3.f)); // owned by the pad
+        lg->SetNColumns(std::max(1, int(std::round(nhm/2))));
         lg->SetFillStyle(0);
         lg->SetBorderSize(0);
         for (int i = 0; i < nhm; ++i) {
