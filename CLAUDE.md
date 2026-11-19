@@ -5,7 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A standalone package built against ALICE O2, producing `libO2Align` plus one DPL workflow
-executable, `o2-dev-alignment-workflow` ([src/alignment-workflow.cxx](src/alignment-workflow.cxx)).
+executable, `o2-dev-alignment-workflow` ([src/alignment-workflow.cxx](src/alignment-workflow.cxx)), and the
+stand-alone `o2-dev-mille-replay` ([src/milleReplay.cxx](src/milleReplay.cxx), standard library only): it replays the
+Mille binaries with a `millepede.res` applied, emulating pede's local fit and rejections, and reports per input file the
+rejection and the residual pressure on every free or fixed parameter — the fast way to validate a solution without
+regenerating the debug trees ([doc/MilleReplay.md](doc/MilleReplay.md)).
 It aligns ALICE barrel detectors by refitting tracks with GBL (General Broken Lines) and writing
 Millepede-II input. Originally cloned from `O2/Detectors/Upgrades/ITS3/alignment`, so ITS/ITS3 is
 still the most developed part.

@@ -510,3 +510,61 @@ Found in a code review of `ea32487`; each one checked on the laptop.
   each other. The SVD cut is now 1e-3 and the diagonal of the resolution matrix is reported per mode (`resolution`,
   `determined`); modes with resolution < 0.5 are flagged in the log and drawn in grey by `drawWeakModes.C`.
 
+
+## 2026-11-19: TRD/TOF residuals of `solB0A1`, chamber DOFs for the next iteration
+
+- `solB0A1` (sectors only, ITS fixed, B0+B±+cosmics) vs its start `best/IBEdge`, from the unbiased residuals of `trdTofResid.C`:
+  TRD sector z offsets of 1–2 cm (sm03–06 +13…+17 mm, sm13–14 −11…−16 mm, all layers and fields) and the common −0.9 mm dy
+  offset are gone; the chamber-in-sector dy-offset spread went 0.4–0.6 → 0.23 mm (stat. error 0.02–0.04 mm, field-consistent,
+  corr 0.6–0.8), the per-sector dy-vs-tanφ slopes of sm12–16 (+1…+6 mm) went to ≤ 1 mm. Solution: TRD TX +6.6 mm and RY
+  +2.4 mrad in every sector (a 2 mrad rotation about the beam), TY −9.1 mm·sinφ (a tilt), TZ −8.9 mm·sinφ − 4.6 mm·cos2φ with
+  no matching rφ term (bottom sectors sm12–15 out by 9–15 mm).
+- Left: L4/L5 dy-vs-tanφ slope −0.5…−1.5 mm at B± (radial-like, ≈ −0.5 mm at B0); chamber dz-centre spread 2.5–3.4 mm with
+  poor field consistency; chamber dy offsets correlate with ±tan 2°·dz (alternating per layer, corr 0.56 at the start), i.e.
+  chamber z enters y through the pad tilt. The apparent in-chamber dz-vs-tgl slope (−1…−2 cm/tgl, also in v10n) is an
+  edge-bin effect: the inner tgl bins are flat. TOF: dy vs snp is a step at snp = 0 of ±2.5–3 mm at B± (negative slope at B0),
+  end-slice dz offsets of ±1 cm at B± only — non-geometric; TOF sector RY came out +4.3 mrad on average with TX only +1 mm.
+- pede rejected 28.5 % of the records (2.6 % in the IBEdge ITS fit, up to 45 % in B0 files), jumping from 28k to 1.46M when
+  the cut factor reached 1. Unbiased pulls of accepted tracks: ITS 7–12 % beyond 3σ, TOF y 9–10 % at B± (core 1.1–1.3), TRD y
+  core 0.4–0.6. The mean vertex was fixed at the reference (0,0) while the beam is at (+0.34, −1.82) mm.
+- Cause of the rejections: the composed (multi-track PV) records. In the `Mille_IBEdgeS4R` debug trees (mode 2) 98 % (B0) / 89 %
+  (B+) of the composed records exceed the 3σ χ² quantile (χ²/ndf ≈ 7, rising with ndf), the single tracks 38 % / 12 %; the
+  accepted pede records have ⟨ndf⟩ 26–32, i.e. mostly single tracks. Their excess χ² sits in the kinks at ITS layer 0. The
+  recorded prior is the CCDB mean vertex, (−0.54, −0.05) mm with σ ≈ 50 µm, while in the IBEdge ITS frame the beam (and the
+  refitted vertices) is at ≈ (−0.20, −1.87) mm, which is the IBEdge pede correction (+0.34, −1.82) mm. With the mean-vertex
+  labels fixed in `solB0A1` the 37σ pull remains in every composed record. The tail fraction per TRD chamber is uniform and
+  uncorrelated with the chamber residuals. The ProcessData check runs (mode 0, per-track prior, no `mvbias`) carry the same pull.
+- `solB1A1` (`ITSEnvTRDTOFch_RB.json`, mean vertex free): MV fitted to (+0.333, −1.813) mm per slot as in IBEdge; rejections
+  22.3 % (28.5 %): B± 18–20 → 10.5–11.3 %, B0 42–44 → 35–37 %, cosmics 3.7 % in both. The MV pull was the charge-independent
+  ±2σ kink pattern at ITS layer 0 of the composed tracks (sign change at φ ≈ −75°/+105°, i.e. a vertex pulled along φ ≈ 100°).
+  The rest are single tracks (B0 36 %, B+ 12.5 % with χ²/ndf > 2.5 in the Mille debug trees) with kink pulls² of 10–19 at
+  every scatterer (1.4–2.2 for the good ones): multiple scattering underestimated, at B0 that of the tracks softer than
+  `meanPtB0` = 0.7 GeV; a composed B0 record with one such track is rejected as a whole.
+- `doc/ITSEnvTRDTOFch_RB.json`: mean vertex free; TRD chambers free in TX, TY, TZ, RZ with priors 0 ± 1 mm / 1 mrad; chamber
+  RX/RY kept fixed, since with a free sector the transported mean constraint gives them lever arms of ±240 cm (RX → sector TZ)
+  and ±31 cm (RY → sector TX), through which weakly observed tilts could satisfy the constraint; TOF sector RX/RY with
+  1 mrad priors, TOF strips fixed.
+
+## 2026-11-19: `milleReplay`, and what `solB1A1` did with the TRD chambers
+
+- Regenerating the `gbltrack` debug trees to validate a solution takes hours. `o2-dev-mille-replay` (`src/milleReplay.cxx`) replays the Mille
+  binaries with the solution applied, with pede's local fit (Huber/Cauchy down-weighting) and rejections, and accumulates
+  per parameter the profiled gradient and curvature, per input file. All the TRD/TOF binaries take about 3 min; the
+  rejection fractions match pede's within 0.5 % (B0 file 36.1 vs 36.5 %, cosmics 3.7 vs 3.7 %).
+- `ITSEnvTRDTOFch_RB.json` was written assuming the TRD chamber DOFs are in the TGeo chamber frame (`TX` rφ, `TZ` radial).
+  They are in the sensor frame of `SensorTRD` (`TX` radial, `TY` rφ, `TZ` z): the freed `RZ` was the tilt about the beam,
+  which enters the supermodule TX constraint with the layer lever arm, while the in-plane `RX` stayed fixed.
+- `solB1A1` chambers: radial `TX` RMS 1.9 mm (up to 7.6 mm), rφ `TY` 1.4 mm, z `TZ` 2.2 mm (up to 9.8 mm), `RZ` 4.5 mrad
+  (up to 19 mrad), with layer-linear means (`TX` −0.7 → +1.4 mm, `TY` −0.6 → +1.7 mm, `RZ` −3.1 → +4.4 mrad from L0 to L5);
+  the 1 mm / 1 mrad priors do not hold well-measured chambers. Replayed per dataset, B0 and cosmics ask to undo the layer
+  patterns (L0 radial +1.4 / +2.5 mm, L0 `RZ` +3.5 / +3.3 mrad) and B± for more (−0.2…−1.2 mm, −2.6…−2.9 mrad); per chamber,
+  B0/cosmics would undo 20–32 % of the radial and `RZ` values, B± add 8–15 %; the rφ `TY` values are accepted by all four
+  datasets (regression slope 0.00 ± 0.02). The chamber z `TZ` is rejected by B− only. The fixed in-plane `RX` would gain
+  1.4–3k χ² per dataset, with shifts correlated between B0, B+ and cosmics (+0.58, +0.35).
+- Common modes in tension between field-free and B≠0 data at the `solB1A1` optimum: TRD sector rφ (B0 +0.6 mm, B± −0.5/−0.9,
+  Δχ² 6k/11k), TOF sector rφ (B0 −1.1, B± +1.0/+1.5, Δχ² 11k/15k), TRD sector radial (B− −2.5 mm, cosmics +4.5 mm, Δχ² 6.7k/7.2k),
+  TOF strip normal (fixed; B0 −12.8 mm, B± +4…+6). B− chamber-level shifts do not correlate with any other dataset.
+- `doc/ITSEnvTRDTOFch2_RB.json`: chambers free only in rφ `TY` and in-plane `RX` (priors 1 mm / 1 mrad), radial and z fixed.
+- `macro/drawLocalFrames.C` drew the TGeo physical-node frames, so `doc/local_frames_TRD.pdf` showed the TRD chambers with
+  the supermodule axes (X rφ, Z radial), not the sensor frame their DOFs are defined in. It now draws the DOF frame (from
+  the `Sensor*` classes) solid and the TGeo frame dashed; the three `doc/local_frames_*.pdf` are regenerated.

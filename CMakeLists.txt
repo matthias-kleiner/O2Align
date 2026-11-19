@@ -100,6 +100,14 @@ if(TARGET O2::fpu_support)
   target_link_libraries(O2exe-alignment-workflow PUBLIC O2::fpu_support)
 endif()
 
+# stand-alone replay of Mille binaries with a pede solution (no O2/ROOT dependency), see doc/MilleReplay.md
+find_package(Threads REQUIRED)
+add_executable(O2exe-mille-replay src/milleReplay.cxx)
+set_property(TARGET O2exe-mille-replay
+             PROPERTY OUTPUT_NAME o2-dev-mille-replay)
+target_compile_options(O2exe-mille-replay PRIVATE -O2)
+target_link_libraries(O2exe-mille-replay PRIVATE Threads::Threads)
+
 # target_compile_options(O2Align PRIVATE -O0 -g)
 # target_compile_options(O2exe-alignment-workflow PRIVATE -O0 -g)
 target_compile_options(O2Align PRIVATE -g -fno-omit-frame-pointer)
@@ -111,7 +119,7 @@ install(TARGETS O2Align
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(TARGETS O2exe-alignment-workflow
+install(TARGETS O2exe-alignment-workflow O2exe-mille-replay
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/O2Align DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY macro/ DESTINATION ${CMAKE_INSTALL_DATADIR}/macro USE_SOURCE_PERMISSIONS)
