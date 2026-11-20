@@ -10,7 +10,9 @@
 #include <TCanvas.h>
 #include <TGeoBBox.h>
 #include <TGeoManager.h>
+#include <TGeoNode.h>
 #include <TGeoPhysicalNode.h>
+#include <TGeoTube.h>
 #include <TLegend.h>
 #include <TPolyLine.h>
 #include <TPolyLine3D.h>
@@ -34,7 +36,7 @@ struct Volume {
   Point lo{{1.e9, 1.e9, 1.e9}}, hi{{-1.e9, -1.e9, -1.e9}};
   double y = 0., radius = 0., cosPhi = 0., sinPhi = 0.;
 };
-constexpr int colors[] = {kRed, kCyan, kGreen, kBlue, kBlack};
+constexpr int colors[] = {kRed, kCyan, kGreen, kBlue, kBlack, kGray + 2};
 int kindOf(const std::string& name)
 {
   const auto leaf = name.substr(name.rfind('/') + 1);
@@ -181,6 +183,39 @@ TCanvas* drawITSAlignableVolumes(const char* file = "o2sim_geometry-aligned.root
       }
     }
   }
+  // Draw the central pipe's outer surface, clipped in global Z (cm).
+  TPolyLine3D* pipeSample = nullptr;
+  TGeoIterator nodes(gGeoManager->GetTopVolume());
+  while (auto* node = nodes()) {
+    if (std::string(node->GetVolume()->GetName()) != "IP_PIPE") continue;
+    auto* tube = dynamic_cast<TGeoTube*>(node->GetVolume()->GetShape());
+    if (!tube) break;
+    Volume pipe;
+    pipe.kind = 5;
+    pipe.aligned = *nodes.GetCurrentMatrix();
+    const double axis[3] = {0., 0., 1.};
+    double direction[3];
+    pipe.aligned.LocalToMasterVect(axis, direction);
+    if (std::abs(direction[2]) < 1.e-9) break;
+    auto pointAtZ = [&](double phi, double z) {
+      Point p{{tube->GetRmax() * std::cos(phi), tube->GetRmax() * std::sin(phi), 0.}}, lab;
+      pipe.aligned.LocalToMaster(p.data(), lab.data());
+      p[2] = (z - lab[2]) / direction[2];
+      return p;
+    };
+    for (double z : {-20., 20.}) {
+      std::vector<Point> ring;
+      for (int j = 0; j <= 120; ++j) ring.push_back(pointAtZ(2. * pi * j / 120., z));
+      line(ring, pipe, false);
+    }
+    for (int j = 0; j < 8; ++j) {
+      const double phi = 2. * pi * j / 8.;
+      line({pointAtZ(phi, -20.), pointAtZ(phi, 20.)}, pipe, false);
+    }
+    pipeSample = static_cast<TPolyLine3D*>(canvas->GetListOfPrimitives()->Last());
+    break;
+  }
+  if (!pipeSample) std::cerr << "Central beampipe IP_PIPE not found or unsupported; omitted.\n";
   for (int k = 0; k < 3; ++k) {
     const double margin = std::max(1., 0.08 * (high[k] - low[k]));
     low[k] -= margin;
@@ -209,6 +244,7 @@ TCanvas* drawITSAlignableVolumes(const char* file = "o2sim_geometry-aligned.root
     canvas->GetListOfPrimitives()->Add(sample);
     legend->AddEntry(sample, "Ideal positions (same colors)", "l");
   }
+  if (pipeSample) legend->AddEntry(pipeSample, "Beampipe (Z = +/-20 cm)", "l");
   legend->SetBit(kCanDelete);
   legend->Draw();
   canvas->Modified();
