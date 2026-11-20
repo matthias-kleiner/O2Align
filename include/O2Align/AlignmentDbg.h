@@ -76,8 +76,11 @@ struct DbgTrack : public o2::track::TrackPar {
   uint32_t tfCounter = 0;
   uint32_t firstTForbit = 0;
   int runNumber = 0;
+  o2::track::TrackPar inputPar;   // the input track (reconstruction) before any refit; for cosmics the downward seed
+  o2::track::TrackPar kfInnerPar; // state after the inward KF refit, before the eventual vertex update (= the reference w/o vertex)
+  float gblRefCorr[5] = {};       // GBL correction to the reference state at the reference point, (q/pt, snp, tgl, Y, Z)
   std::vector<DbgPoint> points;
-  ClassDefNV(DbgTrack, 1)
+  ClassDefNV(DbgTrack, 2)
 };
 
 } // namespace o2::alignrs

@@ -51,6 +51,9 @@ GBL fit. It is the seed of the GBL linearization; the GBL correction is not appl
 | `composed` | the track was fitted in a composed trajectory with the other tracks of its vertex (`useMultiTrackPVConstraint` 1 to 4); otherwise it is a single-track trajectory |
 | `bz` | nominal field, kG (0 for B=0 data) |
 | `tfCounter`, `firstTForbit`, `runNumber` | timing info of the TF |
+| `inputPar` | (`TrackPar`) the input track of the reconstruction before any refit, e.g. `t.inputPar.getPt()`; for cosmics the downward seed |
+| `kfInnerPar` | (`TrackPar`) the state after the inward KF refit over the detector points, before the eventual vertex update; w/o vertex it equals the reference state |
+| `gblRefCorr[5]` | the GBL correction to the reference state at the reference point, in the GBL order (q/pt, snp, tgl, Y, Z): the fitted q/pt is `t.getQ2Pt() + t.gblRefCorr[0]`; zero at B=0 (no curvature parameter) or if not available |
 | `points` | `std::vector<DbgPoint>`, the points of the GBL trajectory in the order GBL sees them (from the innermost outward) |
 
 ## `DbgTrack::points`: `DbgPoint`

@@ -72,6 +72,8 @@ struct Track {
   FitInfo gblFit;                     // gbl fit information
   std::vector<Measurement> points;    // measurment point, at the moment filled in parallel to GBL points but not used (might be used in the future for validation/debug output)
   std::vector<FrameInfoExt> info;     // frame info, owned by the track (detectors append to it)
+  o2::track::TrackParD inputPar;      // the input track (reconstruction), before any refit; for cosmics the downward seed
+  o2::track::TrackParD kfInnerPar;    // state after the inward KF refit over the detector points, before the eventual vertex update
   int invertAt{-1};                   // cosmics: slot of `info` from which the track runs in the inverted (opposite direction) parametrisation, see AlignmentSpec::prepareCosmicTrack; <0: none
 
   /// KF refit over the frames in the inclusive [frameStart, frameStop] slot range of `info`,
@@ -101,7 +103,7 @@ struct Track {
   /// The chi2 of the vertex point added to `kfFit.chi2` is then that of the scaled covariance.
   bool updateWithVertex(const o2::dataformats::VertexBase& vtx, double covScale = 1.);
 
-  ClassDefNV(Track, 3)
+  ClassDefNV(Track, 4)
 };
 
 struct TrackSlopes {

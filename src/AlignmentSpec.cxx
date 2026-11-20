@@ -349,8 +349,8 @@ class AlignmentSpec final : public Task
   // debug output of the randomly selected tracks (Params::debugTracksFraction)
   bool selectForDebug();
   // complete the debug points with the GBL fit results, the labels of the 1st point being firstLabel (1-based)
-  void fillDbgFitResults(gbl::GblTrajectory& traj, unsigned int firstLabel, std::vector<gbl::GblPoint>& points, std::vector<DbgPoint>& dbgPoints) const;
-  void writeDbgTrack(const Track& resTrack, bool composed, bool accepted, const FitInfo& fit, std::vector<DbgPoint>&& dbgPoints);
+  void fillDbgFitResults(gbl::GblTrajectory& traj, unsigned int firstLabel, std::vector<gbl::GblPoint>& points, std::vector<DbgPoint>& dbgPoints, std::array<float, 5>& refCorr) const;
+  void writeDbgTrack(const Track& resTrack, bool composed, bool accepted, const FitInfo& fit, std::vector<DbgPoint>&& dbgPoints, const std::array<float, 5>& refCorr);
 
   // build and fit the GBL trajectory of a single track, accounting its frames from the ipStart slot outward
   bool buildGBLTrack(Track& resTrack, int ipStart, std::vector<gbl::GblTrajectory>& gblTraj, double mvPriorCovScale = 0.);
@@ -651,6 +651,7 @@ bool AlignmentSpec::fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nT
   // order of the muon (it comes from the top): lost along the bottom leg outward, regained going back inward and along the top leg
   // upward (eLossSign of fitTrack; the Propagator's default takes the sign from the direction of x)
   resTrack.track = refDown;
+  resTrack.inputPar = refDown;
   if (!resTrack.fitTrack(nTop, nTot - 1, false, true, -1) || !resTrack.fitTrack(nTot - 1, nTop, false, true, +1)) {
     why = "KF fit of the bottom leg failed";
     return false;
@@ -661,6 +662,7 @@ bool AlignmentSpec::fitCosmicLegs(Track& resTrack, const TrackD& refDown, int nT
     why = "KF fit of the top leg failed";
     return false;
   }
+  resTrack.kfInnerPar = resTrack.track;
   return true;
 }
 
@@ -810,6 +812,7 @@ void AlignmentSpec::collectVertexTracks(const V2TRef& trackRef, bool useVertexCo
       auto& tr = resTracks.emplace_back();
       tr.gid = trackIndex;
       tr.track = convertTrack<double>(trPar);
+      tr.inputPar = tr.track;
       if (mFieldOFF && mParams->meanPtB0 > 0.) { // impose user pT for tracks at B0
         tr.track.setQ2Pt(1. / mParams->meanPtB0);
       }
@@ -855,6 +858,8 @@ void AlignmentSpec::refitTracks(std::vector<Track>& resTracks, bool useVertexCon
     }
     if (!nOK || !isAcceptedDetCombination(contributed) || !track.fitTrack((int)track.info.size() - 1, useVertexConstraint ? 1 : 0, false, true)) {
       track.gid.clear(); // mark as failed
+    } else {
+      track.kfInnerPar = track.track;
     }
   }
 }
@@ -1847,8 +1852,9 @@ bool AlignmentSpec::buildGBLTrack(Track& resTrack, int ipStart, std::vector<gbl:
   FitInfo fit{};
   const bool accepted = fitGBLTrajectory(traj, resTrack.kfFit.chi2Ndf, gblTraj, fit, mGBLStatSingle, &fitDone);
   if (debug && fitDone) {
-    fillDbgFitResults(traj, 1, points, dbgPoints);
-    writeDbgTrack(resTrack, false, accepted, fit, std::move(dbgPoints));
+    std::array<float, 5> refCorr{};
+    fillDbgFitResults(traj, 1, points, dbgPoints, refCorr);
+    writeDbgTrack(resTrack, false, accepted, fit, std::move(dbgPoints), refCorr);
   }
   if (!accepted) {
     return false;
@@ -2021,8 +2027,9 @@ size_t AlignmentSpec::buildGBLVertex(const std::vector<Track*>& contributors, st
     unsigned int firstLabel = 1; // the labels of the points continue through the components of the composed trajectory
     for (size_t i = 0; i < used.size(); ++i) {
       if (!dbgByTrack[i].empty()) {
-        fillDbgFitResults(traj, firstLabel, pointsAndTrans[i].first, dbgByTrack[i]);
-        writeDbgTrack(*used[i], true, res, fit, std::move(dbgByTrack[i]));
+        std::array<float, 5> refCorr{};
+        fillDbgFitResults(traj, firstLabel, pointsAndTrans[i].first, dbgByTrack[i], refCorr);
+        writeDbgTrack(*used[i], true, res, fit, std::move(dbgByTrack[i]), refCorr);
       }
       firstLabel += pointsAndTrans[i].first.size();
     }
@@ -2063,7 +2070,9 @@ bool AlignmentSpec::selectForDebug()
 // The kinks are read with getScatResults, which GBL gives in the diagonalised basis of the scatterer,
 // rotated back with the transformation stored in the point.
 // GBL labels the points of the trajectory consecutively from 1, firstLabel is the label of points[0].
-void AlignmentSpec::fillDbgFitResults(gbl::GblTrajectory& traj, unsigned int firstLabel, std::vector<gbl::GblPoint>& points, std::vector<DbgPoint>& dbgPoints) const
+// refCorr: the fitted correction of the local parameters at points[0], the reference point, in the GBL order
+// (q/pt, snp, tgl, Y, Z); zero if not available.
+void AlignmentSpec::fillDbgFitResults(gbl::GblTrajectory& traj, unsigned int firstLabel, std::vector<gbl::GblPoint>& points, std::vector<DbgPoint>& dbgPoints, std::array<float, 5>& refCorr) const
 {
   const auto nGBLPoints = std::count_if(dbgPoints.begin(), dbgPoints.end(), [](const DbgPoint& dp) { return !dp.isSamePoint(); });
   if (points.size() != static_cast<size_t>(nGBLPoints)) {
@@ -2072,6 +2081,12 @@ void AlignmentSpec::fillDbgFitResults(gbl::GblTrajectory& traj, unsigned int fir
   }
   Eigen::VectorXd par, res(2), measErr(2), resErr(2), downW(2);
   Eigen::MatrixXd cov, trans;
+  refCorr.fill(0.f);
+  if (!traj.getResults(firstLabel, par, cov) && par.size() >= 5) {
+    for (int i = 0; i < 5; ++i) {
+      refCorr[i] = static_cast<float>(par[i]);
+    }
+  }
   size_t iGBL = 0; // a debug point with SamePoint is a further measurement on the GBL point of the previous one
   for (size_t i = 0; i < dbgPoints.size(); ++i) {
     auto& dp = dbgPoints[i];
@@ -2107,7 +2122,7 @@ void AlignmentSpec::fillDbgFitResults(gbl::GblTrajectory& traj, unsigned int fir
   }
 }
 
-void AlignmentSpec::writeDbgTrack(const Track& resTrack, bool composed, bool accepted, const FitInfo& fit, std::vector<DbgPoint>&& dbgPoints)
+void AlignmentSpec::writeDbgTrack(const Track& resTrack, bool composed, bool accepted, const FitInfo& fit, std::vector<DbgPoint>&& dbgPoints, const std::array<float, 5>& refCorr)
 {
   DbgTrack dt;
   // the reference point: the state at the innermost point
@@ -2136,6 +2151,18 @@ void AlignmentSpec::writeDbgTrack(const Track& resTrack, bool composed, bool acc
   dt.tfCounter = mTimeInfo.tfCounter;
   dt.firstTForbit = mTimeInfo.firstTForbit;
   dt.runNumber = mTimeInfo.runNumber;
+  auto toFloat = [](const o2::track::TrackParD& src, o2::track::TrackPar& dst) {
+    dst.setX(src.getX());
+    dst.setAlpha(src.getAlpha());
+    for (int i = 0; i < o2::track::kNParams; ++i) {
+      dst.setParam(src.getParam(i), i);
+    }
+    dst.setAbsCharge(src.getAbsCharge());
+    dst.setPID(src.getPID());
+  };
+  toFloat(resTrack.inputPar, dt.inputPar);
+  toFloat(resTrack.kfInnerPar, dt.kfInnerPar);
+  std::copy(refCorr.begin(), refCorr.end(), dt.gblRefCorr);
   dt.points = std::move(dbgPoints);
   (*mDBGOut) << "gbltrack"
              << "t=" << dt

@@ -741,3 +741,44 @@ Found in a code review of `ea32487`; each one checked on the laptop.
   recording: 0.93, 5 %, 16 %), presumably from the tighter `extraClsErrYTRD`. Its mean-vertex reference is already at the beam,
   so it must be replayed with the HPLUT mean-vertex solution (`mvA3.res`), not the first recording's one (+0.3, −1.8 mm),
   which rejects 84 % of its vertex records.
+- Debug trees, TRD `dyUnb` regressed per layer on the geometric part of the local angle, u = y/x (fit-independent), and on
+  the bending part v = tanψ − u. A radial misplacement, or any chamber-local effect (drift, Lorentz angle), depends on the
+  total tanψ and gives the same slope in u and v. L5−L0 of the slopes (mm), B+:
+
+  | sample | single-track u / v | composed u / v |
+  |---|---|---|
+  | first recording (10 % debug) | −4.0 / +0.8 | −5.8 / +4.9 |
+  | coll_TGEOPt12 B+ | −4.0 / +5.8 | −4.7 / +10.5 |
+  | coll_TGEOPt12 B− | −3.3 / +6.6 | −4.3 / +11.2 |
+
+  The replay radial request follows the v slope, which dominates its derivative (rms v ≈ 0.25 against rms u ≈ 0.08). The u
+  slopes agree between the record types. The B ≠ 0 excess is therefore a residual proportional to the bending, with an
+  antisymmetric layer pattern (about −5 at L0 to +6 mm at L5 per unit v). It is a track-model effect, not TRD geometry.
+  It is stronger in the composed vertex trajectories, and in coll_TGEOPt12 also in the single tracks. The B0 v slopes
+  (rms v ≈ 0.01) are dominated by the correlation of the seed direction with the residual and are meaningless.
+- Reading the composed-trajectory code (`buildGBLVertex`, `computeVertexTransformation`, GBL `prepare` for a 2-row
+  inner transformation) found nothing wrong. With a geometric constraint GBL gives every track its own curvature, the vertex
+  fixes only the offsets at the vertex point, and d(Y,Z)/d(vertex) is correct to first order.
+- coll_TGEOPt12NoMV (`useMultiTrackPVConstraint=0`, otherwise as coll_TGEOPt12). Its single-track vertex records must be
+  replayed at the recorded reference: a few-µm mean-vertex correction (`mvA3.res`) rejects 99 % of them, the per-track
+  vertex being tied tightly to the mean vertex. Layer-linear TRD radial (L5−L0, mm), B+ / B−: single-track with vertex
+  +7.1 / +7.5, without vertex +3.2 / +3.3, against composed +7.6 / +7.9 (coll_TGEOPt12). The composition is not the cause,
+  the vertex constraint enhances the effect. The debug trees agree (v slopes +9.8 / +10.4 with vertex).
+- Per-layer ITS radial shifts, fitted jointly in the replay, are constrained to ≤ 0.3 µm even at B0, request a few µm,
+  and leave the TRD mode unchanged: not the cause.
+- In estimated-pT bins (vertex records of coll_TGEOPt12NoMV) the request is +25, +17, +7.5, +0.5, −1 mm from the lowest
+  to the highest bin. Single tracks without vertex show the same.
+- The whole effect comes from tracks with a large v (|v| > 0.3 at the TRD, i.e. a bending only a track below ≈ 0.6 GeV can
+  have). With |v| < 0.3 the u and v slopes agree (L5−L0 −1 to −3.6 mm) in every sample and record type, and composed,
+  vertex and single tracks no longer differ. Those tracks have a wrong GBL seed: their reference q/pT corresponds to
+  ⟨pT⟩ ≈ 0.9 GeV although `minPt` = 1.2 cut the input tracks. The seed misses the outer ITS layers by up to 1 cm and the
+  TRD by 30–60 cm. GBL recovers the positions, but it linearizes around a direction at the TRD that is wrong by ≈ 0.2.
+  The radial derivative (tanψ of the seed) and the residuals inherit this.
+- Fraction of accepted tracks whose seed misses the outermost TRD point by more than 25 cm: B0 0 %. At B ≠ 0, q·bz > 0
+  (the same bending sense in the lab for both polarities): 8 % (single) / 20 % (composed) in the first recording,
+  17–18 % / 28–31 % in coll_TGEOPt12(NoMV). For q·bz < 0: 2–7 %. The bad seeds come from the inward KF refit
+  (`refitTracks` → `Track::fitTrack`, started from the input global track with `useStableRef`), and the vertex update
+  makes them more frequent.
+- To find which step produces the wrong seeds, the debug tree (`DbgTrack` v2) now stores the input track (`inputPar`), the
+  state after the inward KF refit before the vertex update (`kfInnerPar`) and the GBL correction to the reference state
+  (`gblRefCorr`, q/pt first).
