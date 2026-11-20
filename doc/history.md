@@ -568,3 +568,71 @@ Found in a code review of `ea32487`; each one checked on the laptop.
 - `macro/drawLocalFrames.C` drew the TGeo physical-node frames, so `doc/local_frames_TRD.pdf` showed the TRD chambers with
   the supermodule axes (X rφ, Z radial), not the sensor frame their DOFs are defined in. It now draws the DOF frame (from
   the `Sensor*` classes) solid and the TGeo frame dashed; the three `doc/local_frames_*.pdf` are regenerated.
+
+## 2026-11-20: the B on/off rφ tension is TOF relative to TRD, and is already in IBEdge
+
+- At `solB1A2` (`ITSEnvTRDTOFch2_RB.json`), single-group replays showed the common TRD and TOF sector rφ shifts requested
+  with opposite signs by the B = 0 data (B0 collisions, cosmics) and the B ≠ 0 data, and B+ and B− agreeing (polarity-even).
+  The TRD and TOF global rotations are correlated by 0.5–0.8, so a single-group shift mixes them. `o2-dev-mille-replay`
+  now writes the profiled curvature matrix between groups (`_groupH.txt`) for joint fits.
+- Joint fit of the TRD and TOF global rotations (sector TX = R·δφ, RY = δφ), 4 files per collision dataset, all cosmics:
+  - at the IBEdge reference (recording with `applyTRDshift=false`, fitted mean vertex), every dataset asks for the TRD
+    pad-shift rotation: +4.9 / +5.1 / +5.3 mm at R = 329.6 cm for B0 / B+ / B−, +6.2 mm for cosmics;
+  - TOF relative to that: B0 −0.7 mm, B+ +1.9, B− +1.6, cosmics +0.5 (at R = 385 cm). At `solB1A2`: TRD +0.3 / +0.0 / +0.2 /
+    +0.2, TOF −0.8 / +1.4 / +1.1 / −0.3. The tension is a 2.0–2.6 mm polarity-even TOF rφ offset between B on and off,
+    present with the same size before the TRD/TOF fit.
+- TRD sector TX and RY are well separated (correlation 0.2–0.3, layer lever arm ±32 cm); TOF RY is weakly measured
+  (σ 0.3–0.6 mrad per 4 files) but correlated with TX by only 0.0–0.4.
+- An ITS rφ mode ∝ r² (a charge-independent track curvature at B ≠ 0) does not explain it. Imposing it shifts the B on
+  requests in the ratio (r_TRD/r_TOF)² ≈ 0.74 and the B0 ones by much less. Removing the B on/off difference would need
+  +3…+5 µm at ITS L6 for TRD and −28…−40 µm for TOF. The data themselves ask for −11 µm (B0) and −16 µm (cosmics).
+- `gbltrack` debug trees of `Mille_IBEdgeS4R` (10 % of the tracks, IBEdge reference). Each collision dataset is a single run
+  (B0 562862, B+ 562837, B− 564644), and the tracks have no TPC points. 57 % of the TOF tracks (B+) are ITS+TOF only: at B ≠ 0
+  their curvature is fixed by the TOF point itself, so a TOF rφ shift is nearly degenerate with it, and their unbiased TOF
+  residual binned in the KF q/pT is self-correlated (a ±6 mm wiggle around q/pT = 0). At B = 0 they measure TOF against ITS
+  directly: B0 +0.2…+0.4 mm, cosmics −0.7 mm.
+- The TOF measurement is the centre of the main contributing pad (σ 7.5 mm), so the TOF residual of ITS+TRD+TOF tracks is a
+  25 mm box smeared by the 3.7 mm (B0) or 4.6 mm (B+) prediction error. At B0 the box is flat (−4.9…+21 mm, centre +8.2).
+  At B+ and B− the right edge is the same within ≈ 0.5 mm, but the box carries an extra narrow peak at 0…+5 mm. The medians
+  then differ by 3 mm, the 5–95 % centres by 0.3–0.8 mm, and the skew (84−50)−(50−16) is +3 mm. The skew is the same for
+  both polarities and at every incidence angle (+2…+4 mm already at |snp| < 0.05, where B0 has +0.1), and it is absent in
+  cosmics (run by run ≤ 2 mm). A pad-quantized measurement with a uniformly illuminated pad cannot produce such a peak, so the
+  B on/off TOF rφ tension of the least-squares fit is a change of the in-pad residual shape, not a geometry difference. Its
+  origin (TOF clusterization or matching at B ≠ 0) is open.
+- `dyPre` is not an ITS-only residual: its seed is the inward KF refit over all the points of the track (`refitTracks` →
+  `fitTrack`), so TOF and TRD enter it, through the curvature in particular. At TOF it is biased towards zero by the point
+  itself (median −0.1 mm for ITS+TRD+TOF at B0, against +8.5 for `dyUnb`) and is 2–3 times wider (68 % half-width
+  19–32 mm against 9–10).
+- `doc/ITSEnvTRDTOFch3_RB.json`, for the recording with `extraClsErrYTOF=0.5` (TOF σY 0.75 → 0.90 cm). It is
+  `ITSEnvTRDTOFch2_RB.json` plus a `curl` equation over the TOF sectors, because per-sector priors cannot hold the common
+  TOF rotation: with the full B ≠ 0 statistics its data error is ≈ 25 µm against 0.24 mm from 18 × 1 mm priors. The TOF
+  global rotation thus stays at IBEdge, which the B = 0 data accept within ≈ 0.7 mm. TOF sector priors relative to
+  IBEdge: rφ 1 mm, z and radial 2 mm, rotations 1 mrad. TRD sectors stay free without priors, to absorb the pad shift.
+- Cosmics replayed run by run (123 runs, `solB1A2`, joint TRD/TOF rotation + radial). The TRD and TOF rotations are stable
+  (χ²/ndf 82/83 and 123/83). The TRD sector radial is +4.6 mm in every period (LHC25aa +4.9, LHC26aa +4.4), with
+  run-to-run scatter beyond the errors (χ²/ndf 336/83, about 1 mm extra), while the single-run collision datasets give
+  B0 +1.3, B+ +0.1, B− −2.3 mm. A constant TRD drift-time offset δt moves every tracklet by vd·δt along the drift (radial)
+  direction, which a sector radial shift reproduces exactly (4.6 mm ≈ 0.3 µs at vd ≈ 1.5 cm/µs). The radial requests are
+  therefore read as the time-zero of each run (cosmic trigger vs collisions), not geometry; the earlier "polarity-odd" TRD
+  radial is equally explained by B0, B+ and B− being three different runs. The TOF radial agrees in all datasets (joint
+  fit: B0 −0.2 ± 0.2, B+ +0.1 ± 0.2, B− +0.0 ± 0.2, cosmics +0.2 ± 0.04 mm).
+- `ITSEnvTRDTOFch3_RB.json`: TRD sector radial (`TZ`) fixed at IBEdge; cosmics not up-weighted.
+- Chamber radial (sensor `TX`, fixed in `solB1A2`), replayed with all the collision files and the cosmics split by year:
+  - per layer, after removing the common mean: B+ and B− show a layer-linear pattern (L0 −1.0/−1.5, L5 +3.0/+3.6 mm) that
+    B0 (L0 +0.6, L5 +0.7, middle layers −0.2…−0.5) and the cosmics (2025 and 2026 alike, +0.4 → −0.4 mm) do not. Being
+    polarity-even and absent at B = 0, it is read as a track-model effect at B ≠ 0 (curvature inside TRD: field map or
+    energy loss), not geometry;
+  - per chamber, after removing the sector and layer means, all dataset pairs correlate. The common part is 0.5–0.7 mm
+    rms between collisions and cosmics, and cosmics 2025 vs 2026 (independent samples) correlate by 0.73 (1.0 mm). This is
+    a chamber-level radial geometry pattern.
+- `ITSEnvTRDTOFch3_RB.json`: chamber radial `TX` freed with a 1 mm prior. The sector radial stays fixed and its chamber
+  mean is pinned (`pinChildrenMean` `TZ`), against the time-zero offsets. The per-layer means of L0–L4 are pinned by a
+  `groupModes` `radialScaling` per layer, against the B ≠ 0 layer pattern; L5 follows from the sector pins. This needs
+  `AlignParams.groupModesRelToRoots=false`, since the group volumes are the chambers themselves.
+- Radial sensitivity of the TRD chambers per track (TX/TY information ratio ≈ ⟨tan²ψ⟩): B0 and cosmics 0.010, B± 0.065; the
+  chamber error with all the files is 0.22–0.28 mm at B± against 0.43 mm at B0 (3× more tracks). In the debug trees the
+  per-layer radial slope d(dy)/d(tanψ) at B± depends on pT. For |q/pT| < 0.7 (rms tanψ 0.12–0.18) the layer deviations go
+  from +0.5…+0.8 (L0) to −0.5…−0.9 mm (L5), like the cosmics. For |q/pT| 1.0–1.5 (rms tanψ 0.37) they go from −1.4…−2.0 to
+  +3.3…+4.1 mm. The B± layer pattern of the replay is therefore the low-pT tracks, i.e. a momentum-dependent track-model
+  effect, while the B± high-pT tracks see the same small layer pattern as the cosmics.
+- Summary of the TRD/TOF conclusions so far: [TRDTOFobservations.md](TRDTOFobservations.md).

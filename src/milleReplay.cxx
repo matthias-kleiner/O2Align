@@ -96,7 +96,13 @@ struct FileStat {
 struct Accumulator {
   std::unordered_map<int, ParAcc> pars;
   std::vector<ParAcc> groups;
+  std::vector<double> groupH; // nG x nG profiled curvature between groups, diagonal = groups[i].hp
   std::vector<FileStat> files;
+  void resizeGroups(size_t nG)
+  {
+    groups.resize(nG);
+    groupH.assign(nG * nG, 0.);
+  }
 };
 
 struct Row {
@@ -330,6 +336,8 @@ class RecordProcessor
   void applySolution();
   bool fitLocals(double& chi2, int& ndf, double& dwFrac);
   void accumulatePressure(Accumulator& acc);
+  void addGroupCross(const std::vector<std::pair<int, double>>& rowPars, double w, Accumulator& acc) const;
+  void subtractGroupCrossProfile(Accumulator& acc) const;
   const LabelInfo* info(int lab) const
   {
     auto it = mLabels.find(lab);
@@ -561,6 +569,7 @@ void RecordProcessor::accumulatePressure(Accumulator& acc)
         }
       }
     }
+    addGroupCross(rowPars, r.w, acc);
     for (const auto& [s, g] : rowPars) {
       auto& pa = mSlotAcc[s];
       pa.b += r.w * g * r.rfit;
@@ -587,6 +596,53 @@ void RecordProcessor::accumulatePressure(Accumulator& acc)
       acc.pars[key].add(pa);
     } else {
       acc.groups[-1 - key].add(pa);
+    }
+  }
+  subtractGroupCrossProfile(acc);
+}
+
+// sum w g_a g_b of one row over all pairs of distinct groups it touches (the diagonal is set from ParAcc::hp at output)
+void RecordProcessor::addGroupCross(const std::vector<std::pair<int, double>>& rowPars, double w, Accumulator& acc) const
+{
+  const size_t nG = acc.groups.size();
+  for (size_t i = 0; i < rowPars.size(); i++) {
+    const int ka = mSlotKey[rowPars[i].first];
+    if (ka >= 0) {
+      continue;
+    }
+    for (size_t j = i + 1; j < rowPars.size(); j++) {
+      const int kb = mSlotKey[rowPars[j].first];
+      if (kb >= 0) {
+        continue;
+      }
+      const double h = w * rowPars[i].second * rowPars[j].second;
+      const size_t a = -1 - ka, b = -1 - kb;
+      acc.groupH[a * nG + b] += h;
+      acc.groupH[b * nG + a] += h;
+    }
+  }
+}
+
+// - u_a^T A^-1 u_b for all pairs of distinct groups of the record; mU already holds L^-1 u
+void RecordProcessor::subtractGroupCrossProfile(Accumulator& acc) const
+{
+  const size_t nG = acc.groups.size();
+  const int nl = mNLoc;
+  for (size_t s = 0; s < mSlotKey.size(); s++) {
+    if (mSlotKey[s] >= 0) {
+      continue;
+    }
+    for (size_t t = s + 1; t < mSlotKey.size(); t++) {
+      if (mSlotKey[t] >= 0) {
+        continue;
+      }
+      double q = 0;
+      for (int i = 0; i < nl; i++) {
+        q += mU[s][i] * mU[t][i];
+      }
+      const size_t a = -1 - mSlotKey[s], b = -1 - mSlotKey[t];
+      acc.groupH[a * nG + b] -= q;
+      acc.groupH[b * nG + a] -= q;
     }
   }
 }
@@ -658,6 +714,32 @@ void addPriors(const std::vector<Prior>& priors, const std::unordered_map<int, d
   }
 }
 
+// <out>_groupH.txt: "# i name" lines, then the b vector and the nG x nG profiled curvature matrix, one row per line
+void writeGroupMatrix(const Options& opt, const Accumulator& acc, const std::vector<std::string>& groupNames)
+{
+  const size_t nG = groupNames.size();
+  if (!nG) {
+    return;
+  }
+  FILE* fh = fopen((opt.out + "_groupH.txt").c_str(), "w");
+  for (size_t i = 0; i < nG; i++) {
+    fprintf(fh, "# %zu %s\n", i, groupNames[i].c_str());
+  }
+  fprintf(fh, "b");
+  for (size_t i = 0; i < nG; i++) {
+    fprintf(fh, " %.8e", acc.groups[i].b);
+  }
+  fprintf(fh, "\n");
+  for (size_t i = 0; i < nG; i++) {
+    fprintf(fh, "H%zu", i);
+    for (size_t j = 0; j < nG; j++) {
+      fprintf(fh, " %.8e", i == j ? acc.groups[i].hp : acc.groupH[i * nG + j]);
+    }
+    fprintf(fh, "\n");
+  }
+  fclose(fh);
+}
+
 void writeOutput(const Options& opt, const Accumulator& acc, const std::unordered_map<int, LabelInfo>& labels,
                  const std::unordered_map<int, double>& sol, const std::vector<std::string>& groupNames)
 {
@@ -693,6 +775,7 @@ void writeOutput(const Options& opt, const Accumulator& acc, const std::unordere
     line(fg, acc.groups[i]);
   }
   fclose(fg);
+  writeGroupMatrix(opt, acc, groupNames);
 }
 
 Options parseArgs(int argc, char** argv)
@@ -766,7 +849,7 @@ int main(int argc, char** argv)
   std::mutex logMutex;
   auto worker = [&](int it) {
     RecordProcessor proc(opt, labels, sol, groupNames.size());
-    accs[it].groups.resize(groupNames.size());
+    accs[it].resizeGroups(groupNames.size());
     for (size_t i = nextFile++; i < opt.inputs.size(); i = nextFile++) {
       proc.processFile(opt.inputs[i], accs[it]);
       std::lock_guard<std::mutex> lock(logMutex);
@@ -782,13 +865,16 @@ int main(int argc, char** argv)
     t.join();
   }
   Accumulator total;
-  total.groups.resize(groupNames.size());
+  total.resizeGroups(groupNames.size());
   for (auto& a : accs) {
     for (const auto& [lab, p] : a.pars) {
       total.pars[lab].add(p);
     }
     for (size_t i = 0; i < a.groups.size(); i++) {
       total.groups[i].add(a.groups[i]);
+    }
+    for (size_t i = 0; i < a.groupH.size(); i++) {
+      total.groupH[i] += a.groupH[i];
     }
     total.files.insert(total.files.end(), a.files.begin(), a.files.end());
   }
