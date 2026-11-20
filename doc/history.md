@@ -817,3 +817,28 @@ Found in a code review of `ea32487`; each one checked on the laptop.
 - `doc/ITSEnvTRDTOFch4_RB.json` for the recordings with the ITS seed. It is ch3 without the per-layer `radialScaling`
   group modes, which were there for the seed artefact and pushed the weakly measured chambers out. The sector `TZ` pin
   (time-zero) is statistics-weighted (`weightedMean`), and TOF keeps `curl` because of the remaining TOF rotation tension.
+
+## 2026-11-20: axis tilts of the ITS layers and of TRD/TOF
+
+- Fit of the displacement field (aligned − ideal) of the chip / chamber / strip centres:
+  `d_T = t + s·z + r̂(a + b z) + φ̂(c + e z)`. The axis tilt is `s = (dx/dz, dy/dz)`. In µrad:
+
+  | geometry | IB | OB L3–4 | OB L5–6 | TRD | TOF |
+  |---|---|---|---|---|---|
+  | V10N | −70, +55 | −60, −698 | −128, −415 | −48, +873 | +155, +597 |
+  | IBEdge | −93, +105 | −53, −694 | −119, −372 | −35, +754 | +160, +511 |
+  | solB1A3 (all fields) | = IBEdge | = IBEdge | = IBEdge | +161, +101 | +123, +495 |
+  | solB1A4 (B0 + cosmics) | = IBEdge | = IBEdge | = IBEdge | +28, +381 | +101, +545 |
+
+  - The ITS tilts come from V10N; IBEdge changed them by ≤ 50 µrad. The IB per-layer values scatter (L1 dy/dz +675).
+  - The OB is tilted by −0.37…−0.70 mrad in dy/dz relative to the IB axis and to Z: −0.27 mm in y at |z| = 72 cm. This is
+    a shear, not a rotation: its z part `dz/dy` is −0.2 mrad, where a rigid rotation would give +0.4…+0.7.
+- The TRD/TOF fits did not take over the OB tilt.
+  - TRD dy/dz went from +0.75 mrad toward zero (+0.0…+0.4), i.e. toward the IB axis and the beam line, not to the OB value
+    (−0.40). TRD dx/dz went from −0.04 to +0.03…+0.16 mrad, away from the ITS (−0.1).
+  - TOF is unchanged: it is held by priors and `curl`. Relative to the OB it stays +0.9 mrad in dy/dz, about 3 mm at the
+    TOF ends.
+- The fitted TRD z ∝ y (`dz/dy` −0.35 → −3.0 mrad, the sector "TZ −8.9 mm·sinφ" of `solB0A1`) is not an ITS tilt: the ITS
+  has −0.2 mrad. It matches the −2.1 mrad already in the TOF CCDB alignment.
+- The mean-vertex slopes fitted at IBEdge (−0.07, +0.03…−0.07 mrad relative to the recorded ones) are measured by the ITS.
+  They follow the ITS (IB) axis and say nothing about the ITS tilt relative to the true beam.
