@@ -29,6 +29,9 @@
 //   -con    : add the Measurement priors of this mp2con.txt to b and Hp of the parameters
 //   -groups : lines "name DOF regex", e.g. "TRD_L5_radial TX TRD/sm[0-9]+/st[0-4]/pl5"
 //   -sel    : accumulate the per-parameter pressure only for the volumes matching this regex (default: all)
+//   -pv     : "no" or "only": accumulate only the records without / with vertex labels (default: both)
+//   -pt     : "min,max": keep only the records all of whose tracks have an estimated pT in [min,max) GeV; the pT is
+//             estimated from the precision of the ITS multiple-scattering kinks (see estimateTrackPt)
 // Output: out_files.txt (per input file: records, rejection and <chi2/ndf> for records with/without vertex labels),
 //         out_pars.txt (per label), out_groups.txt (per group). The sums are additive over input files.
 
@@ -71,6 +74,8 @@ struct Options {
   double dwCut = 0.15, chi2Cut = 1.;
   int maxLoc = 1500, nThreads = 1;
   long maxRec = -1;
+  int pvSel = -1;                // -1: all records, 0: only those w/o vertex labels, 1: only those with
+  double ptMin = -1, ptMax = -1; // record selection on the estimated pT of its tracks, off if ptMin < 0
 };
 
 struct ParAcc {
@@ -88,7 +93,7 @@ struct ParAcc {
 
 struct FileStat {
   std::string name;
-  long nRec = 0, nSkip = 0;
+  long nRec = 0, nSkip = 0, nPtSel = 0; // nPtSel: dropped by the -pt selection
   long n[2] = {0, 0}, nRej[2] = {0, 0}, nRejDW[2] = {0, 0};
   double chi2[2] = {0, 0}, ndf[2] = {0, 0};
 };
@@ -333,6 +338,8 @@ class RecordProcessor
 
  private:
   bool readRecord(FILE* f);
+  void estimateTrackPt(std::vector<double>& pts) const;
+  bool passPtSelection() const;
   void applySolution();
   bool fitLocals(double& chi2, int& ndf, double& dwFrac);
   void accumulatePressure(Accumulator& acc);
@@ -362,6 +369,8 @@ class RecordProcessor
   std::vector<int> mSlotKey;
   std::vector<std::vector<double>> mU;
   std::vector<ParAcc> mSlotAcc;
+  mutable std::vector<int> mPairLocs, mPrevPairLocs, mCommon; // buffers of estimateTrackPt
+  mutable std::vector<double> mTrackPt;
 };
 
 bool RecordProcessor::readRecord(FILE* f)
@@ -415,6 +424,100 @@ bool RecordProcessor::readRecord(FILE* f)
       mRows[mNRows - 1].loc.push_back({k, v});
     } else {
       mRows[mNRows - 1].glo.push_back({k, v});
+    }
+  }
+  return true;
+}
+
+// The records carry no track parameters, but the multiple-scattering kinks do: GBL writes each scatterer as two rows
+// with a zero measurement, no global derivative and sigma^2 = theta0^2 (1-snp^2)(1+tgl^2) (snp) and
+// theta0^2 (1+tgl^2)^2 (tgl), theta0 = 0.0136/(beta p) sqrt(x/X0) (1 + 0.038 ln(x/X0)), see getScatteringPrecision of
+// AlignmentSpec.cxx. The kink pairs of a track are consecutive and share their local offsets and curvature; two
+// consecutive pairs sharing at most 3 local labels (those of the common vertex of a composed record) belong to
+// different tracks. For each track, the first kinks up to the ITS-TPC one (theta0 jumping by more than 3 times) are
+// taken as the ITS layers 0..6; tgl comes from the pair with the smallest sigma ratio (the smallest snp), p (beta = 1)
+// from the median over the layers with the nominal x/X0 at normal incidence times the path length factor
+// sqrt(1+tgl^2). The material of the recording (TGeo or LUT) differs locally from these nominal values, so the
+// estimate has a resolution of about 20 % per track and its scale is good to about 10 %. Tracks with fewer than 4 ITS
+// kinks get no estimate. At B=0 the kinks use the fixed meanPtB0, so the estimate is meaningless there.
+void RecordProcessor::estimateTrackPt(std::vector<double>& pts) const
+{
+  constexpr int NITSLayers = 7, MinITSKinks = 4;
+  constexpr double X2X0[NITSLayers] = {0.0036, 0.0036, 0.0036, 0.009, 0.009, 0.009, 0.009};
+  constexpr double MaxThetaJump = 3.;
+  pts.clear();
+  std::vector<std::pair<double, double>> its; // (sigma snp, sigma tgl) of the ITS kinks of the current track
+  bool trackDone = true;
+  auto closeTrack = [&]() {
+    if ((int)its.size() >= MinITSKinks) {
+      double r2min = 1e9;
+      for (const auto& [ss, st] : its) {
+        r2min = std::min(r2min, (st / ss) * (st / ss));
+      }
+      const double t2 = std::max(r2min - 1., 0.);
+      std::vector<double> ps;
+      for (size_t i = 0; i < its.size(); i++) {
+        const double th0 = its[i].second / (1. + t2), x = X2X0[i] * std::sqrt(1. + t2);
+        ps.push_back(0.0136 * std::sqrt(x) * (1. + 0.038 * std::log(x)) / th0);
+      }
+      std::nth_element(ps.begin(), ps.begin() + ps.size() / 2, ps.end());
+      pts.push_back(ps[ps.size() / 2] / std::sqrt(1. + t2));
+    }
+    its.clear();
+  };
+  mPrevPairLocs.clear();
+  for (size_t ir = 0; ir + 1 < mNRows; ir++) {
+    const Row &a = mRows[ir], &b = mRows[ir + 1];
+    const auto isKink = [](const Row& r) { return r.meas == 0 && r.glo.empty() && r.sig > 0; };
+    if (!isKink(a) || !isKink(b)) {
+      continue;
+    }
+    ir++; // the pair is consumed
+    mPairLocs.clear();
+    for (const auto& r : {&a, &b}) {
+      for (const auto& [lab, d] : r->loc) {
+        mPairLocs.push_back(lab);
+      }
+    }
+    std::sort(mPairLocs.begin(), mPairLocs.end());
+    mPairLocs.erase(std::unique(mPairLocs.begin(), mPairLocs.end()), mPairLocs.end());
+    mCommon.clear();
+    std::set_intersection(mPairLocs.begin(), mPairLocs.end(), mPrevPairLocs.begin(), mPrevPairLocs.end(), std::back_inserter(mCommon));
+    if (mPrevPairLocs.empty() || mCommon.size() <= 3) { // a new track
+      closeTrack();
+      trackDone = false;
+    }
+    std::swap(mPairLocs, mPrevPairLocs);
+    if (trackDone) {
+      continue;
+    }
+    const double th = std::sqrt(a.sig * b.sig);
+    double thMax = 0;
+    for (const auto& [ss, st] : its) {
+      thMax = std::max(thMax, std::sqrt(ss * st));
+    }
+    if (its.size() >= 2 && th > MaxThetaJump * thMax) {
+      trackDone = true;
+      continue;
+    }
+    its.emplace_back(a.sig, b.sig);
+    trackDone = its.size() == NITSLayers;
+  }
+  closeTrack();
+}
+
+bool RecordProcessor::passPtSelection() const
+{
+  if (mOpt.ptMin < 0) {
+    return true;
+  }
+  estimateTrackPt(mTrackPt);
+  if (mTrackPt.empty()) {
+    return false;
+  }
+  for (double pt : mTrackPt) {
+    if (pt < mOpt.ptMin || pt >= mOpt.ptMax) {
+      return false;
     }
   }
   return true;
@@ -659,6 +762,10 @@ void RecordProcessor::processFile(const std::string& fn, Accumulator& acc)
   }
   while ((mOpt.maxRec < 0 || st.nRec < mOpt.maxRec) && readRecord(f)) {
     st.nRec++;
+    if (!passPtSelection()) {
+      st.nPtSel++;
+      continue;
+    }
     bool hasPV = false;
     for (size_t ir = 0; ir < mNRows && !hasPV; ir++) {
       for (const auto& [lab, g] : mRows[ir].glo) {
@@ -670,6 +777,9 @@ void RecordProcessor::processFile(const std::string& fn, Accumulator& acc)
       }
     }
     const int cat = hasPV;
+    if (mOpt.pvSel >= 0 && cat != mOpt.pvSel) {
+      continue;
+    }
     applySolution();
     double chi2 = 0, dwFrac = 0;
     int ndf = 0;
@@ -744,10 +854,10 @@ void writeOutput(const Options& opt, const Accumulator& acc, const std::unordere
                  const std::unordered_map<int, double>& sol, const std::vector<std::string>& groupNames)
 {
   FILE* ff = fopen((opt.out + "_files.txt").c_str(), "w");
-  fprintf(ff, "# file nRec nSkip | noPV: n rejChi2 rejDW <chi2/ndf>acc | PV: n rejChi2 rejDW <chi2/ndf>acc\n");
+  fprintf(ff, "# file nRec nSkip | noPV: n rejChi2 rejDW <chi2/ndf>acc | PV: n rejChi2 rejDW <chi2/ndf>acc | ptSel\n");
   for (const auto& s : acc.files) {
-    fprintf(ff, "%s %ld %ld | %ld %ld %ld %.4f | %ld %ld %ld %.4f\n", s.name.c_str(), s.nRec, s.nSkip, s.n[0], s.nRej[0], s.nRejDW[0],
-            s.ndf[0] > 0 ? s.chi2[0] / s.ndf[0] : 0., s.n[1], s.nRej[1], s.nRejDW[1], s.ndf[1] > 0 ? s.chi2[1] / s.ndf[1] : 0.);
+    fprintf(ff, "%s %ld %ld | %ld %ld %ld %.4f | %ld %ld %ld %.4f | %ld\n", s.name.c_str(), s.nRec, s.nSkip, s.n[0], s.nRej[0], s.nRejDW[0],
+            s.ndf[0] > 0 ? s.chi2[0] / s.ndf[0] : 0., s.n[1], s.nRej[1], s.nRejDW[1], s.ndf[1] > 0 ? s.chi2[1] / s.ndf[1] : 0., s.nPtSel);
   }
   fclose(ff);
   auto line = [](FILE* fo, const ParAcc& p) {
@@ -810,6 +920,18 @@ Options parseArgs(int argc, char** argv)
       o.maxLoc = std::stoi(next());
     } else if (a == "-maxrec") {
       o.maxRec = std::stol(next());
+    } else if (a == "-pv") {
+      const std::string v = next();
+      o.pvSel = v == "no" ? 0 : (v == "only" ? 1 : -1);
+      if (o.pvSel < 0) {
+        fprintf(stderr, "-pv takes no or only\n");
+        exit(1);
+      }
+    } else if (a == "-pt") {
+      const std::string v = next();
+      const auto c = v.find(',');
+      o.ptMin = std::stod(v.substr(0, c));
+      o.ptMax = c == std::string::npos ? 1e9 : std::stod(v.substr(c + 1));
     } else if (a == "-j") {
       o.nThreads = std::max(1, std::stoi(next()));
     } else if (a == "-o") {
@@ -820,7 +942,7 @@ Options parseArgs(int argc, char** argv)
   }
   if (o.tree.empty() || o.out.empty() || o.inputs.empty()) {
     fprintf(stderr, "usage: o2-dev-mille-replay -tree mp2tree.txt [-res millepede.res] [-con mp2con.txt] [-groups groups.txt] [-sel regex]\n"
-                    "       [-dw 4] [-dwcut 0.15] [-cut 1] [-maxloc 1500] [-maxrec N] [-j 8] -o outPrefix file1.bin [file2.bin ...]\n");
+                    "       [-dw 4] [-dwcut 0.15] [-cut 1] [-maxloc 1500] [-maxrec N] [-pv no|only] [-pt min,max] [-j 8] -o outPrefix file1.bin [file2.bin ...]\n");
     exit(1);
   }
   return o;

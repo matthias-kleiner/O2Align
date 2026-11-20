@@ -148,7 +148,23 @@ in the TOF matching residuals (dx) of runs 562837 vs 562862.
   pattern.
 - Expected in `mp2con.txt`: 18 TRD sector `TZ` pins, 5 `Group mode … over TRD-L*` equations and one TOF `curl` equation.
 
-## 7. Open questions
+## 7. `solB1A3` (ch3 config, recording with minPt 1.2 and LUT corrections)
+
+- **Rejections.** B0 is fixed (6.5 / 8.7 % for single / PV records, was 22 / 56 %). B± PV records went up to 24 %, and
+  cosmics to 12 % with `meanPtB0Cosm=6` (4 % with 2).
+- **Chamber radial excursions are a constraint artefact.** Up to −38 mm, 6.8 % of the chambers beyond 3 mm, while all
+  datasets ask to undo them. The equal-weight sector pins and per-layer equations put the same Lagrange force on every
+  chamber, and the weakly measured chambers restore the mean.
+- **The radial requests of B = 0 and B ≠ 0 have opposite layer patterns,** also with `minPt=1.2`: B0 and cosmics want
+  +1 → −2 mm (L0 → L5), B± −2.3 → +3.3 mm. Per chamber, B± anti-correlate with the cosmics, while the two cosmic years
+  agree. TRD radial information at B ≠ 0 is therefore affected by a field-dependent effect, like TOF rφ.
+- **TRD sector RY and the layer-linear chamber TY form a nearly unconstrained pair** (−3 mrad and −0.9 → +1.2 mm).
+  B = 0 data reject it.
+- **Accepted by all datasets:** the TRD rotation (pad shift), the TRD sector z offsets, the chamber in-plane RX. The TOF
+  `curl` holds the TOF rotation at its B = 0 value; the B ≠ 0 data still ask for about +2 mm.
+- **ITS.** All datasets ask for an ITS rφ ∝ r² mode of d₆ ≈ −9…−17 µm at L6.
+
+## 8. Open questions
 
 1. The origin of the narrow peak in the B ≠ 0 TOF residual (TOF clusterization or matching).
 2. The momentum-dependent TRD layer pattern at B ≠ 0 (multiple scattering, energy loss or curvature in TRD).

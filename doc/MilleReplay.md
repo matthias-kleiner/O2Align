@@ -85,7 +85,16 @@ o2-dev-mille-replay -tree <recording>/mp2tree.txt -res <fit>/millepede.res -grou
 | `-sel` | accumulate per-parameter results only for the volumes matching the regex (default: all); groups are always accumulated |
 | `-dw`, `-dwcut`, `-cut` | pede's `outlierdownweighting`, `dwfractioncut` and the final χ² cut factor |
 | `-maxloc`, `-maxrec` | skip records with more local parameters; process at most N records per file |
+| `-pv no\|only` | process only the records without / with vertex labels |
+| `-pt min,max` | process only the records all of whose tracks have an estimated pT in [min,max) GeV (below) |
 | `-j` | threads, one input file each at a time |
+
+The records store no track parameters. For `-pt` the pT of each track of a record is estimated from its multiple-scattering
+kink rows (zero measurement, no global derivative): their errors are θ0·√((1−snp²)(1+tgl²)) and θ0·(1+tgl²), with
+θ0 = 0.0136/p·√(x/X0)·(1+0.038 ln(x/X0)). tgl is taken from the pair with the smallest error ratio, and p from the median
+over the first (ITS) kinks with nominal x/X0 (0.36 % IB, 0.9 % OB, times the path factor). The resolution is about 20 % per
+track, the scale good to about 10 %. Tracks with fewer than 4 ITS kinks get no estimate, and records without any are
+dropped. At B = 0 the kinks use the fixed `meanPtB0`, so the selection is meaningless there.
 
 Records containing a `PVT/meanVertex` label (the multi-track vertex records, or tracks with a vertex constraint) are
 counted separately from the others.
@@ -96,7 +105,7 @@ All the sums are additive over input files.
 
 | file | content |
 |---|---|
-| `<out>_files.txt` | per input file: records, skipped; for records without and with vertex labels: accepted, rejected by χ², rejected by down-weight fraction, ⟨χ²/ndf⟩ of the accepted |
+| `<out>_files.txt` | per input file: records, skipped; for records without and with vertex labels: accepted, rejected by χ², rejected by down-weight fraction, ⟨χ²/ndf⟩ of the accepted; records dropped by `-pt` |
 | `<out>_pars.txt` | per label: volume, DOF, time slot, solution value, records, rows, b, Hu (w/o profiling), Hp, b/Hp, b²/Hp (cm, rad) |
 | `<out>_groups.txt` | the same per group |
 | `<out>_groupH.txt` | `# i name` lines, the vector b of the groups (line `b`), then the nG × nG profiled curvature matrix between groups (lines `H<i>`), H_ab = Σ w·g_a·g_b − u_aᵀA⁻¹u_b, whose diagonal is the Hp of `_groups.txt`; priors are not included |
