@@ -832,8 +832,9 @@ bool AlignmentSpec::isAcceptedDetCombination(DetID::mask_t contributing) const
   return mDetCombinations.empty() || std::find(mDetCombinations.begin(), mDetCombinations.end(), contributing) != mDetCombinations.end();
 }
 
-// Let every contributing detector add its points to the tracks and refit them inward, to the
-// innermost point (or the slot of the vertex point). A failed track has its gid cleared.
+// Let every contributing detector add its points to the tracks (outward KF fit) and refit them inward, to the
+// innermost point (or the slot of the vertex point). With CollGBLSeedITSOnly the inward refit starts from the outward state at the
+// outermost ITS point and uses the ITS points only. A failed track has its gid cleared.
 void AlignmentSpec::refitTracks(std::vector<Track>& resTracks, bool useVertexConstraint)
 {
 #ifdef WITH_OPENMP
@@ -850,13 +851,29 @@ void AlignmentSpec::refitTracks(std::vector<Track>& resTracks, bool useVertexCon
         if (det->prepareTrack(mRecoData, contributorsGID, track)) {
           contributed.set(detID);
           nOK++;
+          if (detID == DetID::ITS && mParams->CollGBLSeedITSOnly) { // the outward refit has just passed the outermost ITS point
+            track.itsOutPar = track.track;
+            track.itsOutFrame = (int)track.info.size() - 1;
+          }
         } else if (mObligatoryDets[detID]) {
           nOK = 0; // the track is lost if an obligatory detector fails
           break;
         }
       }
     }
-    if (!nOK || !isAcceptedDetCombination(contributed) || !track.fitTrack((int)track.info.size() - 1, useVertexConstraint ? 1 : 0, false, true)) {
+    if (!nOK || !isAcceptedDetCombination(contributed)) {
+      track.gid.clear(); // mark as failed
+      continue;
+    }
+    // the inward refit defines the GBL seed: over all the points, or over the ITS ones only, from the ITS outward state, so that the
+    // seed is not biased by the (possibly misaligned) outer detectors
+    int firstFrame = (int)track.info.size() - 1;
+    if (track.itsOutFrame >= 0) {
+      track.track = track.itsOutPar;
+      firstFrame = track.itsOutFrame;
+      track.kfLastFrame = firstFrame;
+    }
+    if (!track.fitTrack(firstFrame, useVertexConstraint ? 1 : 0, false, true)) {
       track.gid.clear(); // mark as failed
     } else {
       track.kfInnerPar = track.track;
@@ -2137,8 +2154,8 @@ void AlignmentSpec::writeDbgTrack(const Track& resTrack, bool composed, bool acc
   dt.gid = resTrack.gid;
   dt.kfFit = resTrack.kfFit; // the KF refit sets only the chi2: ndf = number of measured coordinates (the vertex point included) - 5 parameters
   int nMeasured = 0;
-  for (const auto& frame : resTrack.info) {
-    if (frame.isValid()) {
+  for (int i = 0; i < (int)resTrack.info.size(); ++i) {
+    if (resTrack.info[i].isValid() && (resTrack.kfLastFrame < 0 || i <= resTrack.kfLastFrame)) {
       nMeasured += 2;
     }
   }

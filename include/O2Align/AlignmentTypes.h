@@ -74,6 +74,9 @@ struct Track {
   std::vector<FrameInfoExt> info;     // frame info, owned by the track (detectors append to it)
   o2::track::TrackParD inputPar;      // the input track (reconstruction), before any refit; for cosmics the downward seed
   o2::track::TrackParD kfInnerPar;    // state after the inward KF refit over the detector points, before the eventual vertex update
+  o2::track::TrackParCovD itsOutPar;  //! state of the outward KF refit at the outermost ITS point (seed of the ITS-only inward refit)
+  int itsOutFrame{-1};                //! slot of `info` of the outermost ITS point, <0 if the ITS did not contribute
+  int kfLastFrame{-1};                //! outermost slot of `info` used by the inward KF refit, <0: all
   int invertAt{-1};                   // cosmics: slot of `info` from which the track runs in the inverted (opposite direction) parametrisation, see AlignmentSpec::prepareCosmicTrack; <0: none
 
   /// KF refit over the frames in the inclusive [frameStart, frameStop] slot range of `info`,

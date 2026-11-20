@@ -782,3 +782,17 @@ Found in a code review of `ea32487`; each one checked on the laptop.
 - To find which step produces the wrong seeds, the debug tree (`DbgTrack` v2) now stores the input track (`inputPar`), the
   state after the inward KF refit before the vertex update (`kfInnerPar`) and the GBL correction to the reference state
   (`gblRefCorr`, q/pt first).
+- coll_TGEOPt12NoMV_LinRef0 / LinRef1 (`useStableRef=false` / `true`, otherwise as coll_TGEOPt12NoMV, with the new debug
+  fields). The q/pT chain of the bad-seed tracks (seed off > 25 cm at the last TRD point), relative to the input track:
+  inward KF refit +150 % (median, 10–90 %: +80…+200 %), reference after the vertex update the same, GBL fit +12 %. The
+  wrong curvature comes from the inward KF refit, not from the vertex update. GBL brings it back only partly (linearization
+  far from the solution). Good tracks: KF and GBL within a few % of the input.
+- `useStableRef=false` cuts the bad seeds from 28 % to 6.5 % (q·bz > 0) and from 6–7 % to 2–3 % (q·bz < 0). From the same
+  input it gives 33 % more accepted vertex records, rejections of 13 % instead of 21 % and ⟨χ²/ndf⟩ 1.20 instead of
+  1.22–1.24. The layer-linear TRD radial (L5−L0) drops from +6.9 / +7.5 to +1.4 / +1.2 mm (B+ / B−), the debug v slopes from
+  +10 to +1.5–2 mm. The B ≠ 0 radial excess is essentially an artefact of the KF seed with the stable linearization
+  reference. The remaining bad seeds (still mostly q·bz > 0) point to the TRD/TOF-dominated start of the inward refit.
+- `AlignParams.CollGBLSeedITSOnly` (default true): for collisions the GBL seed is the inward KF refit over the ITS points
+  only, started from the outward refit state at the outermost ITS point. The outer detectors, misaligned at the start,
+  then cannot bias the seed curvature, and `useStableRef` keeps its role of a stable linearization reference within the
+  ITS.
