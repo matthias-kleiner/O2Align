@@ -796,3 +796,13 @@ Found in a code review of `ea32487`; each one checked on the laptop.
   only, started from the outward refit state at the outermost ITS point. The outer detectors, misaligned at the start,
   then cannot bias the seed curvature, and `useStableRef` keeps its role of a stable linearization reference within the
   ITS.
+- coll_TGEOPt12NoMV_LinRef1_ITSSEED / LinRef0_ITSSEED (`CollGBLSeedITSOnly=true`, `useStableRef=true` / `false`). Bad
+  seeds (off > 25 cm at the last TRD point) 0.2–0.4 % / 0.0 %, with no q·bz asymmetry left (before 28 % / 6.6 % for q·bz > 0).
+  The KF seed curvature agrees with the input within a few % (10–90 % range ±8 %). Layer-linear TRD radial (L5−L0), B+ / B−:
+  −0.5 / −0.9 (stable reference) and −0.5 / −1.0 mm (without), the same for records with and without vertex. The debug u and
+  v slopes now agree (−1.2 to −1.5 mm for the vertex records). The B ≠ 0 radial excess was entirely an artefact of the seed
+  fitted through the misaligned TRD/TOF. With the stable reference there are still 8 % fewer accepted records
+  (61k against 66k, B+) and a higher ⟨χ²/ndf⟩ (1.233 against 1.212).
+- The GBL-fitted curvature differs from the input track by +1.1…+2.2 % for q·bz > 0 and −1.8…−1.9 % for q·bz < 0. This
+  is the sign pattern of the one-pad TRD rotation still present at the IBEdge reference (about 1.5 % of the curvature
+  expected at 1.2 GeV), and it should vanish once the TRD rφ is aligned.

@@ -23,7 +23,7 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   // Track selection for alignment
   float minPt = 0.4f;     // minimum pt required
   float tgLCut = 5.f;     // maximum or minimum |tgLambda| if >0 or <0
-  int minITSClsTrack = 7; // minimum number of ITS clusters in the full track
+  int minITSClsTrack = 6; // minimum number of ITS clusters in the full track
   int minITSClsAB = 4;    // minimum number of ITS clusters in the AB track
 
   // Track selection for PV refitting
@@ -97,11 +97,11 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   // TPC drift calibration
   std::string VDTimeSlotsJson = ""; // json file with TPC drift calibration intervals in ms
 
-  int verbose = 0;          // verbosity level
-  bool useStableRef = true; // use input tracks as linearization point
+  int verbose = 0;           // verbosity level
+  bool useStableRef = false; // use input tracks as linearization point
   bool CollGBLSeedITSOnly = true; // collisions: the GBL seed (inward KF refit) uses the ITS points only, starting from the ITS outward refit state at the outermost ITS point
-  float meanPtB0 = 0.4f;    // impose this pT on tracks for B=0 (ignore if <=0)
-  float meanPtB0Cosm = 2.f; // impose this pT on cosmic tracks for B=0 (ignore if <=0)
+  float meanPtB0 = 0.45f;   // impose this pT on tracks for B=0 (ignore if <=0)
+  float meanPtB0Cosm = 4.f; // impose this pT on cosmic tracks for B=0 (ignore if <=0)
   float maxChi2Ndf = 15;    // maximum Chi2/Ndf allowed for GBL fit
   float minMS = 1e-6f;      //  minimum scattering to account for
   // A step whose material would otherwise be lumped into a single thin scatterer at its far end is
@@ -129,7 +129,7 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
 
   // debug output: fraction of the tracks (randomly selected) written with their points, GBL residuals and kinks
   // to the "gbltrack" tree of debug_alg[_<lane>].root (DbgTrack, see AlignmentDbg.h). <=0: none, >=1: all
-  float debugTracksFraction = -1.f;
+  float debugTracksFraction = 0.1f;
 
   // DOF configuration (JSON file defining which volumes have which DOFs)
   std::string dofConfigJson; // if empty, no DOFs are configured
