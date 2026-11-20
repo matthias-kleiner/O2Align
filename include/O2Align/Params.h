@@ -92,6 +92,8 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   float residualVertexSigmaXY = 0.f; // [cm] transverse error of the primary vertex point (<= 0: no vertex point; the files carry no covariance)
   float residualVertexSigmaZ = 0.f;  // [cm] its z error (<= 0: residualVertexSigmaXY)
   float residualTPCEdgePads = 0.f;   // drop the TPC clusters with a measured pad-plane y closer than this to the sector edge [pads] (global fits: the edge zone out)
+  float tpcCentrePads = 0.f;         // drop the TPC clusters (residual-ext and cosmics) measured within this many pads of the sector centre line (pad-plane y; the
+                                     // spacer-cross truncation, corrected in the map chain by a table by the track position the base maps do not contain); 0: off
 
   bool writeLocalAlignParams = true; // create output AlignParams in local convention.
 

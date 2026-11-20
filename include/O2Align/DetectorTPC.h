@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <utility>
 #include <memory>
 #include <string>
@@ -82,6 +83,30 @@ class DetectorTPC final : public Detector
   /// The drift calibration already applied to the correction maps: the fitted VDRIFT correction is
   /// relative to it, hence it is needed to express the result wrt the reference drift velocity.
   void setVDrift(const o2::tpc::VDriftCorrFact& v) { mVDrift = v; }
+
+  /// the drift frame of the base maps (TPCMapParams.driftNorm) for the TF being processed: common reference vD0 [cm/us], t00 [us], the
+  /// window's vD slope per side (A, C); on = false: the clusters as the input transforms them
+  struct DriftNorm {
+    bool on = false;
+    double vD0 = 0.;
+    double t00 = 0.;
+    std::array<double, 2> b{};
+  };
+  void setDriftNorm(const DriftNorm& n) { mDriftNorm = n; }
+  const DriftNorm& getDriftNorm() const { return mDriftNorm; }
+  /// residual-ext: the drift reference of the open residual file [cm/us], [us]
+  void setResidualDriftReference(float vD, float t0)
+  {
+    mResRefVDrift = vD;
+    mResRefT0 = t0;
+  }
+  /// z on the frame of n: from a cluster z made with the reference refVD [cm/us], refT0 [us]
+  static float driftNormZ(const DriftNorm& n, float z, bool sideC, double refVD, double refT0)
+  {
+    const double s = sideC ? -1. : 1.;
+    const double drift = 250. - std::abs(z);
+    return static_cast<float>(z + s * ((1. - n.vD0 / refVD) * drift + n.vD0 * (n.t00 - refT0) - n.b[sideC ? 1 : 0] * drift));
+  }
   const o2::tpc::VDriftCorrFact& getVDrift() const { return mVDrift; }
 
   const std::string& getTimeSlotsJson() const final;
@@ -131,6 +156,9 @@ class DetectorTPC final : public Detector
   Volume* mEnvelope{nullptr};        // fictitious top volume, owner of the drift calibration DOFs
   std::vector<Volume*> mSensors;     // sector volumes, indexed by sector
   const TPCMap* mClusterShift{nullptr}; // see setClusterShift, not owned
+  DriftNorm mDriftNorm{};                // see setDriftNorm
+  float mResRefVDrift{0.f};             // see setResidualDriftReference
+  float mResRefT0{0.f};
   // per-cluster bias correction of the cosmics (TPCMapParams.clusterBias*), loaded at the first cosmic
   void initClusterBias();
   bool mClusterBiasInit{false};

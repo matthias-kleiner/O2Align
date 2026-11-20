@@ -69,6 +69,7 @@
 #include "ITS3Reconstruction/IOUtils.h"
 #include "ITSMFTReconstruction/ChipMappingITS.h"
 #include "TPCCalibration/VDriftHelper.h"
+#include "TPCBase/ParameterElectronics.h"
 #include "TPCFastTransformPOD.h"
 #include "TPCReconstruction/TPCFastTransformHelperO2.h"
 #include "GPUO2ExternalUser.h"
@@ -299,6 +300,7 @@ class AlignmentSpec final : public Task
   uint64_t mCosmicCounter{0}; // cosmics which reached the TPC cleaning: id in the "tpccl" debug tree
   bool setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
   bool selectStaticTPCMap();
+  bool selectDriftNorm();
   void processResidualExt();
   bool prepareResidualTrack(const ResidualTrack& trk, bool useVertex, Track& resTrack);
 
@@ -438,6 +440,9 @@ class AlignmentSpec final : public Task
   std::vector<std::tuple<long, long, std::string>> mCosmicMapWindows; // TPCMapParams.cosmicCorrMap given as a list: [tmin, tmax) [ms] -> FT file
   int mCosmicMapWindow = -1;                                          // index of the window whose map is loaded
   uint64_t mCosmicTFNoMap = 0;                                        // TFs skipped: no window of the list contains their time
+  std::vector<std::pair<std::array<long, 2>, DetectorTPC::DriftNorm>> mDriftNormWindows; // TPCMapParams.driftNorm: [tmin, tmax) [ms] -> frame
+  int mCosmicDriftNormLog = 0;                                        // printouts of the cosmics' drift frame
+  uint64_t mDriftNormTFNone = 0;                                      // TFs skipped: driftNorm set, no window of its list contains their time
   std::array<uint64_t, 4> mCosmicsRejected{}; // by the clean selection: no unambiguous TOF pair, near-beam, momentum, TOF vs matcher time (cosm* params)
   std::unique_ptr<o2::gpu::GPUParam> mTPCParam;                                   // TPC cluster error parametrization, field-dependent
   o2::tpc::VDriftHelper mTPCVDriftHelper{};                                       // drift calibration accounted by the correction maps
@@ -1290,15 +1295,65 @@ bool AlignmentSpec::selectStaticTPCMap()
   return true;
 }
 
-// The cosmics' TPC transformation: the static map of the TF (selectStaticTPCMap) with the TF's drift calibration of the input
+// TPCMapParams.driftNorm: the drift frame of the base maps for the TF time (mTimeStamp) set to the TPC detector (off if the parameter is
+// empty); false: the list has no window containing the TF time
+bool AlignmentSpec::selectDriftNorm()
+{
+  const auto& file = TPCMapParams::Instance().driftNorm;
+  if (file.empty()) {
+    return true;
+  }
+  if (mDriftNormWindows.empty()) {
+    std::ifstream in(file);
+    long tmin = 0, tmax = 0;
+    DetectorTPC::DriftNorm n;
+    while (in >> tmin >> tmax >> n.vD0 >> n.t00 >> n.b[0] >> n.b[1]) {
+      n.on = true;
+      mDriftNormWindows.push_back({{tmin, tmax}, n});
+    }
+    if (mDriftNormWindows.empty()) {
+      LOGP(fatal, "No \"<tmin> <tmax> <vD0> <t00> <bA> <bC>\" line in the drift-frame list {}", file);
+    }
+    LOGP(info, "TPC clusters on the drift frame of the base maps: {} windows in {} (first: vD0 {} cm/us, t00 {} us, bA {}, bC {})",
+         mDriftNormWindows.size(), file, mDriftNormWindows[0].second.vD0, mDriftNormWindows[0].second.t00, mDriftNormWindows[0].second.b[0],
+         mDriftNormWindows[0].second.b[1]);
+  }
+  for (const auto& [range, n] : mDriftNormWindows) {
+    if (mTimeStamp >= range[0] && mTimeStamp < range[1]) {
+      mTPC->setDriftNorm(n);
+      return true;
+    }
+  }
+  mTPC->setDriftNorm({});
+  ++mDriftNormTFNone;
+  return false;
+}
+
+// The cosmics' TPC transformation: the static map of the TF (selectStaticTPCMap) with the TF's drift calibration of the input, or with the
+// common reference of the maps' drift frame (TPCMapParams.driftNorm: vD0, t00; DetectorTPC adds the window's vD slope per side)
 bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo)
 {
   if (!selectStaticTPCMap()) {
     ++mCosmicTFNoMap;
     return false;
   }
-  mCosmicTPCMap->setVDrift(tfInfo.vDrift);
-  mCosmicTPCMap->setT0(tfInfo.t0);
+  if (!selectDriftNorm()) {
+    return false;
+  }
+  if (mTPC->getDriftNorm().on) { // as TPCFastTransformHelperO2::updateCalibration: t0 [time bins] = (drift time offset + average shaping) / bin
+    const auto& el = o2::tpc::ParameterElectronics::Instance();
+    const auto& n = mTPC->getDriftNorm();
+    mCosmicTPCMap->setVDrift(static_cast<float>(n.vD0 * el.ZbinWidth));
+    mCosmicTPCMap->setT0(static_cast<float>((n.t00 + el.getAverageShapingTime()) / el.ZbinWidth));
+    if (mCosmicDriftNormLog < 3) {
+      ++mCosmicDriftNormLog;
+      LOGP(info, "Cosmics on the maps' drift frame: input vD {} cm/us, drift time offset {} us -> vD0 {} cm/us, t00 {} us (+ window slope bA {}, bC {})",
+           tfInfo.vDrift / el.ZbinWidth, tfInfo.t0 * el.ZbinWidth - el.getAverageShapingTime(), n.vD0, n.t00, n.b[0], n.b[1]);
+    }
+  } else {
+    mCosmicTPCMap->setVDrift(tfInfo.vDrift);
+    mCosmicTPCMap->setT0(tfInfo.t0);
+  }
   return true;
 }
 
@@ -1326,6 +1381,7 @@ void AlignmentSpec::processResidualExt()
     if (!reader.open(file)) {
       continue;
     }
+    mTPC->setResidualDriftReference(reader.getRefVDrift(), reader.getRefT0());
     long nDone = 0;
     for (long entry = 0; entry < reader.getEntries(); entry += std::max(1, par.residualTFStep)) {
       if (par.residualMaxTFPerFile >= 0 && nDone >= par.residualMaxTFPerFile) {
@@ -1341,6 +1397,9 @@ void AlignmentSpec::processResidualExt()
       mTimeStamp = static_cast<long>(orbitResetMS + tracks.front().orbit * o2::constants::lhc::LHCOrbitMUS * 1e-3);
       if (!selectStaticTPCMap()) {
         ++mResidualTFNoMap;
+        continue;
+      }
+      if (!selectDriftNorm()) {
         continue;
       }
       resTracks.clear();
@@ -1366,6 +1425,9 @@ void AlignmentSpec::processResidualExt()
       gblTraj.clear();
     }
     LOGP(info, "residual-ext {}: {} TFs processed; Processing stats: {}", file, nDone, mProcessingStats.asString());
+  }
+  if (mDriftNormTFNone) {
+    LOGP(info, "{} TFs without a window of the drift-frame list TPCMapParams.driftNorm (skipped)", mDriftNormTFNone);
   }
   if (mResidualTFNoMap) {
     LOGP(info, "residual-ext: {} TFs without a TPC map (time outside the windows of the map list)", mResidualTFNoMap);

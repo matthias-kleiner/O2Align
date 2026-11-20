@@ -43,6 +43,12 @@ struct TPCMapParams : public o2::conf::ConfigurableParamHelper<TPCMapParams> {
   // empty: Ruben's ideal transformation (no distortion correction). A file ending in ".txt" = a list of such maps, one line
   // "<tmin> <tmax> <FT file>" per time window [ms, same clock as the TF time stamp]: per TF the map of its window, TFs outside all skipped
   std::string cosmicCorrMap = "";
+  // the drift frame of the base maps (e.g. the v4 maps of 568041: one drift reference vD0 / t00 for the run, the window's vD slope per side
+  // removed from the maps): a list "<tmin> <tmax> <vD0 [cm/us]> <t00 [us]> <bA> <bC>" per window [ms]. Every TPC cluster z is put on that
+  // frame BEFORE the map, as the map chain does (fine pass FINE_DRIFT_NORM, gblfit io/DriftNorm.h): residual-ext = the ideal z from the
+  // file's reference vD / t0 moved by s ((1 - vD0 / vD_ref) L + vD0 (t00 - t0_ref) - b_side L), L = 250 - |z|; cosmics = the ideal
+  // transformation with vD0, t00 instead of the TF's calibration, then - s b_side L. TFs outside all windows are skipped. Empty: off
+  std::string driftNorm = "";
   // per-cluster bias correction of the reco (cosmic-ext TPC clusters): ClusterBiasCorrection table (O2 tpc-fine-map-gbl-edgetree format);
   // per cluster the table's inward bias at the PREDICTED pad phase + edge part at the predicted distance d_pred [pads] from the nearest
   // pad-plane edge (prediction = the cosmic's reference track at the cluster's row), moved outward on the prediction's side and added to

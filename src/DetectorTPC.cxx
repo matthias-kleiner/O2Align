@@ -340,6 +340,9 @@ bool DetectorTPC::prepareResidualTrack(const ResidualTrack& trk, Track& resTrack
   }
   std::stable_sort(clusters.begin(), clusters.end(), [](const auto* a, const auto* b) { return a->row < b->row; }); // outward
   const float edgeCut = std::max(static_cast<float>(params.discardEdgePadDepth), params.residualTPCEdgePads);
+  if (mDriftNorm.on && !(mResRefVDrift > 0.f)) {
+    LOGP(fatal, "TPCMapParams.driftNorm needs the residual file's drift reference (none set)");
+  }
   auto prop = o2::base::PropagatorD::Instance();
   auto trkParam = resTrack.track;
   o2::track::TrackParD trkRef, *refLin = nullptr;
@@ -365,10 +368,13 @@ bool DetectorTPC::prepareResidualTrack(const ResidualTrack& trk, Track& resTrack
           continue;
         }
       }
+      if (params.tpcCentrePads > 0.f && std::abs(c.y) < params.tpcCentrePads * o2::gpu::GPUTPCGeometry::PadWidth(c.row)) {
+        continue; // the sector centre line (spacer cross) out
+      }
       SelectedCluster sel{.sector = static_cast<uint8_t>(c.sector), .row = static_cast<uint8_t>(c.row)};
       sel.x = c.x;
       sel.y = c.y;
-      sel.z = c.z;
+      sel.z = mDriftNorm.on ? driftNormZ(mDriftNorm, c.z, c.sector >= 18, mResRefVDrift, mResRefT0) : c.z;
       mCorrMaps->TransformXYZ(c.sector, c.row, sel.x, sel.y, sel.z);
       applyClusterShift(mClusterShift, sel);
       return sel;
@@ -461,9 +467,18 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     if (cc.row > params.maxTPCPadRow || !isClusterAccepted(cc.cl, cc.row)) {
       continue;
     }
+    if (params.tpcCentrePads > 0.f && std::abs(cc.cl.getPad() - 0.5f * (o2::gpu::GPUTPCGeometry::NPads(cc.row) - 1)) < params.tpcCentrePads) {
+      continue; // the sector centre line (spacer cross) out
+    }
     auto& sel = selected.emplace_back(SelectedCluster{.sector = cc.sector, .row = cc.row, .qTot = static_cast<float>(cc.cl.getQtot())});
     sel.road = road;
-    mCorrMaps->Transform(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
+    if (mDriftNorm.on) { // the maps' drift frame: the ideal transformation with vD0 / t00 (set by the caller), the window's vD slope, then the map
+      mCorrMaps->TransformIdeal(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
+      sel.z = driftNormZ(mDriftNorm, sel.z, cc.sector >= 18, mDriftNorm.vD0, mDriftNorm.t00);
+      mCorrMaps->TransformXYZ(cc.sector, cc.row, sel.x, sel.y, sel.z);
+    } else {
+      mCorrMaps->Transform(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
+    }
     if (params.cosmTPCMaxZOverR > 0.f && std::abs(sel.z) > params.cosmTPCMaxZOverR * std::hypot(sel.x, sel.y)) {
       selected.pop_back(); // outside of the acceptance of the tracks the correction map was made of
       continue;
