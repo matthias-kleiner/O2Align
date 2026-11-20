@@ -43,6 +43,9 @@ struct ClusterBiasCorrection;
 namespace o2::alignrs
 {
 class TPCMap;
+class TPCEdgeTerm;
+class TPCCentreTable;
+struct ResidualTPCCluster;
 
 class DetectorTPC final : public Detector
 {
@@ -74,11 +77,35 @@ class DetectorTPC final : public Detector
     }
     return mClusterBias != nullptr;
   }
+  /// a per-cluster table by the track is configured (bias / edge table or centre table): the tracks are prepared in two passes
+  bool hasTrackTables() { return hasClusterBias() || mCentreTable != nullptr; }
   /// cosmics with the correction are prepared in two passes (AlignmentSpec::prepareCosmicTrack): 1 = no correction and no cluster
   /// measured within ClusterBiasPassOneEdgePads of the sector edge (the KF fit for the prediction), 2 = correction + rejection by the
   /// prediction (the references = the fitted states of pass 1); 0 = outside a cosmic (as 2)
   void setClusterBiasPass(int pass) { mClusterBiasPass = pass; }
   static constexpr float ClusterBiasPassOneEdgePads = 2.f;
+  /// counts of the centre table: clusters shifted, no prediction (kept uncorrected)
+  std::string getCentreTableStats() const;
+
+  /// the IDC derivative map and its scale for the TF ((IDC - IDC of the base map) / IDC of the derivative), added to the base map's
+  /// correction at the nominal position (TPCMapParams.derivativeMap); nullptr: off. Not owned
+  void setDerivative(const o2::gpu::TPCFastTransformPOD* der, float scale)
+  {
+    mDerivative = der;
+    mDerivativeScale = scale;
+  }
+  /// the sector-edge fluctuation term with the 36 boundary scales of the TF (TPCMapParams.edgeShape*); nullptr: off. Not owned
+  void setEdgeTerm(const TPCEdgeTerm* term, const std::array<float, 36>& scales)
+  {
+    mEdgeTerm = term;
+    mEdgeScales = scales;
+  }
+  /// the spacer-cross table by the track (TPCMapParams.centreTable); nullptr: off. Not owned
+  void setCentreTable(const TPCCentreTable* table) { mCentreTable = table; }
+  /// residual-ext with a table by the track: the reference track of the lookup (its state anywhere along the track, propagated to the
+  /// clusters without material); nullptr = the reference fit itself (the clusters measured near the sector edge, residualTPCEdgePads, and
+  /// near the centre line, tpcCentrePads, left out, no table). Not owned
+  void setResidualReference(const o2::track::TrackParCovD* ref) { mResidualRef = ref; }
 
   /// The drift calibration already applied to the correction maps: the fitted VDRIFT correction is
   /// relative to it, hence it is needed to express the result wrt the reference drift velocity.
@@ -146,6 +173,15 @@ class DetectorTPC final : public Detector
 
  private:
   bool isClusterAccepted(const o2::tpc::ClusterNative& cl, int row) const;
+  /// x, y, z (nominal, on the maps' drift frame) -> the base map + the derivative x its scale (both at the nominal position) + the
+  /// sector-edge term; rowX = the pad row's x
+  void correctCluster(int sector, int row, float rowX, float& x, float& y, float& z) const;
+  /// the centre table's shift [cm, signed: subtract from y] for the track at padY [cm, pad plane] of the cluster of class cls
+  double centreShift(int sector, int row, int cls, double trackPadY) const;
+  /// residual-ext lookup pass: dy [cm] = the centre table + the bias / edge table at the reference track trkAt (in the cluster's sector
+  /// frame, at its x) for cluster c of track trk, corrected y yCorr, nominal z zNominal; false = dropped (the track is within
+  /// clusterBiasRejectPads of the pad-plane edge)
+  bool residualTables(const ResidualTrack& trk, const ResidualTPCCluster& c, float yCorr, float zNominal, const o2::track::TrackParCovD& trkAt, float& dy);
 
   static constexpr std::array<std::pair<int, int>, NStacks> sStackMinMaxRow = {
     std::pair<int, int>{0, 62}, std::pair<int, int>{63, 96}, std::pair<int, int>{97, 126}, std::pair<int, int>{127, 151}};
@@ -166,6 +202,14 @@ class DetectorTPC final : public Detector
   std::shared_ptr<const o2::tpc::cluster_bias::ClusterBiasCorrection> mClusterBias; // null: off
   std::array<float, NStacks> mClusterBiasMult{-1.f, -1.f, -1.f, -1.f};               // multStack per stack for the occupancy term (< 0: off)
   std::array<uint64_t, 3> mClusterBiasCount{};                                         // corrected, rejected (d_pred below the cut), no prediction
+  // map-chain corrections on top of the base map, see the setters (not owned)
+  const o2::gpu::TPCFastTransformPOD* mDerivative{nullptr};
+  float mDerivativeScale{0.f};
+  const TPCEdgeTerm* mEdgeTerm{nullptr};
+  std::array<float, 36> mEdgeScales{};
+  const TPCCentreTable* mCentreTable{nullptr};
+  std::array<uint64_t, 2> mCentreTableCount{}; // shifted, no prediction
+  const o2::track::TrackParCovD* mResidualRef{nullptr};
 };
 
 } // namespace o2::alignrs

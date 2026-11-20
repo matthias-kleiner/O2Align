@@ -88,6 +88,7 @@
 #include "O2Align/DetectorPVT.h"
 #include "O2Align/DetectorTPC.h"
 #include "O2Align/TPCMap.h"
+#include "O2Align/TPCClusterCorrections.h"
 #include "O2Align/ResidualReader.h"
 #include "O2Align/DetectorTRD.h"
 #include "O2Align/DetectorTOF.h"
@@ -301,8 +302,11 @@ class AlignmentSpec final : public Task
   bool setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo);
   bool selectStaticTPCMap();
   bool selectDriftNorm();
+  void initTPCClusterCorrections();
+  bool setTPCClusterCorrections();
   void processResidualExt();
   bool prepareResidualTrack(const ResidualTrack& trk, bool useVertex, Track& resTrack);
+  bool prepareResidualTrackWithTables(const ResidualTrack& trk, bool useVertex, Track& resTrack);
 
   // write mp2tree.txt/mp2con.txt/mp2param.txt. statWeighted is forwarded to
   // Volume::writeRigidBodyConstraints: false for the immediate, data-independent write done from
@@ -443,6 +447,16 @@ class AlignmentSpec final : public Task
   std::vector<std::pair<std::array<long, 2>, DetectorTPC::DriftNorm>> mDriftNormWindows; // TPCMapParams.driftNorm: [tmin, tmax) [ms] -> frame
   int mCosmicDriftNormLog = 0;                                        // printouts of the cosmics' drift frame
   uint64_t mDriftNormTFNone = 0;                                      // TFs skipped: driftNorm set, no window of its list contains their time
+  // map-chain corrections on top of the base map (TPCMapParams.derivativeMap, edgeShape*, centreTable; initTPCClusterCorrections)
+  bool mTPCCorrInit = false;
+  float mBaseMapIDC = 0.f;                                                          // IDC of the loaded base map (TPCFastTransform::getIDC)
+  float mDerivativeIDC = 0.f;                                                       // IDC of the derivative map
+  o2::gpu::aligned_unique_buffer_ptr<o2::gpu::TPCFastTransformPOD> mDerivativeMap; // empty: off
+  std::unique_ptr<TPCScalerIDC> mScalerIDC;
+  std::unique_ptr<TPCEdgeTerm> mEdgeTerm;
+  std::unique_ptr<TPCCentreTable> mCentreTable;
+  uint64_t mTFNoScaler = 0;  // TFs skipped: the derivative is on, no scaler object covers their time
+  int mDerivativeLog = 0;    // printouts of the lumi scale
   std::array<uint64_t, 4> mCosmicsRejected{}; // by the clean selection: no unambiguous TOF pair, near-beam, momentum, TOF vs matcher time (cosm* params)
   std::unique_ptr<o2::gpu::GPUParam> mTPCParam;                                   // TPC cluster error parametrization, field-dependent
   o2::tpc::VDriftHelper mTPCVDriftHelper{};                                       // drift calibration accounted by the correction maps
@@ -622,6 +636,12 @@ void AlignmentSpec::processCosmicExt()
   }
   if (mTPC && !TPCMapParams::Instance().clusterBiasTable.empty()) {
     LOGP(info, "Cosmics TPC cluster bias: {}", mTPC->getClusterBiasStats());
+  }
+  if (mTPC && !TPCMapParams::Instance().centreTable.empty()) {
+    LOGP(info, "Cosmics TPC centre table: {}", mTPC->getCentreTableStats());
+  }
+  if (mTFNoScaler) {
+    LOGP(info, "Cosmics: {} TFs without a TPC scaler object (derivative map on: skipped)", mTFNoScaler);
   }
   mGBLStatSingle.print("Single-track");
   writeMilleRecords(gblTraj);
@@ -1072,7 +1092,7 @@ bool AlignmentSpec::prepareCosmicTrack(const o2::dataformats::TrackCosmicsExtend
     std::string why;
     return cleanCosmicTPC(resTrack, refDown, cosm, why) ? true : reject(why.c_str());
   };
-  if (!(mTPC && mTPC->hasClusterBias())) {
+  if (!(mTPC && mTPC->hasTrackTables())) {
     return collectAndFit(refLeg, nullptr) && cleanTPC();
   }
   TrackD bottomState;
@@ -1252,10 +1272,12 @@ bool AlignmentSpec::selectStaticTPCMap()
       LOGP(fatal, "No TPCFastTransform ccdb_object in {}", mapFile);
     }
     map->rectifyAfterReadingFromFile();
+    mBaseMapIDC = map->getIDC();
     o2::gpu::TPCFastTransformPOD::create(mCosmicTPCMap, *map);
     mCosmicTPCMap->setApplyCorrectionOn();
     mTPC->setCorrMaps(mCosmicTPCMap.get());
-    LOGP(info, "TPC clusters transformed with the static correction map {} (no derivative, no lumi scaling)", mapFile);
+    LOGP(info, "TPC clusters transformed with the static correction map {} (IDC {}{})", mapFile, mBaseMapIDC,
+         TPCMapParams::Instance().derivativeMap.empty() ? ", no derivative, no lumi scaling" : ", + the derivative map x the lumi scale");
   };
   if (mapPar.ends_with(".txt")) {
     if (mCosmicMapWindows.empty()) {
@@ -1329,6 +1351,78 @@ bool AlignmentSpec::selectDriftNorm()
   return false;
 }
 
+// The map-chain corrections on top of the base map (TPCMapParams.derivativeMap, edgeShape* / edgeTable / edgeWindows, centreTable), loaded
+// once and handed to the TPC detector (the centre table) or set per TF (setTPCClusterCorrections). Fatal if a file cannot be read.
+void AlignmentSpec::initTPCClusterCorrections()
+{
+  mTPCCorrInit = true;
+  const auto& mapPar = TPCMapParams::Instance();
+  if (!mapPar.derivativeMap.empty()) {
+    std::unique_ptr<TFile> file(TFile::Open(mapPar.derivativeMap.c_str()));
+    std::unique_ptr<o2::gpu::TPCFastTransform> der(file ? file->Get<o2::gpu::TPCFastTransform>("ccdb_object") : nullptr);
+    if (!der) {
+      LOGP(fatal, "No TPCFastTransform ccdb_object in the derivative map {}", mapPar.derivativeMap);
+    }
+    der->rectifyAfterReadingFromFile();
+    mDerivativeIDC = der->getIDC();
+    o2::gpu::TPCFastTransformPOD::create(mDerivativeMap, *der);
+    mDerivativeMap->setApplyCorrectionOn();
+    mScalerIDC = std::make_unique<TPCScalerIDC>();
+    LOGP(info, "TPC derivative map {} (IDC {}): + (IDC of the TF - IDC of the base map) / {} x its correction", mapPar.derivativeMap, mDerivativeIDC, mDerivativeIDC);
+  }
+  const int nEdge = !mapPar.edgeShapeR.empty() + !mapPar.edgeShapeL.empty() + !mapPar.edgeTable.empty() + !mapPar.edgeWindows.empty();
+  if (nEdge > 0) {
+    if (nEdge < 4) {
+      LOGP(fatal, "The sector-edge term needs all of TPCMapParams.edgeShapeR, edgeShapeL, edgeTable, edgeWindows");
+    }
+    mEdgeTerm = std::make_unique<TPCEdgeTerm>();
+    std::string error;
+    if (!mEdgeTerm->load(mapPar.edgeShapeR, mapPar.edgeShapeL, mapPar.edgeTable, mapPar.edgeWindows, mapPar.edgeScale, error)) {
+      LOGP(fatal, "Cannot load the sector-edge term: {}", error);
+    }
+    LOGP(info, "TPC sector-edge term: {}", mEdgeTerm->describe());
+  }
+  if (!mapPar.centreTable.empty()) {
+    mCentreTable = std::make_unique<TPCCentreTable>();
+    if (!mCentreTable->load(mapPar.centreTable)) {
+      LOGP(fatal, "Cannot read the TPC centre table {}", mapPar.centreTable);
+    }
+    if (mCentreTable->nIgnoredTerms() > 0) {
+      LOGP(warn, "TPC centre table {}: {} lines of optional terms (D / O / C / A) ignored", mapPar.centreTable, mCentreTable->nIgnoredTerms());
+    }
+    mTPC->setCentreTable(mCentreTable.get());
+    LOGP(info, "TPC centre table by the track {}: {} per-row entries, {} group x class entries", mapPar.centreTable, mCentreTable->nRowEntries(),
+         mCentreTable->nGroupEntries());
+  }
+}
+
+// Per TF (time mTimeStamp, after selectStaticTPCMap): the derivative's scale (IDC of the TF - IDC of the base map) / IDC of the derivative
+// and the sector-edge term's boundary scales. false: the derivative is on and no scaler object covers the TF (skip it, as the production
+// would fall back to the CTP lumi)
+bool AlignmentSpec::setTPCClusterCorrections()
+{
+  if (!mTPCCorrInit) {
+    initTPCClusterCorrections();
+  }
+  if (mDerivativeMap) {
+    float idc = 0.f;
+    if (!mScalerIDC->idcAt(static_cast<double>(mTimeStamp), idc)) {
+      ++mTFNoScaler;
+      return false;
+    }
+    const float scale = mDerivativeIDC != 0.f ? (idc - mBaseMapIDC) / mDerivativeIDC : 0.f;
+    mTPC->setDerivative(mDerivativeMap.get(), scale);
+    if (mDerivativeLog < 5) {
+      ++mDerivativeLog;
+      LOGP(info, "TF {} ms: IDC {}, base map IDC {} -> derivative scale {}", mTimeStamp, idc, mBaseMapIDC, scale);
+    }
+  }
+  if (mEdgeTerm) {
+    mTPC->setEdgeTerm(mEdgeTerm.get(), mEdgeTerm->scales(static_cast<double>(mTimeStamp)));
+  }
+  return true;
+}
+
 // The cosmics' TPC transformation: the static map of the TF (selectStaticTPCMap) with the TF's drift calibration of the input, or with the
 // common reference of the maps' drift frame (TPCMapParams.driftNorm: vD0, t00; DetectorTPC adds the window's vD slope per side)
 bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFInfo& tfInfo)
@@ -1337,7 +1431,7 @@ bool AlignmentSpec::setCosmicTPCTransformation(const o2::dataformats::CosmicsTFI
     ++mCosmicTFNoMap;
     return false;
   }
-  if (!selectDriftNorm()) {
+  if (!selectDriftNorm() || !setTPCClusterCorrections()) {
     return false;
   }
   if (mTPC->getDriftNorm().on) { // as TPCFastTransformHelperO2::updateCalibration: t0 [time bins] = (drift time offset + average shaping) / bin
@@ -1372,6 +1466,10 @@ void AlignmentSpec::processResidualExt()
     LOGP(fatal, "residual-ext with the vertex point (residualVertexSigmaXY > 0) needs the mean vertex: AlignParams.usePVConstraintMinTracks > 0");
   }
   const auto files = ResidualReader::inputFiles(par.residualFiles);
+  if (!mTPCCorrInit) {
+    initTPCClusterCorrections();
+  }
+  const bool withTables = mTPC->hasTrackTables(); // the per-cluster tables by the track: a reference fit, then the lookup(s)
   ResidualReader reader;
   std::vector<ResidualTrack> tracks;
   std::vector<gbl::GblTrajectory> gblTraj;
@@ -1399,7 +1497,7 @@ void AlignmentSpec::processResidualExt()
         ++mResidualTFNoMap;
         continue;
       }
-      if (!selectDriftNorm()) {
+      if (!selectDriftNorm() || !setTPCClusterCorrections()) {
         continue;
       }
       resTracks.clear();
@@ -1411,7 +1509,7 @@ void AlignmentSpec::processResidualExt()
         }
         auto& resTrack = resTracks.emplace_back();
         resTrack.gid = GTrackID(static_cast<uint32_t>(it), GTrackID::ITSTPC);
-        if (!prepareResidualTrack(trk, useVertex, resTrack)) {
+        if (!(withTables ? prepareResidualTrackWithTables(trk, useVertex, resTrack) : prepareResidualTrack(trk, useVertex, resTrack))) {
           resTracks.pop_back();
         }
       }
@@ -1431,6 +1529,13 @@ void AlignmentSpec::processResidualExt()
   }
   if (mResidualTFNoMap) {
     LOGP(info, "residual-ext: {} TFs without a TPC map (time outside the windows of the map list)", mResidualTFNoMap);
+  }
+  if (mTFNoScaler) {
+    LOGP(info, "{} TFs without a TPC scaler object (derivative map on: skipped)", mTFNoScaler);
+  }
+  if (withTables) {
+    LOGP(info, "residual-ext TPC tables by the track ({} lookups): bias / edge table: {}; centre table: {}", TPCMapParams::Instance().trackTableLookups,
+         mTPC->getClusterBiasStats(), mTPC->getCentreTableStats());
   }
   LOGP(info, "Processing stats: {}", mProcessingStats.asString());
   mGBLStatSingle.print("Single-track");
@@ -1476,6 +1581,30 @@ bool AlignmentSpec::prepareResidualTrack(const ResidualTrack& trk, bool useVerte
     vtx.setXYZ(static_cast<float>(trk.vertex.x * ca - trk.vertex.y * sa), static_cast<float>(trk.vertex.x * sa + trk.vertex.y * ca), static_cast<float>(trk.vertex.z));
     vtx.setCov(par.residualVertexSigmaXY * par.residualVertexSigmaXY, 0.f, par.residualVertexSigmaXY * par.residualVertexSigmaXY, 0.f, 0.f, sigZ * sigZ);
     resTrack.updateWithVertex(vtx);
+  }
+  return true;
+}
+
+// A residual track with the TPC tables by the track (TPCMapParams.clusterBiasTable / centreTable): the reference fit (the TPC clusters
+// measured near the sector edge and the centre line left out, no table), then trackTableLookups times the track prepared again with the
+// tables looked up at the previous fit's track (its state after the inward refit, propagated to the clusters). false: rejected.
+bool AlignmentSpec::prepareResidualTrackWithTables(const ResidualTrack& trk, bool useVertex, Track& resTrack)
+{
+  const auto gid = resTrack.gid;
+  mTPC->setResidualReference(nullptr);
+  if (!prepareResidualTrack(trk, useVertex, resTrack)) {
+    return false;
+  }
+  for (int lookup = 0; lookup < std::max(1, TPCMapParams::Instance().trackTableLookups); ++lookup) {
+    const auto reference = resTrack.track;
+    resTrack = Track{};
+    resTrack.gid = gid;
+    mTPC->setResidualReference(&reference);
+    const bool ok = prepareResidualTrack(trk, useVertex, resTrack);
+    mTPC->setResidualReference(nullptr);
+    if (!ok) {
+      return false;
+    }
   }
   return true;
 }

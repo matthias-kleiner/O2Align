@@ -49,16 +49,35 @@ struct TPCMapParams : public o2::conf::ConfigurableParamHelper<TPCMapParams> {
   // file's reference vD / t0 moved by s ((1 - vD0 / vD_ref) L + vD0 (t00 - t0_ref) - b_side L), L = 250 - |z|; cosmics = the ideal
   // transformation with vD0, t00 instead of the TF's calibration, then - s b_side L. TFs outside all windows are skipped. Empty: off
   std::string driftNorm = "";
-  // per-cluster bias correction of the reco (cosmic-ext TPC clusters): ClusterBiasCorrection table (O2 tpc-fine-map-gbl-edgetree format);
-  // per cluster the table's inward bias at the PREDICTED pad phase + edge part at the predicted distance d_pred [pads] from the nearest
-  // pad-plane edge (prediction = the cosmic's reference track at the cluster's row), moved outward on the prediction's side and added to
-  // the cluster y; clusters with d_pred < clusterBiasRejectPads are dropped. Empty: off
+  // per-cluster bias correction (cosmic-ext: the reco's table; residual-ext: the map chain's MC edge table with its data correction):
+  // ClusterBiasCorrection table (O2 tpc-fine-map-gbl-edgetree format); per cluster the table's inward bias at the PREDICTED pad phase +
+  // edge part at the predicted distance d_pred [pads] from the nearest pad-plane edge (prediction = the reference track at the cluster's
+  // row, on the pad plane), moved outward on the cluster's side and added to the cluster y; clusters with d_pred < clusterBiasRejectPads
+  // are dropped. Empty: off
   std::string clusterBiasTable = "";
   float clusterBiasRejectPads = 1.f; // [pads]
   float clusterBiasScale = 1.f;      // x the correction (0: only the rejection)
-  // occupancy (TrackDataCompact::multStack) per stack IROC, OROC1-3 for a table with M records (the cosmics carry none), "m0,m1,m2,m3";
-  // empty: the occupancy term (and a data correction folded into it) left out
+  // cosmic-ext: occupancy (TrackDataCompact::multStack) per stack IROC, OROC1-3 for a table with M records (the cosmics carry none),
+  // "m0,m1,m2,m3"; empty: the occupancy term (and a data correction folded into it) left out. residual-ext takes the track's own multStack
   std::string clusterBiasMult = "";
+  // the IDC derivative of the base maps (the map chain's derivative map, IDC 1): a TPCFastTransform file whose correction is added to the
+  // base map's at the cluster's nominal position x (IDC of the TF - IDC of the TF's base map) / IDC of the derivative, as the production's
+  // lumi scaling (IDC from TPC/Calib/Scaler, TPCClusterCorrections.h TPCScalerIDC); TFs without a scaler object are skipped. Empty: off
+  std::string derivativeMap = "";
+  // the sector-edge fluctuation term (TPCClusterCorrections.h TPCEdgeTerm), applied after the map: the edge-shape maps of the high-y (R)
+  // and low-y (L) boundaries, the per-second dipole table and the map windows ("<index> <start ms> ..."); all four or none
+  std::string edgeShapeR = "";
+  std::string edgeShapeL = "";
+  std::string edgeTable = "";
+  std::string edgeWindows = "";
+  float edgeScale = 100.f; // [um] of dipole the shape maps are given for
+  // the spacer-cross table by the TRACK position (TPCClusterCorrections.h TPCCentreTable): the clusters near the sector centre line are
+  // corrected at the reference track (cosmics: the prediction of pass 2) instead of dropped; AlignParams.tpcCentrePads then cuts only in
+  // the reference fit. Empty: off
+  std::string centreTable = "";
+  // residual-ext with a table by the track (clusterBiasTable, centreTable): the number of lookups, each at the track of the previous fit
+  // (the first at the reference fit, which leaves out the clusters measured near the sector edge and the centre line) and followed by a refit
+  int trackTableLookups = 1;
 
   O2ParamDef(TPCMapParams, "TPCMapParams");
 };

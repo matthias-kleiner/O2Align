@@ -57,6 +57,7 @@ add_library(O2Align SHARED
             src/WeakModes.cxx
             src/ProcessingStats.cxx
             src/TPCMap.cxx
+            src/TPCClusterCorrections.cxx
             src/ResidualReader.cxx
             src/AlignmentSpec.cxx)
 #add_library(O2::Align ALIAS O2Align)

@@ -42,6 +42,7 @@ struct ResidualTPCCluster {
   float y = 0.f;      ///< measured y [cm] (reference + residual) = the pad-plane y
   float z = 0.f;      ///< measured z [cm]
   bool rejected = false; ///< flagged by TrackInterpolation::validateTrack
+  int flags = -1;        ///< ClusterNative flags (UnbinnedResid::channel of a TPC residual: split pad 0x1, single pad 0x8, shared 0x10)
 };
 
 /// an ITS cluster, a TOF cluster or the primary vertex: a point in the frame (alpha, x); for ITS the frame is the sensor's (set by
@@ -68,6 +69,7 @@ struct ResidualTrack {
   std::vector<ResidualPoint> tof;
   bool hasVertex = false;
   ResidualPoint vertex;
+  std::array<float, 4> multStack{}; ///< TPC occupancy per stack IROC, OROC1-3 (TrackDataCompact::getMultStack; 0 if not stored)
 };
 
 class ResidualReader

@@ -126,6 +126,9 @@ bool ResidualReader::readTimeFrame(long entry, std::vector<ResidualTrack>& track
     track.filterFlag = info.filterFlag;
     track.nClustersITS = data.nClsITS;
     track.nClustersTPC = data.nClsTPC;
+    for (int stack = 0; stack < 4; ++stack) {
+      track.multStack[stack] = info.getMultStackPacked(stack) > 0 ? info.getMultStack(stack) : 0.f;
+    }
     {
       std::array<double, 5> par{};
       std::array<double, 15> cov{};
@@ -152,6 +155,7 @@ bool ResidualReader::readTimeFrame(long entry, std::vector<ResidualTrack>& track
       cl.y = decodeY(r.y) + decodeResidual(r.dy);
       cl.z = decodeZ(r.z) + decodeResidual(r.dz);
       cl.rejected = r.rejected;
+      cl.flags = r.channel;
     }
     for (unsigned int k = lastTPC; k < last; ++k) {
       const auto& r = residuals[k];

@@ -36,6 +36,7 @@
 #include "O2Align/DetectorTPC.h"
 #include "O2Align/Params.h"
 #include "O2Align/SensorTPC.h"
+#include "O2Align/TPCClusterCorrections.h"
 #include "O2Align/TPCMap.h"
 #include "O2Align/TrackFit.h"
 #include "TPCFastTransformPOD.h"
@@ -320,10 +321,12 @@ bool DetectorTPC::prepareTrack(o2::globaltracking::RecoContainer* recoData, cons
 }
 
 // The TPC clusters of a residual track (ResidualReader): IDEAL positions (the residual file's reference drift), corrected here with the
-// static map set as mCorrMaps (TransformXYZ: as Transform does after the pad / time conversion), shifted by the TPCMap cluster shift if
-// any, merged to superclusters and fitted outward from the seed prepared by the inner detectors, as prepareTrack. Rows outside
-// [minTPCPadRow, maxTPCPadRow], the stack-edge rows (discardEdgePadrows), the clusters flagged by validateTrack and those measured
-// within max(discardEdgePadDepth, residualTPCEdgePads) pads from the sector edge (pad-plane y) are not used.
+// static map set as mCorrMaps + the derivative + the sector-edge term (correctCluster), with the tables by the track in the lookup pass
+// (setResidualReference: residualTables), shifted by the TPCMap cluster shift if any, merged to superclusters and fitted outward from the
+// seed prepared by the inner detectors, as prepareTrack. Rows outside [minTPCPadRow, maxTPCPadRow], the stack-edge rows
+// (discardEdgePadrows) and the clusters flagged by validateTrack are not used, nor those measured within max(discardEdgePadDepth,
+// residualTPCEdgePads) pads from the sector edge or tpcCentrePads from the centre line (pad-plane y) unless the lookup pass handles them
+// by the track (clusterBiasTable / centreTable).
 bool DetectorTPC::prepareResidualTrack(const ResidualTrack& trk, Track& resTrack)
 {
   const auto& params = Params::Instance();
@@ -339,10 +342,26 @@ bool DetectorTPC::prepareResidualTrack(const ResidualTrack& trk, Track& resTrack
     clusters.push_back(&c);
   }
   std::stable_sort(clusters.begin(), clusters.end(), [](const auto* a, const auto* b) { return a->row < b->row; }); // outward
+  const bool lookup = mResidualRef != nullptr && hasTrackTables();
+  const bool edgeByTrack = lookup && mClusterBias != nullptr;
+  const bool centreByTrack = lookup && mCentreTable != nullptr;
   const float edgeCut = std::max(static_cast<float>(params.discardEdgePadDepth), params.residualTPCEdgePads);
   if (mDriftNorm.on && !(mResRefVDrift > 0.f)) {
     LOGP(fatal, "TPCMapParams.driftNorm needs the residual file's drift reference (none set)");
   }
+  o2::track::TrackParCovD refAt; // the reference propagated outward from cluster to cluster (the clusters are ordered by row)
+  bool refOK = lookup;
+  if (lookup) {
+    refAt = *mResidualRef;
+  }
+  // a cut on the measured pad-plane y: the edge zone and the centre zone unless the lookup handles them
+  auto measuredCut = [&](const ResidualTPCCluster& c, bool byTrack) {
+    const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(c.row);
+    if (!(byTrack && edgeByTrack) && edgeCut > 0.f && (0.5 * o2::gpu::GPUTPCGeometry::NPads(c.row) * padWidth - std::abs(c.y)) / padWidth < edgeCut) {
+      return true;
+    }
+    return !(byTrack && centreByTrack) && params.tpcCentrePads > 0.f && std::abs(c.y) < params.tpcCentrePads * padWidth;
+  };
   auto prop = o2::base::PropagatorD::Instance();
   auto trkParam = resTrack.track;
   o2::track::TrackParD trkRef, *refLin = nullptr;
@@ -362,20 +381,32 @@ bool DetectorTPC::prepareResidualTrack(const ResidualTrack& trk, Track& resTrack
       if (c.rejected || c.row < params.minTPCPadRow || (params.discardEdgePadrows > 0 && getDistanceToStackEdge(c.row) < params.discardEdgePadrows)) {
         continue;
       }
-      if (edgeCut > 0.f) {
-        const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(c.row);
-        if ((0.5 * o2::gpu::GPUTPCGeometry::NPads(c.row) * padWidth - std::abs(c.y)) / padWidth < edgeCut) {
-          continue;
-        }
-      }
-      if (params.tpcCentrePads > 0.f && std::abs(c.y) < params.tpcCentrePads * o2::gpu::GPUTPCGeometry::PadWidth(c.row)) {
-        continue; // the sector centre line (spacer cross) out
+      if (measuredCut(c, true)) {
+        continue;
       }
       SelectedCluster sel{.sector = static_cast<uint8_t>(c.sector), .row = static_cast<uint8_t>(c.row)};
       sel.x = c.x;
       sel.y = c.y;
       sel.z = mDriftNorm.on ? driftNormZ(mDriftNorm, c.z, c.sector >= 18, mResRefVDrift, mResRefT0) : c.z;
-      mCorrMaps->TransformXYZ(c.sector, c.row, sel.x, sel.y, sel.z);
+      const float zNominal = sel.z;
+      correctCluster(c.sector, c.row, c.x, sel.x, sel.y, sel.z);
+      if (lookup) {
+        if (refOK) {
+          refOK = propagateCosmicRef(refAt, o2::math_utils::detail::sector2Angle<double>(c.sector % (o2::tpc::constants::MAXSECTOR / 2)), sel.x, refAt);
+        }
+        if (!refOK) { // no prediction: the measured cuts, no table
+          ++mClusterBiasCount[2];
+          if (measuredCut(c, false)) {
+            continue;
+          }
+        } else {
+          float dy = 0.f;
+          if (!residualTables(trk, c, sel.y, zNominal, refAt, dy)) {
+            continue;
+          }
+          sel.y += dy;
+        }
+      }
       applyClusterShift(mClusterShift, sel);
       return sel;
     }
@@ -435,6 +466,7 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     o2::track::TrackParCovD trk;
     if (!propagateCosmicRef(ref, o2::math_utils::detail::sector2Angle<double>(sel.sector % NSectorsPerSide), sel.x, trk)) {
       ++mClusterBiasCount[2]; // kept uncorrected: the supercluster's own propagation decides on it
+      ++mCentreTableCount[1];
       return true;
     }
     // the table is defined on the PAD PLANE (where the charge landed): the prediction there = the cluster's ideal (uncorrected) y +
@@ -444,12 +476,22 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(sel.row);
     const double yPred = yIdeal + (trk.getY() - sel.y);
     const double dPred = (0.5 * o2::gpu::GPUTPCGeometry::NPads(sel.row) * padWidth - std::abs(yPred)) / padWidth;
-    if (dPred < mapParams.clusterBiasRejectPads) {
+    if (mClusterBias && dPred < mapParams.clusterBiasRejectPads) {
       ++mClusterBiasCount[1];
       return false;
     }
     const float pad = cl.getPad();
     const int cls = cb::classOfFlags(cl.getFlags(), std::abs(pad - std::round(pad)) < 0.25f / 64.f);
+    if (mCentreTable) { // the spacer-cross table at the prediction (TPCMapParams.centreTable)
+      const double shift = centreShift(sel.sector, sel.row, cls, yPred);
+      if (shift != 0.) {
+        sel.y -= static_cast<float>(shift);
+        ++mCentreTableCount[0];
+      }
+    }
+    if (!mClusterBias) {
+      return true;
+    }
     const int stack = cb::stackOfRow(sel.row);
     const double snp = std::clamp(trk.getSnp(), -0.999, 0.999);
     const double absSlope = std::abs(snp / std::sqrt((1. - snp) * (1. + snp)));
@@ -467,15 +509,19 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     if (cc.row > params.maxTPCPadRow || !isClusterAccepted(cc.cl, cc.row)) {
       continue;
     }
-    if (params.tpcCentrePads > 0.f && std::abs(cc.cl.getPad() - 0.5f * (o2::gpu::GPUTPCGeometry::NPads(cc.row) - 1)) < params.tpcCentrePads) {
-      continue; // the sector centre line (spacer cross) out
+    if (params.tpcCentrePads > 0.f && !(mCentreTable && mClusterBiasPass != 1) &&
+        std::abs(cc.cl.getPad() - 0.5f * (o2::gpu::GPUTPCGeometry::NPads(cc.row) - 1)) < params.tpcCentrePads) {
+      continue; // the sector centre line (spacer cross) out, unless the centre table corrects it (pass 2)
     }
     auto& sel = selected.emplace_back(SelectedCluster{.sector = cc.sector, .row = cc.row, .qTot = static_cast<float>(cc.cl.getQtot())});
     sel.road = road;
-    if (mDriftNorm.on) { // the maps' drift frame: the ideal transformation with vD0 / t00 (set by the caller), the window's vD slope, then the map
+    if (mDriftNorm.on || mDerivative || mEdgeTerm) { // the ideal transformation; on the maps' drift frame: with vD0 / t00 (set by the
+                                                     // caller) and the window's vD slope; then the map + derivative + sector-edge term
       mCorrMaps->TransformIdeal(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
-      sel.z = driftNormZ(mDriftNorm, sel.z, cc.sector >= 18, mDriftNorm.vD0, mDriftNorm.t00);
-      mCorrMaps->TransformXYZ(cc.sector, cc.row, sel.x, sel.y, sel.z);
+      if (mDriftNorm.on) {
+        sel.z = driftNormZ(mDriftNorm, sel.z, cc.sector >= 18, mDriftNorm.vD0, mDriftNorm.t00);
+      }
+      correctCluster(cc.sector, cc.row, sel.x, sel.x, sel.y, sel.z);
     } else {
       mCorrMaps->Transform(cc.sector, cc.row, cc.cl.getPad(), cc.cl.getTime(), sel.x, sel.y, sel.z, tOffset);
     }
@@ -484,13 +530,15 @@ int DetectorTPC::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
       continue;
     }
     applyClusterShift(mClusterShift, sel);
-    if (mClusterBias) {
+    if (mClusterBias || mCentreTable) {
       bool keep = true;
       if (mClusterBiasPass == 1) { // the fit for the prediction: no correction, the clusters measured near the sector edge (pad plane) left out
-        const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(sel.row);
-        float xIdeal = 0.f, yIdeal = 0.f, zIdeal = 0.f;
-        mCorrMaps->TransformIdeal(sel.sector, sel.row, cc.cl.getPad(), cc.cl.getTime(), xIdeal, yIdeal, zIdeal, tOffset);
-        keep = (0.5 * o2::gpu::GPUTPCGeometry::NPads(sel.row) * padWidth - std::abs(yIdeal)) / padWidth >= ClusterBiasPassOneEdgePads;
+        if (mClusterBias) {
+          const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(sel.row);
+          float xIdeal = 0.f, yIdeal = 0.f, zIdeal = 0.f;
+          mCorrMaps->TransformIdeal(sel.sector, sel.row, cc.cl.getPad(), cc.cl.getTime(), xIdeal, yIdeal, zIdeal, tOffset);
+          keep = (0.5 * o2::gpu::GPUTPCGeometry::NPads(sel.row) * padWidth - std::abs(yIdeal)) / padWidth >= ClusterBiasPassOneEdgePads;
+        }
       } else {
         keep = correctClusterBias(cc.cl, sel);
       }
@@ -595,13 +643,82 @@ void DetectorTPC::initClusterBias()
       mClusterBiasMult[s] = std::stof(item);
     }
   } else if (table->hasOccupancy()) {
-    LOGP(warn, "Cluster bias table {} has an occupancy term (and any data correction folded into it), but no TPCMapParams.clusterBiasMult: left out",
+    LOGP(info, "Cluster bias table {} has an occupancy term: cosmics leave it out (no TPCMapParams.clusterBiasMult), residual-ext takes the track's multStack",
          mapParams.clusterBiasTable);
   }
-  LOGP(info, "Cosmics: per-cluster bias correction {} ({} records, occupancy term {}, mult {} {} {} {}), x {}, clusters with d_pred < {} pads rejected",
+  LOGP(info, "TPC per-cluster bias correction {} ({} records, occupancy term with clusterBiasMult {}, mult {} {} {} {}), x {}, clusters with d_pred < {} pads rejected",
        mapParams.clusterBiasTable, table->byRegion ? "pad-region" : "stack", mClusterBiasMult[0] >= 0.f && table->hasOccupancy() ? "on" : "off",
        mClusterBiasMult[0], mClusterBiasMult[1], mClusterBiasMult[2], mClusterBiasMult[3], mapParams.clusterBiasScale, mapParams.clusterBiasRejectPads);
   mClusterBias = table;
+}
+
+void DetectorTPC::correctCluster(int sector, int row, float rowX, float& x, float& y, float& z) const
+{
+  const float yNominal = y, zNominal = z;
+  mCorrMaps->TransformXYZ(sector, row, x, y, z);
+  if (mDerivative && mDerivativeScale != 0.f) { // at the nominal position, as the map (production: map + lumi scale x derivative)
+    float dx = 0.f, dy = 0.f, dz = 0.f;
+    mDerivative->getCorrectionLocal(sector, row, yNominal, zNominal, dx, dy, dz);
+    x += mDerivativeScale * dx;
+    y += mDerivativeScale * dy;
+    z += mDerivativeScale * dz;
+  }
+  if (mEdgeTerm) { // on the corrected cluster
+    mEdgeTerm->apply(sector, row, rowX, x, y, z, mEdgeScales);
+  }
+}
+
+double DetectorTPC::centreShift(int sector, int row, int cls, double trackPadY) const
+{
+  const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(row);
+  const double shift = mCentreTable->shift(sector, trackPadY < 0. ? 0 : 1, row, cls, std::abs(trackPadY) / padWidth);
+  return (trackPadY < 0. ? -1. : 1.) * shift;
+}
+
+// As the map chain's DCA validation (gblfit collisionDcaSeries): the track's position on the pad plane = the measured pad-plane y minus the
+// residual (corrected cluster - track); its distance d from the pad-plane edge on the cluster's side decides the drop (d below
+// clusterBiasRejectPads) and the edge table's bias (moved outward on the cluster's side, occupancy = the track's multStack of the stack);
+// the centre table is looked up at |track y| with the cluster class from its flags and pad phase.
+bool DetectorTPC::residualTables(const ResidualTrack& trk, const ResidualTPCCluster& c, float yCorr, float zNominal, const o2::track::TrackParCovD& trkAt, float& dy)
+{
+  namespace cb = o2::tpc::cluster_bias;
+  const auto& mapParams = TPCMapParams::Instance();
+  const double padWidth = o2::gpu::GPUTPCGeometry::PadWidth(c.row);
+  const double halfWidth = 0.5 * o2::gpu::GPUTPCGeometry::NPads(c.row) * padWidth;
+  const double trackPadY = c.y - (yCorr - trkAt.getY());
+  const double side = c.y < 0.f ? -1. : 1.;
+  const double d = (halfWidth - side * trackPadY) / padWidth;
+  dy = 0.f;
+  if (mClusterBias && d < mapParams.clusterBiasRejectPads) {
+    ++mClusterBiasCount[1];
+    return false;
+  }
+  const double padMeasured = (halfWidth - std::abs(c.y)) / padWidth - 0.5;
+  const int cls = cb::classOfFlags(c.flags, std::abs(padMeasured - std::round(padMeasured)) < 0.25 / 64.);
+  if (mCentreTable) {
+    const double shift = centreShift(c.sector, c.row, cls, trackPadY);
+    if (shift != 0.) {
+      dy -= static_cast<float>(shift);
+      ++mCentreTableCount[0];
+    }
+  }
+  if (mClusterBias) {
+    const double snp = std::clamp(trkAt.getSnp(), -0.999, 0.999);
+    const double absSlope = std::abs(snp / std::sqrt((1. - snp) * (1. + snp)));
+    const int stack = cb::stackOfRow(c.row);
+    const double mult = mClusterBias->hasOccupancy() ? static_cast<double>(trk.multStack[stack]) : -1.;
+    const double bias = mClusterBias->inwardBias(mClusterBias->unitOfRow(c.row), cls, cb::driftLength(zNominal), absSlope, d, mult);
+    if (bias != 0.) {
+      dy += static_cast<float>(side * bias * mapParams.clusterBiasScale);
+      ++mClusterBiasCount[0];
+    }
+  }
+  return true;
+}
+
+std::string DetectorTPC::getCentreTableStats() const
+{
+  return std::format("shifted {}, kept without a prediction {}", mCentreTableCount[0], mCentreTableCount[1]);
 }
 
 std::string DetectorTPC::getClusterBiasStats() const
