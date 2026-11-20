@@ -806,3 +806,14 @@ Found in a code review of `ea32487`; each one checked on the laptop.
 - The GBL-fitted curvature differs from the input track by +1.1…+2.2 % for q·bz > 0 and −1.8…−1.9 % for q·bz < 0. This
   is the sign pattern of the one-pad TRD rotation still present at the IBEdge reference (about 1.5 % of the curvature
   expected at 1.2 GeV), and it should vanish once the TRD rφ is aligned.
+- B0 added to coll_TGEOPt12NoMV_LinRef1_ITSSEED (same settings, `meanPtB0=0.45`). Replay at the recorded reference
+  (L5−L0 layer-linear TRD radial / common TRD rφ shift at the sector origin): B0 +0.04 ± 0.13 / +4.7, B+ −0.49 ± 0.24 / +5.3,
+  B− −0.90 ± 0.19 / +5.6 mm. Records with and without vertex agree. The B on/off radial difference dropped from 6–9 mm to
+  0.5–0.9 mm (2–4 σ). The debug u slopes (L5−L0) agree between B0 (−1.9) and B± (−1.3 to −2.0). The B0 sample rejects
+  32 % (single) / 23 % (vertex) of its records at ⟨χ²/ndf⟩ 0.98.
+- With the ITS seed the rotation modes also agree between the fields (replay at the recorded reference, B0 / B+ / B−):
+  TRD sector RY +3.0 / +3.4 / +3.4 mrad (old seed +2.5 / −2.9 / −1.6), TOF common rotation −0.8 / +0.3 / +0.5 mm at the
+  TOF radius (old −0.6 / +2.1 / +1.6). The TOF B on/off tension is halved but not gone.
+- `doc/ITSEnvTRDTOFch4_RB.json` for the recordings with the ITS seed. It is ch3 without the per-layer `radialScaling`
+  group modes, which were there for the seed artefact and pushed the weakly measured chambers out. The sector `TZ` pin
+  (time-zero) is statistics-weighted (`weightedMean`), and TOF keeps `curl` because of the remaining TOF rotation tension.
