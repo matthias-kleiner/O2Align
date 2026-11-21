@@ -365,6 +365,24 @@ Summaries only; the full story is in `doc/handovers/handover_OB_22_10_26.md` and
     Boosting it with the bulk free (S3R) distorts the bulk. With only the OB stave ends free (S4R) it halves to removes the
     +tgλ edge sigmoid and most of the IOB edge kink. The central IOB dtgλ wave, the B+ vertex dz-vs-tgλ slope and the
     Lr0 |z| > 12 cm dY rise stay (`kink_cure.md` 6k).
+  - 11-11, the IB z-stretch on C1v21w3 (ε = −1.2·10⁻⁴) removes the central IOB dtgλ wave but builds a dz(R = 12 cm)
+    slope vs Z that the unstretched geometry does not have. The wave pivots near R ≈ 12 cm, so it is not an IB z-scale
+    about z = 0 (`kink_cure.md` 6k).
+  - 11-12, freeing only the IB end chips (chip0/8 TX, RY, RZ) on S4RBis with IB edge data halves the Lr0 dY rise at |z| > 12 cm
+    without degrading other residuals. The fitted rφ shift ramps over the staves of each half barrel, instead of being
+    uniform (`kink_cure.md` 6k).
+  - 11-12, freeing chips 1/7 too (IBEdge2) gains nothing. What remains at the Lr0 stave ends scales with the rφ incidence:
+    it is an out-of-plane displacement of the outer ~1 cm of the Lr0 end chips (≈ 7–14 µm), which TX/RY/RZ cannot
+    absorb (`kink_cure.md` 6k).
+  - 11-12, fixing the Lr5/6 Module1/5 (S5R) does not remove the Lr5 dz structure that S4R/S4RBis build at z ≈ +41…+47 cm,
+    and costs +464k. The structure sits at tgλ ≈ 1.3–1.4, where tracks cross the inner part of the Lr3/4 end modules, so
+    the edge correction itself, through the tilt of those modules, is the likely cause (`kink_cure.md` 6k).
+  - 11-12, restoring the 30 µm module translation priors (S6R) leaves the 0.1–0.3 mm slides of the OB end modules along
+    the IP ray almost unchanged (−10%) and all residuals within 0.5 µm. The slides are held by the data (≈ 10 µm per DOF),
+    not by prior softness. Pede pays +34k, almost all of it in the prior term (`kink_cure.md` 6k).
+  - 11-12, fixing the end-module translations at C1v21w3 (S7R) costs +1.17M, almost all in the track data, and loses
+    the last part of the edge cure (Lr5 dz at tgλ = 1.9: 4 → 16 µm in B0). The 1.3–1.4 band stays, so the slides are
+    needed and do not cause it. The cosmics agree: +152k against S4RBis (`kink_cure.md` 6k).
 - v10n OB chip out-of-plane (TY) and longitudinal (TZ) corrections (11-07). They are carried unchanged into all our
   solutions, since OB chips are free only in TX, and many look unphysical (|TY|, |TZ| > 100 µm). All chips of a module share
   the same rotation, so only the chip translations scatter. Net chip displacements from the ideal geometry confirm that the
@@ -404,3 +422,423 @@ Summaries only; the full story is in `doc/handovers/handover_OB_22_10_26.md` and
   cosmics at weight 1. The gain shows in the checkResid widths and φ-uniformity of the OB dz (core σ −1…−3 µm, spread of
   the dz means vs φ halved), not in the layer-averaged means vs tgλ: the OB sigmoid is unchanged (its edges at Lr3/Lr6
   slightly worse). (`kink_cure.md` 6i.)
+
+## 2026-11-11 … 11-13: material before the last point, energy-loss sign of cosmics, jacobian step, charge-less clusters
+
+Context: PbPb cosmics with the field on (run 568041), TPC with TOF points at both ends, unbiased TOF residuals from the
+`gbltrack` debug tree. The TOF y pulls were large (⟨pull²⟩ 5.6), twice as large on the bottom leg as on the top one;
+cosmics with ITS points had ⟨pull²⟩ ≈ 1.4 with the same TOF hits.
+
+- **Material before the last point dropped.** The last point of a trajectory carries no scatterer (`hasScatterer`
+  requires `ip < np - 1`), and the step to it was split only above `splitMSThreshold` (5 mrad, i.e. low momenta), so
+  the material on the way to it was lost: for a TOF point the TPC outer wall, the TRD and the TOF. 97 % of the cosmics
+  had no scatterer between the last TPC point and the bottom TOF (the track error there 0.13 cm instead of 0.16 cm).
+  The step to the last valid point is now always split when it crosses material, the scattering of the whole step on
+  the mid point (in the pre-step frame, or in the frame of the last point if the mid point cannot be reached in the
+  first); if neither works the step stays unsplit and is counted (`last-step MS lost` in the GBL summary). This also
+  acts on collision tracks ending on TOF or TRD.
+- **Energy-loss sign of cosmics.** The Propagator takes the sign of the energy-loss correction from the direction of x
+  (outward = loss). The top leg of a cosmic is run in the upward parametrisation, so in the KF of the legs it lost
+  energy on the way up and in the GBL reference it regained it on the way down. `Track::fitTrack` takes the sign
+  (`eLossSign`); the KF of the legs loses energy outward along the bottom leg and regains it back inward and along the
+  top leg; every GBL step of a cosmic (time order, top first) is a loss. Collision tracks are unchanged. Bottom-leg TOF
+  ⟨pull²⟩ y at 2–5 GeV 5.7 → 5.0, GBL χ²/ndf 1.080 → 1.070.
+- **Transport jacobian.** The numerical derivative starts with a perturbation of ±0.05 in snp; at |snp| ≈ 0.85 the
+  perturbed track leaves maxSnp after the rotation to the next sector and the whole track was lost. The first step is
+  now shrunk (down to `minStep`) before giving up, and a failure at a later extrapolation keeps the best estimate so
+  far. Cosmics: propagation failures of the GBL stage 145 → 12 per 60 k TFs.
+- **TPC superclusters of clusters without the charge.** Clusters read with qTot = 0 (ClusterNative written before the
+  qTot → qTotPacked rename and read by a newer O2) gave a NaN supercluster position and no fit at all; they now get
+  equal weights.
+- Together, on one cosmics piece (TPC-TOF, ideal map, no selection): GBL fits 10 734 → 11 754, propagation failures
+  2106 → 992 (the reference with the charge fix only).
+
+## 2026-11-13: TRD pad tilt, cosmics across the central electrode, fixed DOFs in MilleRes, single-point bottom leg
+
+Found in a code review of `ea32487`; each one checked on the laptop.
+
+- **TRD pad tilt.** `makeTrackletPoint` set the tilt correction to 0 when the track is within one pad length of the
+  pad-row centre, i.e. exactly where O2 (`GPUTRDTracker`, `TrackInterpolation`) applies it, and applied it only farther
+  away. The condition is now O2's: within one pad length of the row centre and with a track z error σz² < l²/12 (the
+  latter excludes 1 of 11 145 tracklets on a cosmics piece with the ideal map). The tilt-corrected y also depends on the z of the pad row, while the z row of the
+  derivatives is zeroed for these points (`zFromTrack`): the y row now gets `-tilt * (z row)` where the correction is
+  applied (`FrameInfoExt::tiltDz`). Checked by finite differences: the raw tracklet moved by a ±10 µm / ±10 µrad
+  correction of each DOF of the chamber and of the supermodule (as `MilleRes` applies it), the measurement redone; all
+  12 columns agree with the analytic ones at the track point (100 % of 1500 points within 1 %, TOF strip and
+  supermodule as well). Cosmics with TRD on a calibrated TPC (4 pieces, 162 cosmics with TRD): TRD y ⟨pull²⟩ per layer
+  1.35 / 1.22 / 0.88 / 1.35 / 1.62 / 1.13 → 1.23 / 1.15 / 0.82 / 1.29 / 1.60 / 1.13.
+- **Cosmics crossing the central electrode.** With the ideal TPC map, the clusters of one pad row on both sides of the
+  central electrode (sectors s and s + 18) have the same alpha and X. The zero step between them has an identity
+  jacobian, rejected as "Near jacobian idendity": the whole cosmic was dropped (≈ 85 per cosmics piece, exactly the
+  cosmics that link A and C). Such a frame is now a 2nd measurement on the previous GBL point (`DbgPoint::SamePoint`).
+  When such frames end the track, the last GBL point is the first of them: it gets the split of the last step and no
+  scatterer (GBL ignores a thin scatterer on the last point). One piece (TPC-TRD-TOF, ideal map): identity errors 83 → 0,
+  fits 11 523 → 11 617; 105 same-point measurements, none on the last frame.
+- **Fixed DOFs in MilleRes.** pede reports a fixed parameter at its preset value (`startFromMilleRes`), and
+  `readMillepedeResults` keeps it, but the writers required a free DOF: a restart with the parents fixed exported the
+  children only. Fixed DOFs with a non-zero value now go to `result.json`, the CCDB objects and the weak-mode
+  diagnostics; nothing changes without such values. Test (TRD supermodules fixed at TX = 0.05 cm, chambers free):
+  `result.json` 521 → 539 entries, the supermodules moved by 0.05 cm in the CCDB object, chambers unchanged.
+- **Single-point bottom leg of a cosmic.** The step between the legs is not split, and with one bottom-leg point it is
+  also the last step, whose point carries no scatterer: the interior material was lost (and not counted). It now goes
+  on the last top-leg point, combined with the scatterer there. Those cosmics (0.6 %): χ²/ndf 5.46 → 4.33, ⟨pull²⟩ of
+  the lone point 116 → 60.
+- All four together on that piece (w01_0, TPC-TRD-TOF, ideal map): 11 523 → 11 611 fits, identity errors 83 → 0.
+
+## 2026-11-14: TRD tracklet z is the pad-row centre
+
+- `solB0A1` (B0 + B± data, TRD supermodules free, no constraints): `millepede_labeled.res` gave TY of the TRD supermodules
+  of −1070…+1088 cm (e.g. sm00 −438, sm17 −839), while TOF came out small. TY of a supermodule is a shift along the beam.
+  Cause: the TRD point took its z from the track (`zFromTrack`, since `0ee2cc9`), so the z residual was identically
+  zero, its derivatives were zeroed, and a beam-axis displacement was seen only through the pad tilt (dy/dz = tan 2–3°).
+  O2 (`TRDGlobalTrackingSpec.cxx`, Kalman update) uses the calibrated tracklet z, i.e. the pad-row centre, with σz² = l²/12.
+  The point now has z = row centre (`traXYZ[2]`, which carries the chamber alignment) + `TRDNonRCCorrDzDtgl`·tgl, the z
+  derivatives are kept, the tilt term on y is unchanged. `zFromTrack` removed; the KF refit also no longer shrinks σz with a
+  no-information z update, and the ndf counts 2 coordinates per TRD point. Not yet rerun on `solB0A1`.
+- Cross-check of the tracklet point with the O2 Kalman update (`TRDGlobalTrackingSpec.cxx`): the z of non-row-crossing
+  tracklets is corrected with `getZCorrCoeffNRC()` (1.4 per unit tgl) in O2, our default was 0 — harmless with z from the
+  track, a z bias once z is the row centre; `AlignParams.TRDNonRCCorrDzDtgl` now defaults to the O2 value (<-990). O2 (default
+  `useAngularPull=3`) also increases σy with the angular pull and shifts y by `-pull*getCorrYDy(snp)`; both are now
+  applied (`AlignParams.TRDUseAngularPull`, 0 = off). Still different from O2: chamber occupancy, pile-up y correction and error.
+- The TRD tracklet error parameters (`trkltResRPhiIdeal`, `trkltResVsTanPhiMisalign`, pile-up ranges) come from the
+  `GPU_rec_trd.*` configurable params, not from `AlignParams`: to reproduce the errors of the reconstruction, pass the same
+  `GPU_rec_trd.*` keys to the workflow.
+- `weakModes.pdf` of `solB0A1` showed TOF amplitudes of up to 4e7 µm (`bowing`, `radialPolar_r*t2`, `twist`), while the TOF
+  corrections are a few mm and `rmsDisplacement` is 3.3 mm. TOF is a thin cylinder (r = 370–383 cm), so `bowing`,
+  `radialPolar_r0t2`, `radialPolar_r1t2` (and `twist`/`tangentialPolar_r0t1`, `radialPolar_r0t1`/`radialPolar_r1t1`) are
+  the same field (correlation ±1.0000, conditioning 6e-17): the fit with a 1e-8 SVD cut returned huge amplitudes cancelling
+  each other. The SVD cut is now 1e-3 and the diagonal of the resolution matrix is reported per mode (`resolution`,
+  `determined`); modes with resolution < 0.5 are flagged in the log and drawn in grey by `drawWeakModes.C`.
+
+
+## 2026-11-19: TRD/TOF residuals of `solB0A1`, chamber DOFs for the next iteration
+
+- `solB0A1` (sectors only, ITS fixed, B0+B±+cosmics) vs its start `best/IBEdge`, from the unbiased residuals of `trdTofResid.C`:
+  TRD sector z offsets of 1–2 cm (sm03–06 +13…+17 mm, sm13–14 −11…−16 mm, all layers and fields) and the common −0.9 mm dy
+  offset are gone; the chamber-in-sector dy-offset spread went 0.4–0.6 → 0.23 mm (stat. error 0.02–0.04 mm, field-consistent,
+  corr 0.6–0.8), the per-sector dy-vs-tanφ slopes of sm12–16 (+1…+6 mm) went to ≤ 1 mm. Solution: TRD TX +6.6 mm and RY
+  +2.4 mrad in every sector (a 2 mrad rotation about the beam), TY −9.1 mm·sinφ (a tilt), TZ −8.9 mm·sinφ − 4.6 mm·cos2φ with
+  no matching rφ term (bottom sectors sm12–15 out by 9–15 mm).
+- Left: L4/L5 dy-vs-tanφ slope −0.5…−1.5 mm at B± (radial-like, ≈ −0.5 mm at B0); chamber dz-centre spread 2.5–3.4 mm with
+  poor field consistency; chamber dy offsets correlate with ±tan 2°·dz (alternating per layer, corr 0.56 at the start), i.e.
+  chamber z enters y through the pad tilt. The apparent in-chamber dz-vs-tgl slope (−1…−2 cm/tgl, also in v10n) is an
+  edge-bin effect: the inner tgl bins are flat. TOF: dy vs snp is a step at snp = 0 of ±2.5–3 mm at B± (negative slope at B0),
+  end-slice dz offsets of ±1 cm at B± only — non-geometric; TOF sector RY came out +4.3 mrad on average with TX only +1 mm.
+- pede rejected 28.5 % of the records (2.6 % in the IBEdge ITS fit, up to 45 % in B0 files), jumping from 28k to 1.46M when
+  the cut factor reached 1. Unbiased pulls of accepted tracks: ITS 7–12 % beyond 3σ, TOF y 9–10 % at B± (core 1.1–1.3), TRD y
+  core 0.4–0.6. The mean vertex was fixed at the reference (0,0) while the beam is at (+0.34, −1.82) mm.
+- Cause of the rejections: the composed (multi-track PV) records. In the `Mille_IBEdgeS4R` debug trees (mode 2) 98 % (B0) / 89 %
+  (B+) of the composed records exceed the 3σ χ² quantile (χ²/ndf ≈ 7, rising with ndf), the single tracks 38 % / 12 %; the
+  accepted pede records have ⟨ndf⟩ 26–32, i.e. mostly single tracks. Their excess χ² sits in the kinks at ITS layer 0. The
+  recorded prior is the CCDB mean vertex, (−0.54, −0.05) mm with σ ≈ 50 µm, while in the IBEdge ITS frame the beam (and the
+  refitted vertices) is at ≈ (−0.20, −1.87) mm, which is the IBEdge pede correction (+0.34, −1.82) mm. With the mean-vertex
+  labels fixed in `solB0A1` the 37σ pull remains in every composed record. The tail fraction per TRD chamber is uniform and
+  uncorrelated with the chamber residuals. The ProcessData check runs (mode 0, per-track prior, no `mvbias`) carry the same pull.
+- `solB1A1` (`ITSEnvTRDTOFch_RB.json`, mean vertex free): MV fitted to (+0.333, −1.813) mm per slot as in IBEdge; rejections
+  22.3 % (28.5 %): B± 18–20 → 10.5–11.3 %, B0 42–44 → 35–37 %, cosmics 3.7 % in both. The MV pull was the charge-independent
+  ±2σ kink pattern at ITS layer 0 of the composed tracks (sign change at φ ≈ −75°/+105°, i.e. a vertex pulled along φ ≈ 100°).
+  The rest are single tracks (B0 36 %, B+ 12.5 % with χ²/ndf > 2.5 in the Mille debug trees) with kink pulls² of 10–19 at
+  every scatterer (1.4–2.2 for the good ones): multiple scattering underestimated, at B0 that of the tracks softer than
+  `meanPtB0` = 0.7 GeV; a composed B0 record with one such track is rejected as a whole.
+- `doc/ITSEnvTRDTOFch_RB.json`: mean vertex free; TRD chambers free in TX, TY, TZ, RZ with priors 0 ± 1 mm / 1 mrad; chamber
+  RX/RY kept fixed, since with a free sector the transported mean constraint gives them lever arms of ±240 cm (RX → sector TZ)
+  and ±31 cm (RY → sector TX), through which weakly observed tilts could satisfy the constraint; TOF sector RX/RY with
+  1 mrad priors, TOF strips fixed.
+
+## 2026-11-19: `milleReplay`, and what `solB1A1` did with the TRD chambers
+
+- Regenerating the `gbltrack` debug trees to validate a solution takes hours. `o2-dev-mille-replay` (`src/milleReplay.cxx`) replays the Mille
+  binaries with the solution applied, with pede's local fit (Huber/Cauchy down-weighting) and rejections, and accumulates
+  per parameter the profiled gradient and curvature, per input file. All the TRD/TOF binaries take about 3 min; the
+  rejection fractions match pede's within 0.5 % (B0 file 36.1 vs 36.5 %, cosmics 3.7 vs 3.7 %).
+- `ITSEnvTRDTOFch_RB.json` was written assuming the TRD chamber DOFs are in the TGeo chamber frame (`TX` rφ, `TZ` radial).
+  They are in the sensor frame of `SensorTRD` (`TX` radial, `TY` rφ, `TZ` z): the freed `RZ` was the tilt about the beam,
+  which enters the supermodule TX constraint with the layer lever arm, while the in-plane `RX` stayed fixed.
+- `solB1A1` chambers: radial `TX` RMS 1.9 mm (up to 7.6 mm), rφ `TY` 1.4 mm, z `TZ` 2.2 mm (up to 9.8 mm), `RZ` 4.5 mrad
+  (up to 19 mrad), with layer-linear means (`TX` −0.7 → +1.4 mm, `TY` −0.6 → +1.7 mm, `RZ` −3.1 → +4.4 mrad from L0 to L5);
+  the 1 mm / 1 mrad priors do not hold well-measured chambers. Replayed per dataset, B0 and cosmics ask to undo the layer
+  patterns (L0 radial +1.4 / +2.5 mm, L0 `RZ` +3.5 / +3.3 mrad) and B± for more (−0.2…−1.2 mm, −2.6…−2.9 mrad); per chamber,
+  B0/cosmics would undo 20–32 % of the radial and `RZ` values, B± add 8–15 %; the rφ `TY` values are accepted by all four
+  datasets (regression slope 0.00 ± 0.02). The chamber z `TZ` is rejected by B− only. The fixed in-plane `RX` would gain
+  1.4–3k χ² per dataset, with shifts correlated between B0, B+ and cosmics (+0.58, +0.35).
+- Common modes in tension between field-free and B≠0 data at the `solB1A1` optimum: TRD sector rφ (B0 +0.6 mm, B± −0.5/−0.9,
+  Δχ² 6k/11k), TOF sector rφ (B0 −1.1, B± +1.0/+1.5, Δχ² 11k/15k), TRD sector radial (B− −2.5 mm, cosmics +4.5 mm, Δχ² 6.7k/7.2k),
+  TOF strip normal (fixed; B0 −12.8 mm, B± +4…+6). B− chamber-level shifts do not correlate with any other dataset.
+- `doc/ITSEnvTRDTOFch2_RB.json`: chambers free only in rφ `TY` and in-plane `RX` (priors 1 mm / 1 mrad), radial and z fixed.
+- `macro/drawLocalFrames.C` drew the TGeo physical-node frames, so `doc/local_frames_TRD.pdf` showed the TRD chambers with
+  the supermodule axes (X rφ, Z radial), not the sensor frame their DOFs are defined in. It now draws the DOF frame (from
+  the `Sensor*` classes) solid and the TGeo frame dashed; the three `doc/local_frames_*.pdf` are regenerated.
+
+## 2026-11-20: the B on/off rφ tension is TOF relative to TRD, and is already in IBEdge
+
+- At `solB1A2` (`ITSEnvTRDTOFch2_RB.json`), single-group replays showed the common TRD and TOF sector rφ shifts requested
+  with opposite signs by the B = 0 data (B0 collisions, cosmics) and the B ≠ 0 data, and B+ and B− agreeing (polarity-even).
+  The TRD and TOF global rotations are correlated by 0.5–0.8, so a single-group shift mixes them. `o2-dev-mille-replay`
+  now writes the profiled curvature matrix between groups (`_groupH.txt`) for joint fits.
+- Joint fit of the TRD and TOF global rotations (sector TX = R·δφ, RY = δφ), 4 files per collision dataset, all cosmics:
+  - at the IBEdge reference (recording with `applyTRDshift=false`, fitted mean vertex), every dataset asks for the TRD
+    pad-shift rotation: +4.9 / +5.1 / +5.3 mm at R = 329.6 cm for B0 / B+ / B−, +6.2 mm for cosmics;
+  - TOF relative to that: B0 −0.7 mm, B+ +1.9, B− +1.6, cosmics +0.5 (at R = 385 cm). At `solB1A2`: TRD +0.3 / +0.0 / +0.2 /
+    +0.2, TOF −0.8 / +1.4 / +1.1 / −0.3. The tension is a 2.0–2.6 mm polarity-even TOF rφ offset between B on and off,
+    present with the same size before the TRD/TOF fit.
+- TRD sector TX and RY are well separated (correlation 0.2–0.3, layer lever arm ±32 cm); TOF RY is weakly measured
+  (σ 0.3–0.6 mrad per 4 files) but correlated with TX by only 0.0–0.4.
+- An ITS rφ mode ∝ r² (a charge-independent track curvature at B ≠ 0) does not explain it. Imposing it shifts the B on
+  requests in the ratio (r_TRD/r_TOF)² ≈ 0.74 and the B0 ones by much less. Removing the B on/off difference would need
+  +3…+5 µm at ITS L6 for TRD and −28…−40 µm for TOF. The data themselves ask for −11 µm (B0) and −16 µm (cosmics).
+- `gbltrack` debug trees of `Mille_IBEdgeS4R` (10 % of the tracks, IBEdge reference). Each collision dataset is a single run
+  (B0 562862, B+ 562837, B− 564644), and the tracks have no TPC points. 57 % of the TOF tracks (B+) are ITS+TOF only: at B ≠ 0
+  their curvature is fixed by the TOF point itself, so a TOF rφ shift is nearly degenerate with it, and their unbiased TOF
+  residual binned in the KF q/pT is self-correlated (a ±6 mm wiggle around q/pT = 0). At B = 0 they measure TOF against ITS
+  directly: B0 +0.2…+0.4 mm, cosmics −0.7 mm.
+- The TOF measurement is the centre of the main contributing pad (σ 7.5 mm), so the TOF residual of ITS+TRD+TOF tracks is a
+  25 mm box smeared by the 3.7 mm (B0) or 4.6 mm (B+) prediction error. At B0 the box is flat (−4.9…+21 mm, centre +8.2).
+  At B+ and B− the right edge is the same within ≈ 0.5 mm, but the box carries an extra narrow peak at 0…+5 mm. The medians
+  then differ by 3 mm, the 5–95 % centres by 0.3–0.8 mm, and the skew (84−50)−(50−16) is +3 mm. The skew is the same for
+  both polarities and at every incidence angle (+2…+4 mm already at |snp| < 0.05, where B0 has +0.1), and it is absent in
+  cosmics (run by run ≤ 2 mm). A pad-quantized measurement with a uniformly illuminated pad cannot produce such a peak, so the
+  B on/off TOF rφ tension of the least-squares fit is a change of the in-pad residual shape, not a geometry difference. Its
+  origin (TOF clusterization or matching at B ≠ 0) is open.
+- `dyPre` is not an ITS-only residual: its seed is the inward KF refit over all the points of the track (`refitTracks` →
+  `fitTrack`), so TOF and TRD enter it, through the curvature in particular. At TOF it is biased towards zero by the point
+  itself (median −0.1 mm for ITS+TRD+TOF at B0, against +8.5 for `dyUnb`) and is 2–3 times wider (68 % half-width
+  19–32 mm against 9–10).
+- `doc/ITSEnvTRDTOFch3_RB.json`, for the recording with `extraClsErrYTOF=0.5` (TOF σY 0.75 → 0.90 cm). It is
+  `ITSEnvTRDTOFch2_RB.json` plus a `curl` equation over the TOF sectors, because per-sector priors cannot hold the common
+  TOF rotation: with the full B ≠ 0 statistics its data error is ≈ 25 µm against 0.24 mm from 18 × 1 mm priors. The TOF
+  global rotation thus stays at IBEdge, which the B = 0 data accept within ≈ 0.7 mm. TOF sector priors relative to
+  IBEdge: rφ 1 mm, z and radial 2 mm, rotations 1 mrad. TRD sectors stay free without priors, to absorb the pad shift.
+- Cosmics replayed run by run (123 runs, `solB1A2`, joint TRD/TOF rotation + radial). The TRD and TOF rotations are stable
+  (χ²/ndf 82/83 and 123/83). The TRD sector radial is +4.6 mm in every period (LHC25aa +4.9, LHC26aa +4.4), with
+  run-to-run scatter beyond the errors (χ²/ndf 336/83, about 1 mm extra), while the single-run collision datasets give
+  B0 +1.3, B+ +0.1, B− −2.3 mm. A constant TRD drift-time offset δt moves every tracklet by vd·δt along the drift (radial)
+  direction, which a sector radial shift reproduces exactly (4.6 mm ≈ 0.3 µs at vd ≈ 1.5 cm/µs). The radial requests are
+  therefore read as the time-zero of each run (cosmic trigger vs collisions), not geometry; the earlier "polarity-odd" TRD
+  radial is equally explained by B0, B+ and B− being three different runs. The TOF radial agrees in all datasets (joint
+  fit: B0 −0.2 ± 0.2, B+ +0.1 ± 0.2, B− +0.0 ± 0.2, cosmics +0.2 ± 0.04 mm).
+- `ITSEnvTRDTOFch3_RB.json`: TRD sector radial (`TZ`) fixed at IBEdge; cosmics not up-weighted.
+- Chamber radial (sensor `TX`, fixed in `solB1A2`), replayed with all the collision files and the cosmics split by year:
+  - per layer, after removing the common mean: B+ and B− show a layer-linear pattern (L0 −1.0/−1.5, L5 +3.0/+3.6 mm) that
+    B0 (L0 +0.6, L5 +0.7, middle layers −0.2…−0.5) and the cosmics (2025 and 2026 alike, +0.4 → −0.4 mm) do not. Being
+    polarity-even and absent at B = 0, it is read as a track-model effect at B ≠ 0 (curvature inside TRD: field map or
+    energy loss), not geometry;
+  - per chamber, after removing the sector and layer means, all dataset pairs correlate. The common part is 0.5–0.7 mm
+    rms between collisions and cosmics, and cosmics 2025 vs 2026 (independent samples) correlate by 0.73 (1.0 mm). This is
+    a chamber-level radial geometry pattern.
+- `ITSEnvTRDTOFch3_RB.json`: chamber radial `TX` freed with a 1 mm prior. The sector radial stays fixed and its chamber
+  mean is pinned (`pinChildrenMean` `TZ`), against the time-zero offsets. The per-layer means of L0–L4 are pinned by a
+  `groupModes` `radialScaling` per layer, against the B ≠ 0 layer pattern; L5 follows from the sector pins. This needs
+  `AlignParams.groupModesRelToRoots=false`, since the group volumes are the chambers themselves.
+- Radial sensitivity of the TRD chambers per track (TX/TY information ratio ≈ ⟨tan²ψ⟩): B0 and cosmics 0.010, B± 0.065; the
+  chamber error with all the files is 0.22–0.28 mm at B± against 0.43 mm at B0 (3× more tracks). In the debug trees the
+  per-layer radial slope d(dy)/d(tanψ) at B± depends on pT. For |q/pT| < 0.7 (rms tanψ 0.12–0.18) the layer deviations go
+  from +0.5…+0.8 (L0) to −0.5…−0.9 mm (L5), like the cosmics. For |q/pT| 1.0–1.5 (rms tanψ 0.37) they go from −1.4…−2.0 to
+  +3.3…+4.1 mm. The B± layer pattern of the replay is therefore the low-pT tracks, i.e. a momentum-dependent track-model
+  effect, while the B± high-pT tracks see the same small layer pattern as the cosmics.
+- Summary of the TRD/TOF conclusions so far: [TRDTOFobservations.md](TRDTOFobservations.md).
+
+## 2026-11-20: `solB1A3` (`ITSEnvTRDTOFch3_RB.json`, recording with minPt 1.2, LUT corrections)
+
+- Recording `Mille_IBEdgeS4R/collHPLUT`, `cosmHPLUT`: `corrType=2`, `minPt=1.2` (cosmics 0.6), `meanPtB0=0.45`,
+  `meanPtB0Cosm=6`, `extraClsErrY/ZTOF=0.5`, `extraClsErrY/ZTRD=0.05/1.5`. Pede χ²/ndf 0.96.
+- Rejections at `solB1A3` (replay, single / PV records): B0 6.5 / 8.7 % (was 22 / 56 %), B± 9 / 24 % (was 5 / 16 %),
+  cosmics 12 % (was 3.7–4.6 % with `meanPtB0Cosm=2`).
+- Chamber radial: 6.8 % of the chambers beyond 3 mm and 0.9 % beyond 10 mm, up to −38 mm, against the 1 mm prior.
+  For these chambers every dataset asks to undo the shift (e.g. sm12/st1/pl4 at −37.9 mm, cosmics +32.5 ± 1.3 mm back;
+  sm17/st2/pl5 at −26 mm, all five datasets +19…+33 mm back). The coefficients of the sector `TZ` pins (1/30) and of the
+  per-layer `radialScaling` equations (≈ 1) are uniform. With a hard equal-weight mean, every chamber of the equation gets
+  the same Lagrange force, and the shift is that force over the chamber's curvature. When the data want a common layer
+  shift, the well-measured chambers follow it and the weakly measured ones (dead in collisions, cosmics only) restore the
+  mean by moving far the other way. `groupModes` have no statistics weighting.
+- The layer radial pattern requested at `solB1A3` (joint fit with the TRD sector TX/RY/RX, layer TY and TOF modes): B0
+  +1.2 (L0) → −1.9 mm (L5), cosmics +0.6…+1.6 → −1.7…−2.7, B± −2.1/−2.5 → +3.2/+3.4. B = 0 and B ≠ 0 ask for opposite
+  layer patterns, also with `minPt=1.2`. Per chamber (sector and layer means removed), the cosmics of the two years
+  correlate (0.75, 1.6 mm rms) and B0 with the 2026 cosmics (0.38), while B± anti-correlate with the cosmics (−0.2…−0.26):
+  the B ≠ 0 chamber-radial information is affected too.
+- The TRD sector RY (rotation about the beam) went to −3.0 ± 2.8 mrad, compensated by a layer-linear chamber TY
+  (L0 −0.88 → L5 +1.21 mm). There is no mean-of-children equation for the sector RX/RY (no matching chamber DOF), so the
+  pair is constrained only by the chamber tilt it leaves and by the priors. In the joint fit B0 and cosmics ask for
+  +4.8…+7.1 mrad back, B± for −1.2…+1.2.
+- Accepted by all datasets: the TRD rotation (pad shift; sector TX mean +6.6 mm; joint requests 0.0…+0.37 mm), the
+  sector z offsets (rms 8.7 mm; requests ≤ 0.17 mm), the in-plane chamber RX (≤ 0.16 mrad). TOF: the `curl` holds the
+  rotation; requests B0 −0.08, cosmics +0.24/+0.44, B± +2.05/+1.69 mm, the same tension as before. The common TRD radial
+  (fixed) is requested as B0 +1.0, B+ −1.4, B− −4.1, cosmics +6.5/+5.9 mm, consistent with time-zero offsets.
+- An ITS rφ ∝ r² mode is requested by every dataset with the same sign: d₆ = −13 (B0), −9/−11 (cosmics), −15/−17 µm (B±).
+- The ITS rφ ∝ r² mode does not couple to the TRD layer radial pattern. In the joint fit at `solB1A3`, the correlation of
+  d₆ with the layer-linear chamber radial mode (L5−L0) is 0.00 at B = 0 and 0.05 at B ≠ 0. Imposing d₆ = −13 µm (the B = 0
+  request) changes the B± layer request (+5.3 / +6.3 mm) by 0.02 mm, and −50 µm by 0.1 mm. A charge-independent curvature
+  gives a charge-independent residual, while the radial derivative (snp) is odd in q·B at B ≠ 0, so the two cancel over
+  the charges. A polarity-even radial request at B ≠ 0 needs a residual odd in q·B, i.e. a curvature *scale* mismatch
+  between ITS and TRD (Δκ ∝ κ). Possible sources: ITS radial scaling, the field map between the ITS and TRD radii, or the
+  energy loss (in particular with the less precise material LUT, `corrType=2`). The pT dependence measured at IBEdge
+  (flat for |q/pT| < 0.7, growing fast above) favours the energy loss, whose Δκ/κ grows at low p (∝ 1/β² for heavier
+  particles). The two others would give a pT-independent radial request.
+- Per sector at `solB1A3` (joint fit of the sector TX/RY/RX, layer TX and TY of every sector; sectors 2 and 3 have no
+  complete layer set in collisions):
+  - Layer-linear chamber radial (L5−L0): B0 −3.5, cosmics −3.5, B+ +5.2, B− +5.9 mm on average. B+ − B0 is
+    +8.6 ± 2.1 mm (rms over sectors), B− − B0 +9.6 ± 2.1. The B on/off difference is common to all sectors. The
+    sector-to-sector variation is shared by the datasets (correlation B0–cosmics 0.66, B0–B+ 0.61, B+–B− 0.87) and is
+    geometry.
+  - Common radial per sector: correlation 0.93–0.98 between all datasets, the differences being offsets (B+ − B0 −2.6,
+    B− − B0 −5.6, cosmics − B0 +4.8 mm, with 0.7–2.9 mm rms over sectors). Only the global offset is the run time-zero;
+    the sector-to-sector radial pattern (rms ≈ 4 mm, sectors 10–15 at +5…+10 mm) is shared and must be freed, with only
+    the global mean pinned.
+- ITS modes at `solB1A3`, from a replay with stave-level and per-half-barrel ITS groups (HB0 = top, HB1 = bottom):
+  - ITS transverse radial scaling (each stave moved radially by ε·R): requested ε = −0.35·10⁻⁴ (B0), +0.04…+0.10·10⁻⁴
+    (B±, cosmics; top/bottom alike), with errors below 10⁻⁶. It is uncorrelated with the TRD layer-linear radial mode. An
+    imposed ε shifts that request by ≈ 0.04 mm per 10⁻⁴ equally at B0 and at B ≠ 0, so it cannot produce the B on/off
+    difference (≈ 8 mm would need ε ≈ −2 %).
+  - ITS rφ ∝ r² mode per half barrel: B0 −13.3 (top) / −14.9 µm (bottom), cosmics −10.3 / −7.1 µm. At B ≠ 0 the mode is
+    degenerate with the track curvature and takes the TOF artefact (−145 / −66 µm); not usable.
+  - Free layer rotations per half barrel (rφ displacement, uniform rotation removed), L0…L6: B0 +2.5 +2.6 +2.6 +3.7 +2.7
+    −1.0 −3.4 µm (top), the same within 0.7 µm at the bottom; cosmics OB +2.3 +0.9 −0.3 −1.3 (top), +2.0 +0.7 −0.7 −1.3
+    (bottom), IB −1.2 (top) and +1.6 (bottom). The pattern is an OB inner-vs-outer relative rotation, common to both halves
+    and seen by both B = 0 samples (B0 about twice as large), plus an IB-vs-OB term that differs between B0 (rotation) and
+    cosmics (opposite rφ in top and bottom, i.e. a shift in x). It is not a pure r² shape.
+- The B ≠ 0 layer-linear TRD radial request grew with the material LUT (`corrType=2`): +5.2/+5.9 mm (L5−L0) at `solB1A3`
+  with `minPt=1.2`, against ≈ +4 with TGeo corrections and `minPt=0.4` at `solB1A2`. This points further to an energy-loss
+  (material) mis-modelling across TRD.
+- The per-layer slope method on the debug trees (regression of `dyUnb` on the seed tanψ) is not valid at B ≠ 0. The seed
+  includes the TRD points, so the bending angle is correlated with the residual. On the HPLUT debug trees it shows no B ≠ 0
+  excess, while the replay does. The pT dependence derived from it at IBEdge (the argument for energy loss) is withdrawn.
+- Replays at the IBEdge reference (mean vertex from the fits): layer-linear chamber radial (L5−L0) B0 +0.3, cosmics −0.1,
+  B+ +9.2, B− +9.9 mm for the HPLUT recording (`corrType=2`, `minPt=1.2`); B0 +0.8, cosmics −0.2, B+ +4.0, B− +4.9 mm for
+  the first recording (`corrType=1`, `minPt=0.8`). The B = 0 data accept the IBEdge layer radii. The B ≠ 0 excess doubled
+  between the recordings, although the higher pT cut should have reduced an energy-loss effect (∝ 1/p).
+- Energy-loss toy (ITS + TRD points, no scattering, constant-curvature model fitted to a track whose curvature grows): an
+  underestimated energy loss gives outer layers requested outward, i.e. the sign of the B ≠ 0 request. The size is
+  independent of pT for a given fractional curvature error: +1.4 mm (L5−L0) per 1 % curvature step between ITS and TRD,
+  +1.0 mm per 1 % per TRD layer. The 4–10 mm excess would need 3–7 % of the momentum lost unaccounted (tens to ≈ 100 MeV at
+  1.5 GeV), against a few MeV actually lost in the TPC and TRD material. Energy loss is excluded as the main cause.
+- `doc/ITSEnvTRDTOFB0only_RB.json`, for B0 + cosmics only:
+  - ITS half-barrel RZ free, with one `curl` group equation;
+  - TRD sector TX, TY, TZ, RZ free, with one `globalModes` `radialScaling` equation over the sectors only (against the
+    time-zero offset), sector RX/RY fixed;
+  - chambers TX, TY, RX with priors, no layer pins;
+  - TOF free with priors, no `curl`.
+  It needs `groupModesRelToRoots=false`.
+
+## 2026-11-20: the B ≠ 0 TRD radial excess sits in the composed vertex records
+
+- `o2-dev-mille-replay` got two record selections: `-pv no|only` (records without / with vertex labels) and `-pt min,max`
+  (all tracks of the record in the range of a pT estimated from the precision of their ITS multiple-scattering kinks; the
+  records store no track parameters). The estimate reproduces the `minPt` edges of the recordings (0.8 and 1.2 GeV) with
+  about 20 % resolution per track.
+- Layer-linear TRD chamber radial (L5−L0, mm) at the IBEdge reference, B+ / B−:
+
+  | recording | all records | single-track (no vertex) | composed vertex records |
+  |---|---|---|---|
+  | `corrType=1`, `minPt=0.8`, `maxTracksPerMultiTrackPV=10`, `extraClsErrYTRD=0.1` | +4.0 / +4.9 | +0.0 / +0.5 | +5.0 / +5.9 |
+  | `corrType=1`, `minPt=1.2`, `maxTracksPerMultiTrackPV=4`, `extraClsErrYTRD=0.05` (coll_TGEOPt12, small sample) | +6.7 / +7.0 | +2.8 / +3.1 (±0.8) | +7.6 / +7.9 (±0.4) |
+  | `corrType=2`, `minPt=1.2`, `extraClsErrYTRD=0.05` (HPLUT) | +9.2 / +9.9 | +4.1 / +4.1 | +10.0 / +10.8 |
+
+  At B0 (first recording) single-track and vertex records agree (+0.6 / +0.9). The excess is therefore mostly a property of
+  the composed vertex trajectories at B ≠ 0, the same for both polarities. The single-track records of the first recording
+  agree with B0 and show only a soft-track term: +1.0 / +1.9 mm below an estimated pT of 1 GeV, −0.1…−1.6 above.
+- Between the TGeo and LUT recordings at the same `minPt` the vertex records go from +7.6 to +10.0 (B+): the material
+  treatment contributes, but the main part is common.
+- The coll_TGEOPt12 recording has χ²/ndf 1.28 and rejects 18 % of the single-track and 49 % of the vertex records (first
+  recording: 0.93, 5 %, 16 %), presumably from the tighter `extraClsErrYTRD`. Its mean-vertex reference is already at the beam,
+  so it must be replayed with the HPLUT mean-vertex solution (`mvA3.res`), not the first recording's one (+0.3, −1.8 mm),
+  which rejects 84 % of its vertex records.
+- Debug trees, TRD `dyUnb` regressed per layer on the geometric part of the local angle, u = y/x (fit-independent), and on
+  the bending part v = tanψ − u. A radial misplacement, or any chamber-local effect (drift, Lorentz angle), depends on the
+  total tanψ and gives the same slope in u and v. L5−L0 of the slopes (mm), B+:
+
+  | sample | single-track u / v | composed u / v |
+  |---|---|---|
+  | first recording (10 % debug) | −4.0 / +0.8 | −5.8 / +4.9 |
+  | coll_TGEOPt12 B+ | −4.0 / +5.8 | −4.7 / +10.5 |
+  | coll_TGEOPt12 B− | −3.3 / +6.6 | −4.3 / +11.2 |
+
+  The replay radial request follows the v slope, which dominates its derivative (rms v ≈ 0.25 against rms u ≈ 0.08). The u
+  slopes agree between the record types. The B ≠ 0 excess is therefore a residual proportional to the bending, with an
+  antisymmetric layer pattern (about −5 at L0 to +6 mm at L5 per unit v). It is a track-model effect, not TRD geometry.
+  It is stronger in the composed vertex trajectories, and in coll_TGEOPt12 also in the single tracks. The B0 v slopes
+  (rms v ≈ 0.01) are dominated by the correlation of the seed direction with the residual and are meaningless.
+- Reading the composed-trajectory code (`buildGBLVertex`, `computeVertexTransformation`, GBL `prepare` for a 2-row
+  inner transformation) found nothing wrong. With a geometric constraint GBL gives every track its own curvature, the vertex
+  fixes only the offsets at the vertex point, and d(Y,Z)/d(vertex) is correct to first order.
+- coll_TGEOPt12NoMV (`useMultiTrackPVConstraint=0`, otherwise as coll_TGEOPt12). Its single-track vertex records must be
+  replayed at the recorded reference: a few-µm mean-vertex correction (`mvA3.res`) rejects 99 % of them, the per-track
+  vertex being tied tightly to the mean vertex. Layer-linear TRD radial (L5−L0, mm), B+ / B−: single-track with vertex
+  +7.1 / +7.5, without vertex +3.2 / +3.3, against composed +7.6 / +7.9 (coll_TGEOPt12). The composition is not the cause,
+  the vertex constraint enhances the effect. The debug trees agree (v slopes +9.8 / +10.4 with vertex).
+- Per-layer ITS radial shifts, fitted jointly in the replay, are constrained to ≤ 0.3 µm even at B0, request a few µm,
+  and leave the TRD mode unchanged: not the cause.
+- In estimated-pT bins (vertex records of coll_TGEOPt12NoMV) the request is +25, +17, +7.5, +0.5, −1 mm from the lowest
+  to the highest bin. Single tracks without vertex show the same.
+- The whole effect comes from tracks with a large v (|v| > 0.3 at the TRD, i.e. a bending only a track below ≈ 0.6 GeV can
+  have). With |v| < 0.3 the u and v slopes agree (L5−L0 −1 to −3.6 mm) in every sample and record type, and composed,
+  vertex and single tracks no longer differ. Those tracks have a wrong GBL seed: their reference q/pT corresponds to
+  ⟨pT⟩ ≈ 0.9 GeV although `minPt` = 1.2 cut the input tracks. The seed misses the outer ITS layers by up to 1 cm and the
+  TRD by 30–60 cm. GBL recovers the positions, but it linearizes around a direction at the TRD that is wrong by ≈ 0.2.
+  The radial derivative (tanψ of the seed) and the residuals inherit this.
+- Fraction of accepted tracks whose seed misses the outermost TRD point by more than 25 cm: B0 0 %. At B ≠ 0, q·bz > 0
+  (the same bending sense in the lab for both polarities): 8 % (single) / 20 % (composed) in the first recording,
+  17–18 % / 28–31 % in coll_TGEOPt12(NoMV). For q·bz < 0: 2–7 %. The bad seeds come from the inward KF refit
+  (`refitTracks` → `Track::fitTrack`, started from the input global track with `useStableRef`), and the vertex update
+  makes them more frequent.
+- To find which step produces the wrong seeds, the debug tree (`DbgTrack` v2) now stores the input track (`inputPar`), the
+  state after the inward KF refit before the vertex update (`kfInnerPar`) and the GBL correction to the reference state
+  (`gblRefCorr`, q/pt first).
+- coll_TGEOPt12NoMV_LinRef0 / LinRef1 (`useStableRef=false` / `true`, otherwise as coll_TGEOPt12NoMV, with the new debug
+  fields). The q/pT chain of the bad-seed tracks (seed off > 25 cm at the last TRD point), relative to the input track:
+  inward KF refit +150 % (median, 10–90 %: +80…+200 %), reference after the vertex update the same, GBL fit +12 %. The
+  wrong curvature comes from the inward KF refit, not from the vertex update. GBL brings it back only partly (linearization
+  far from the solution). Good tracks: KF and GBL within a few % of the input.
+- `useStableRef=false` cuts the bad seeds from 28 % to 6.5 % (q·bz > 0) and from 6–7 % to 2–3 % (q·bz < 0). From the same
+  input it gives 33 % more accepted vertex records, rejections of 13 % instead of 21 % and ⟨χ²/ndf⟩ 1.20 instead of
+  1.22–1.24. The layer-linear TRD radial (L5−L0) drops from +6.9 / +7.5 to +1.4 / +1.2 mm (B+ / B−), the debug v slopes from
+  +10 to +1.5–2 mm. The B ≠ 0 radial excess is essentially an artefact of the KF seed with the stable linearization
+  reference. The remaining bad seeds (still mostly q·bz > 0) point to the TRD/TOF-dominated start of the inward refit.
+- `AlignParams.CollGBLSeedITSOnly` (default true): for collisions the GBL seed is the inward KF refit over the ITS points
+  only, started from the outward refit state at the outermost ITS point. The outer detectors, misaligned at the start,
+  then cannot bias the seed curvature, and `useStableRef` keeps its role of a stable linearization reference within the
+  ITS.
+- coll_TGEOPt12NoMV_LinRef1_ITSSEED / LinRef0_ITSSEED (`CollGBLSeedITSOnly=true`, `useStableRef=true` / `false`). Bad
+  seeds (off > 25 cm at the last TRD point) 0.2–0.4 % / 0.0 %, with no q·bz asymmetry left (before 28 % / 6.6 % for q·bz > 0).
+  The KF seed curvature agrees with the input within a few % (10–90 % range ±8 %). Layer-linear TRD radial (L5−L0), B+ / B−:
+  −0.5 / −0.9 (stable reference) and −0.5 / −1.0 mm (without), the same for records with and without vertex. The debug u and
+  v slopes now agree (−1.2 to −1.5 mm for the vertex records). The B ≠ 0 radial excess was entirely an artefact of the seed
+  fitted through the misaligned TRD/TOF. With the stable reference there are still 8 % fewer accepted records
+  (61k against 66k, B+) and a higher ⟨χ²/ndf⟩ (1.233 against 1.212).
+- The GBL-fitted curvature differs from the input track by +1.1…+2.2 % for q·bz > 0 and −1.8…−1.9 % for q·bz < 0. This
+  is the sign pattern of the one-pad TRD rotation still present at the IBEdge reference (about 1.5 % of the curvature
+  expected at 1.2 GeV), and it should vanish once the TRD rφ is aligned.
+- B0 added to coll_TGEOPt12NoMV_LinRef1_ITSSEED (same settings, `meanPtB0=0.45`). Replay at the recorded reference
+  (L5−L0 layer-linear TRD radial / common TRD rφ shift at the sector origin): B0 +0.04 ± 0.13 / +4.7, B+ −0.49 ± 0.24 / +5.3,
+  B− −0.90 ± 0.19 / +5.6 mm. Records with and without vertex agree. The B on/off radial difference dropped from 6–9 mm to
+  0.5–0.9 mm (2–4 σ). The debug u slopes (L5−L0) agree between B0 (−1.9) and B± (−1.3 to −2.0). The B0 sample rejects
+  32 % (single) / 23 % (vertex) of its records at ⟨χ²/ndf⟩ 0.98.
+- With the ITS seed the rotation modes also agree between the fields (replay at the recorded reference, B0 / B+ / B−):
+  TRD sector RY +3.0 / +3.4 / +3.4 mrad (old seed +2.5 / −2.9 / −1.6), TOF common rotation −0.8 / +0.3 / +0.5 mm at the
+  TOF radius (old −0.6 / +2.1 / +1.6). The TOF B on/off tension is halved but not gone.
+- `doc/ITSEnvTRDTOFch4_RB.json` for the recordings with the ITS seed. It is ch3 without the per-layer `radialScaling`
+  group modes, which were there for the seed artefact and pushed the weakly measured chambers out. The sector `TZ` pin
+  (time-zero) is statistics-weighted (`weightedMean`), and TOF keeps `curl` because of the remaining TOF rotation tension.
+
+## 2026-11-20: axis tilts of the ITS layers and of TRD/TOF
+
+- Fit of the displacement field (aligned − ideal) of the chip / chamber / strip centres:
+  `d_T = t + s·z + r̂(a + b z) + φ̂(c + e z)`. The axis tilt is `s = (dx/dz, dy/dz)`. In µrad:
+
+  | geometry | IB | OB L3–4 | OB L5–6 | TRD | TOF |
+  |---|---|---|---|---|---|
+  | V10N | −70, +55 | −60, −698 | −128, −415 | −48, +873 | +155, +597 |
+  | IBEdge | −93, +105 | −53, −694 | −119, −372 | −35, +754 | +160, +511 |
+  | solB1A3 (all fields) | = IBEdge | = IBEdge | = IBEdge | +161, +101 | +123, +495 |
+  | solB1A4 (B0 + cosmics) | = IBEdge | = IBEdge | = IBEdge | +28, +381 | +101, +545 |
+
+  - The ITS tilts come from V10N; IBEdge changed them by ≤ 50 µrad. The IB per-layer values scatter (L1 dy/dz +675).
+  - The OB is tilted by −0.37…−0.70 mrad in dy/dz relative to the IB axis and to Z: −0.27 mm in y at |z| = 72 cm. This is
+    a shear, not a rotation: its z part `dz/dy` is −0.2 mrad, where a rigid rotation would give +0.4…+0.7.
+- The TRD/TOF fits did not take over the OB tilt.
+  - TRD dy/dz went from +0.75 mrad toward zero (+0.0…+0.4), i.e. toward the IB axis and the beam line, not to the OB value
+    (−0.40). TRD dx/dz went from −0.04 to +0.03…+0.16 mrad, away from the ITS (−0.1).
+  - TOF is unchanged: it is held by priors and `curl`. Relative to the OB it stays +0.9 mrad in dy/dz, about 3 mm at the
+    TOF ends.
+- The fitted TRD z ∝ y (`dz/dy` −0.35 → −3.0 mrad, the sector "TZ −8.9 mm·sinφ" of `solB0A1`) is not an ITS tilt: the ITS
+  has −0.2 mrad. It matches the −2.1 mrad already in the TOF CCDB alignment.
+- The mean-vertex slopes fitted at IBEdge (−0.07, +0.03…−0.07 mrad relative to the recorded ones) are measured by the ITS.
+  They follow the ITS (IB) axis and say nothing about the ITS tilt relative to the true beam.

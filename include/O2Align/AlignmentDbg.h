@@ -44,7 +44,7 @@ struct DbgPoint {
   float sigZ = 0.f;
   float sigYZ = 0.f; // cluster Y-Z covariance (cm^2)
   float snp = 0.f;   // track snp at the point
-  float dyPre = 0.f; // residuals wrt the linearization track, as fed to GBL (include the injected misalignment, if any)
+  float dyPre = 0.f; // residuals wrt the KF seed state at the reference point extrapolated to the point, as fed to GBL (include the injected misalignment, if any)
   float dzPre = 0.f;
   float dyFit = 0.f; // residuals wrt the GBL fit
   float dzFit = 0.f;
@@ -113,6 +113,9 @@ struct DbgTrack : public o2::track::TrackPar {
   uint32_t tfCounter = 0;
   uint32_t firstTForbit = 0;
   int runNumber = 0;
+  o2::track::TrackPar inputPar;   // the input track (reconstruction) before any refit; for cosmics the downward seed
+  o2::track::TrackPar kfInnerPar; // state after the inward KF refit, before the eventual vertex update (= the reference w/o vertex)
+  float gblRefCorr[5] = {};       // GBL correction to the reference state at the reference point, (q/pt, snp, tgl, Y, Z)
   std::vector<DbgPoint> points;
   DbgCosmic cosm;        // cosmic-ext input only (cosm.valid)
   ClassDefNV(DbgTrack, 2)

@@ -23,7 +23,7 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   // Track selection for alignment
   float minPt = 0.4f;     // minimum pt required
   float tgLCut = 5.f;     // maximum or minimum |tgLambda| if >0 or <0
-  int minITSClsTrack = 7; // minimum number of ITS clusters in the full track
+  int minITSClsTrack = 6; // minimum number of ITS clusters in the full track
   int minITSClsAB = 4;    // minimum number of ITS clusters in the AB track
 
   // Track selection for PV refitting
@@ -121,7 +121,8 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   int minTRDTracklets = 3;        // min TRD tracklets to accept the track
   float TRDAngularPullNSigma = 2.f; // max |angular pull| (tracklet dy vs track snp) of a TRD tracklet to be accepted in the track fit, <=0: no cut
   float TRDCorrDVT = 0.f;         // correction to Vdrift*t (equivalent to a shift in X at which Y is evaluated)
-  float TRDNonRCCorrDzDtgl = 0.f; // correction in Z proportional to tgl for non-row-crossing tracklets
+  float TRDNonRCCorrDzDtgl = -999.f; // correction in Z proportional to tgl for non-row-crossing tracklets, <-990: as in O2 (GPUTRDRecoParam::getZCorrCoeffNRC)
+  int TRDUseAngularPull = 3;      // as O2 rec.trd.useAngularPull: 0 = tracklet error w/o angular pull; >0 = error increased with the angular pull; 3, 4 = also y corrected with it (4 is the same as 3 here)
 
   // TOF
   int minTOFClusters = 1; // min TOF clusters to accept track
@@ -132,15 +133,16 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   double maxSnp = 0.85;
   double maxStep = 2.0;
   // o2::base::PropagatorD::MatCorrType matCorrType = o2::base::PropagatorD::MatCorrType::USEMatCorrTGeo;
-  o2::base::PropagatorD::MatCorrType corrType = o2::base::PropagatorD::MatCorrType::USEMatCorrLUT;
+  int corrType = 2; // MatCorrType::USEMatCorrLUT=2, USEMatCorrTGeo=1, USEMatCorrNone=0
 
   // TPC drift calibration
   std::string VDTimeSlotsJson = ""; // json file with TPC drift calibration intervals in ms
 
-  int verbose = 0;          // verbosity level
-  bool useStableRef = true; // use input tracks as linearization point
-  float meanPtB0 = 0.4f;    // impose this pT on tracks for B=0 (ignore if <=0)
-  float meanPtB0Cosm = 2.f; // impose this pT on cosmic tracks for B=0 (ignore if <=0)
+  int verbose = 0;           // verbosity level
+  bool useStableRef = false; // use input tracks as linearization point
+  bool CollGBLSeedITSOnly = true; // collisions: the GBL seed (inward KF refit) uses the ITS points only, starting from the ITS outward refit state at the outermost ITS point
+  float meanPtB0 = 0.45f;   // impose this pT on tracks for B=0 (ignore if <=0)
+  float meanPtB0Cosm = 4.f; // impose this pT on cosmic tracks for B=0 (ignore if <=0)
   float maxChi2Ndf = 15;    // maximum Chi2/Ndf allowed for GBL fit
   float minMS = 1e-6f;      //  minimum scattering to account for
   // A step whose material would otherwise be lumped into a single thin scatterer at its far end is
@@ -168,7 +170,7 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
 
   // debug output: fraction of the tracks (randomly selected) written with their points, GBL residuals and kinks
   // to the "gbltrack" tree of debug_alg[_<lane>].root (DbgTrack, see AlignmentDbg.h). <=0: none, >=1: all
-  float debugTracksFraction = -1.f;
+  float debugTracksFraction = 0.1f;
 
   // DOF configuration (JSON file defining which volumes have which DOFs)
   std::string dofConfigJson; // if empty, no DOFs are configured
@@ -208,6 +210,7 @@ struct Params : public o2::conf::ConfigurableParamHelper<Params> {
   std::string milleParamFile = "mp2param.txt";
   std::string milleTreeFile = "mp2tree.txt";
   std::string milleResFile = "millepede.res";
+  std::string startFromMilleRes{};  // MilleSteer: if not empty, millepede.res whose fitted values are written to mp2param.txt as starting values (free/fixed still follows dofConfigJson)
   std::string milleResOutJson = "result.json";
 
   // conversion of the fitted rigid-body corrections to o2::detectors::AlignParam (MilleRes stage)

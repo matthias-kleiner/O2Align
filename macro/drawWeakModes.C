@@ -151,9 +151,9 @@ void verticalLabels(TH1* h, double maxFrac = 0.8, double minSize = 0.01, double 
 
 void summaryPage(TTree* modes, int ib, const std::string& name, const std::string& pdf)
 {
-  const int n = modes->Draw("metricB:metricBErr:explained:metricA", Form("branch==%d", ib), "goff");
+  const int n = modes->Draw("metricB:metricBErr:explained:metricA:resolution", Form("branch==%d", ib), "goff");
   std::vector<double> vB(modes->GetV1(), modes->GetV1() + n), vErr(modes->GetV2(), modes->GetV2() + n),
-    vExp(modes->GetV3(), modes->GetV3() + n), vA(modes->GetV4(), modes->GetV4() + n);
+    vExp(modes->GetV3(), modes->GetV3() + n), vA(modes->GetV4(), modes->GetV4() + n), vRes(modes->GetVal(4), modes->GetVal(4) + n);
   std::vector<std::string> labels;
   {
     std::string mode, *pm = &mode;
@@ -173,7 +173,16 @@ void summaryPage(TTree* modes, int ib, const std::string& name, const std::strin
   auto* hB = new TH1F(Form("hB%d", ib), Form("%s: mode amplitude;;#mum", name.c_str()), n, 0, n);
   auto* hA = new TH1F(Form("hA%d", ib), "", n, 0, n);
   auto* hE = new TH1F(Form("hE%d", ib), Form("%s: fraction of displacement power explained;;", name.c_str()), n, 0, n);
+  // modes degenerate with others on this branch (resolution < 0.5): amplitude not meaningful, drawn in grey
+  auto* hU = new TH1F(Form("hU%d", ib), "", n, 0, n);
   for (int i = 0; i < n; ++i) {
+    if (vRes[i] < 0.5) {
+      hU->SetBinContent(i + 1, vB[i]);
+      hU->SetBinError(i + 1, vErr[i]);
+      vB[i] = 0.;
+      vErr[i] = 0.;
+      labels[i] += " (?)";
+    }
     hB->SetBinContent(i + 1, vB[i]);
     hB->SetBinError(i + 1, vErr[i]);
     hA->SetBinContent(i + 1, vA[i]);
@@ -188,6 +197,8 @@ void summaryPage(TTree* modes, int ib, const std::string& name, const std::strin
   hB->GetYaxis()->SetLabelSize(0.02);
   hB->SetFillColorAlpha(kAzure + 1, 0.5);
   hB->Draw("bar e");
+  hU->SetFillColorAlpha(kGray + 1, 0.5);
+  hU->Draw("bar e same");
   hA->SetLineColor(kRed);
   hA->SetLineWidth(2);
   hA->Draw("hist same");
@@ -195,6 +206,7 @@ void summaryPage(TTree* modes, int ib, const std::string& name, const std::strin
   auto* leg = new TLegend(0.15, 0.87, 0.75, 0.92);
   leg->AddEntry(hB, "B: fitted displacement field", "f");
   leg->AddEntry(hA, "A: constraint-equation projection", "l");
+  leg->AddEntry(hU, "B: degenerate with other modes (not meaningful)", "f");
   leg->Draw();
   c->cd(2);
   verticalLabels(hE);
@@ -283,7 +295,7 @@ void mapPage(TTree* sens, int ib, const std::string& name, const std::string& pd
   c->cd(1);
   auto* p = new TProfile2D(Form("pm%d", ib), Form("%s: #Deltar [#mum];z [cm];#phi [rad]", name.c_str()), 40, -80, 80, 36, -3.1416, 3.1416);
   gPad->SetRightMargin(ColzRightMargin);
-  sens->Draw(Form("1e4*dr:phi:z>>pm%d", ib), Form("branch==%d", ib), "colz");
+  sens->Draw(Form("1e4*dr:phi:z>>pm%d", ib), Form("branch==%d", ib), "profcolz");
   gPad->SetGrid(1);
   p->SetStats(0);
   p->SetTitle(Form("%s: #Deltar [#mum];z [cm];#phi [rad]", name.c_str()));
@@ -292,7 +304,7 @@ void mapPage(TTree* sens, int ib, const std::string& name, const std::string& pd
   c->cd(2);
   auto* q = new TProfile2D(Form("pq%d", ib), Form("%s: r#Delta#phi [#mum];z [cm];#phi [rad]", name.c_str()), 40, -80, 80, 36, -3.1416, 3.1416);
   gPad->SetRightMargin(ColzRightMargin);
-  sens->Draw(Form("1e4*rdphi:phi:z>>pq%d", ib), Form("branch==%d", ib), "colz");
+  sens->Draw(Form("1e4*rdphi:phi:z>>pq%d", ib), Form("branch==%d", ib), "profcolz");
   gPad->SetGrid(1);
   q->SetStats(0);
   q->SetTitle(Form("%s: r#Delta#phi [#mum];z [cm];#phi [rad]", name.c_str()));

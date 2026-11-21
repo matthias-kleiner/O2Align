@@ -33,6 +33,12 @@ struct ProcessingStats : public TObject {
   uint32_t nTrcMultiPVAcc{0};  // tracks accepted by a composed multi-track PV GBL fit
   uint32_t nTrcSinglePVAcc{0}; // tracks accepted by a single-track GBL fit with PV constraint
   uint32_t nTrcNoPVAcc{0};     // tracks accepted by a single-track GBL fit without PV constraint
+  uint32_t nPVRefitTried{0};   // PV refits attempted (enough usable contributors)
+  uint32_t nPVRefitFailed{0};  // PV refits which failed
+  uint32_t nGBLFitSingle{0};       // single-track GBL trajectories submitted to the fit
+  uint32_t nGBLFitSingleFail{0};   // single-track GBL trajectories not accepted (construction, fit or chi2 failure)
+  uint32_t nGBLFitMulti{0};        // multi-track (composed) GBL trajectories submitted to the fit
+  uint32_t nGBLFitMultiFail{0};    // multi-track GBL trajectories not accepted (construction, fit or chi2 failure)
 
   std::array<uint32_t, 7> nITSLrPoints{0};    // number of ITS points per layer contribuing
   std::array<uint32_t, 7> nITSLrPointsOvl{0}; // number of ITS overlap points per layer contribuing
@@ -50,7 +56,7 @@ struct ProcessingStats : public TObject {
   TH1F createStatHisto(const std::string& pattern) const;
   void Print(Option_t* option = "") const override;
 
-  ClassDefOverride(ProcessingStats, 3);
+  ClassDefOverride(ProcessingStats, 4);
 };
 } // namespace o2::alignrs
 

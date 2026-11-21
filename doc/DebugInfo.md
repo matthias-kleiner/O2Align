@@ -51,6 +51,9 @@ GBL fit. It is the seed of the GBL linearization; the GBL correction is not appl
 | `composed` | the track was fitted in a composed trajectory with the other tracks of its vertex (`useMultiTrackPVConstraint` 1 to 4); otherwise it is a single-track trajectory |
 | `bz` | nominal field, kG (0 for B=0 data) |
 | `tfCounter`, `firstTForbit`, `runNumber` | timing info of the TF |
+| `inputPar` | (`TrackPar`) the input track of the reconstruction before any refit, e.g. `t.inputPar.getPt()`; for cosmics the downward seed |
+| `kfInnerPar` | (`TrackPar`) the state after the inward KF refit, before the eventual vertex update; w/o vertex it equals the reference state. With `AlignParams.CollGBLSeedITSOnly` (collisions) this refit uses the ITS points only, starting from the outward refit state at the outermost ITS point, and `kfFit` counts only these points |
+| `gblRefCorr[5]` | the GBL correction to the reference state at the reference point, in the GBL order (q/pt, snp, tgl, Y, Z): the fitted q/pt is `t.getQ2Pt() + t.gblRefCorr[0]`; zero at B=0 (no curvature parameter) or if not available |
 | `points` | `std::vector<DbgPoint>`, the points of the GBL trajectory in the order GBL sees them (from the innermost outward) |
 | `cosm` | `DbgCosmic`, cosmic-ext input only (`cosm.valid`): what the selection of the cosmics can cut on. TOF pair (`hasTOFTime`, `scoreTOFPair`, `scoreTOFReversed`), `chi2MatchPolished`, the matcher's `chi2Match`, `chi2Refit`, `flags` (near-beam), times, the reference track (`p`, `pt`, `tgl`, `phi`, `d0`, `z0`), TPC occupancy, and per leg (0 = bottom, 1 = top) the attached TPC clusters (`nTPC`, `nTPCA` on the A side, `nTPCRow63/97/127`) and the ITS / TRD / TOF hits of the input; `nPntTop` = points of the top leg in the fit |
 
@@ -63,14 +66,17 @@ One `DbgPoint` per **GBL point**, which is not the same as one per cluster:
   vertex position enters through the inner transformation;
 - when a step to a point spans a wide radial gap with a lot of material (the ITS-TPC transition, see `splitMSThreshold` and
   `splitMSStepMinDX`), an extra scatterer-only point is inserted at the midpoint. It has `det=-1`, only `x`, `alpha`, `snp` and
-  the kink fields are meaningful.
+  the kink fields are meaningful;
+- the exception: a cluster at the position (alpha and X) of the previous one, e.g. with the ideal TPC map the clusters of one
+  pad row on both sides of the central electrode, is a further measurement on the GBL point of that one. Its `DbgPoint` has
+  `SamePoint` and shares the GBL point (label, fitted state, kink) of the last preceding `DbgPoint` without `SamePoint`.
 
 | Member | Meaning |
 |---|---|
 | `det` | detector index of [Detector.h](../include/O2Align/Detector.h): 0 = PVT (the vertex), 1 = ITS, 2 = TPC, 3 = TRD, 4 = TOF; -1 for the scatterer-only points |
 | `sens` | sensor ID within the detector (the volume ID of the Millepede label), -1 for the vertex |
 | `lr` | detector-specific layer-like index (ITS layer, TPC pad row group, ...) |
-| `flags` | `HasMeas` (1): has a measurement; `HasKink` (2): has a scatterer, the kinks are defined; `IsVertex` (4): the primary vertex; `ITSOverlap` (8): the cluster is on an ITS overlap |
+| `flags` | `HasMeas` (1): has a measurement; `HasKink` (2): has a scatterer, the kinks are defined; `IsVertex` (4): the primary vertex; `ITSOverlap` (8): the cluster is on an ITS overlap; `SamePoint` (16): a further measurement on the GBL point of the previous entry |
 | `x`, `alpha` | position of the point in its tracking frame (`x` along the local radial direction) and the rotation angle of that frame |
 | `y`, `z` | the measured coordinates in the tracking frame (0 if no measurement) |
 | `sigY`, `sigZ` | cluster errors, including the extra errors (`extraClsErr*`) |
@@ -90,10 +96,12 @@ of the measured point; the lab `Z` is `z`. `hasMeas()` and `hasKink()` test the 
 
 **Residuals.** All residuals are *measurement minus track* in cm, in the tracking frame of the point.
 
-- `dyPre`, `dzPre` are relative to the *linearization track* of the GBL, which is propagated from point to point and, when
-  `useStableRef` is set (the default), displaced to each cluster after the point is accounted. They are therefore the residuals with
-  respect to the broken-line reference, they can be as large as mm (the RMS in the first tests was 0.9 mm in Y and 1.4 mm in Z) and they are
-  not track residuals in the usual sense. They are the input to the fit: if a misalignment is injected, it is included in them.
+- `dyPre`, `dzPre` are relative to the *seed track* of the GBL: the KF state at the reference point (the innermost point, from the
+  inward fit), extrapolated outward to the measurement plane of each point. The seed is not updated by the measurements along the way
+  (`useStableRef` only affects the reference used by the propagator to evaluate the material and the field along the steps). They
+  are therefore the residuals with respect to the extrapolation of the innermost state, not track residuals in the usual sense: they
+  grow with the lever arm and the extrapolation error (the RMS in the first tests was 0.9 mm in Y and 1.4 mm in Z for the ITS), and
+  can reach many cm at the large radii (e.g. TOF). They are the input to the fit: if a misalignment is injected, it is included in them.
 - `dyFit`, `dzFit` are the residuals with respect to the GBL-fitted track. They are *biased*: the point itself pulls the fit, so their
   RMS is below the cluster error (about 0.5 σ for ITS tracks with ~7 points), as for any residual to a fit that includes the point.
   Their mean as a function of position (sensor, phi, z, ...) is what shows the misalignment that the fit could not absorb.
@@ -102,6 +110,10 @@ of the measured point; the lab `Z` is `z`. `hasMeas()` and `hasKink()` test the 
   r_unb = V (V − C)⁻¹ r_fit, of covariance V (V − C)⁻¹ V = V + the covariance of the fit without the point. Their pulls
   `dyUnb/sigYUnb` should have unit RMS. They are the residuals to use for one-out studies (e.g. per sensor), as those of
   checkResid; for the tracks of a composed trajectory the fit left out of is that of the whole composed trajectory.
+  They are not fully equivalent to the one-out residuals of a Kalman fit: the GBL fit has the scatterers (kinks) as free parameters,
+  and if the misalignment is not absorbed by the alignment parameters, it can be partly compensated by non-zero (asymmetric) kinks.
+  Then `dyFit`, `dzFit` (and hence `dyUnb`, `dzUnb`) are biased towards zero, and the mean fitted kink is non-zero. A non-zero mean of
+  `kinkY/Z` or of `pullKinkY/Z` (as a function of the same variables) signals that the residuals under-estimate the misalignment.
 - Residuals of the same point in a composed trajectory belong to a fit with the common vertex of all its tracks.
 
 **Kinks.** The kink is the change of direction at the scatterer, which stands for the material crossed since the previous point
@@ -151,3 +163,11 @@ t->Scan("t.gid.asString():t.gblFit.chi2Ndf:Max$(abs(points.dyFit/points.sigY))",
 With `--output MisRes` and `AlignParams.misAlgJson`, one entry per point to which a misalignment was injected is written to the same
 file: the shifted residual `dy,dz`, the injected shift `ddy,ddz`, the detector `det`, sensor `sens`, `z` and `phi`. See
 [MisalignmentTest.md](MisalignmentTest.md).
+
+## TRD / TOF residual histograms
+
+[macro/trdTofResid.C](../macro/trdTofResid.C) fills from `gbltrack` (a file, or a text file with one root file per line) the `dPre`, `dUnb`
+or `dFit` residuals of the measured TRD and TOF points into an `o2::HistoManager`: per TRD chamber and per TOF sector and Z slice dY vs `snp`
+and dZ vs the track `tgl`, with `FitSlicesY` mean/sigma histograms (IDs `Sect*10000 + Lr*1000 + St*100 + iYZ*10`, `+1` mean, `+2` sigma;
+Lr 0-5 TRD layer, 6 TOF). `trdTofResid(inp, out, geom, resType, ...)` books/fills/fits, `drawTRDTOFResid(cfgKeyValues, pdf)` superimposes
+several managers listed in the `checkresid.ext_*` keys, as `o2-check-resid-workfow --draw-external-only` does, one pdf page per sector and layer.

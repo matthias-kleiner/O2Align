@@ -220,6 +220,7 @@ struct ModeFit {
   std::array<double, NCols> err{};
   std::array<double, NCols> scale{}; // lever arm of the mode, in units of cm^power, to convert amp to the native amplitude
   std::array<double, NCols> explained{};
+  std::array<double, NCols> resolution{}; // diagonal of the resolution matrix: 1 = determined by the data, 0 = lost in the truncated null space
   std::array<double, NRigid> rigid{};
   Eigen::Matrix<double, NCols, NCols> corr = Eigen::Matrix<double, NCols, NCols>::Zero();
   double rmsRaw{0.}, rmsRigid{0.}, rmsModes{0.}; // cm
@@ -229,6 +230,14 @@ struct ModeFit {
   std::vector<std::array<double, 3>> dRigid;
   std::vector<std::array<std::array<double, 3>, NCols>> dMode;
 };
+
+// Singular values below this fraction of the largest one (of the column-normalised design matrix) are
+// truncated: the corresponding combinations of columns are degenerate on the branch (e.g. on a thin
+// cylinder like TOF, z = r*t makes bowing, radialPolar_r0t2 and radialPolar_r1t2 the same field), and
+// keeping them turns a noise-level displacement into huge cancelling amplitudes.
+constexpr double SVDRelTol = 1e-3;
+// Modes with a resolution below this are flagged as undetermined in the log and the json
+constexpr double MinResolution = 0.5;
 
 std::array<double, NCols> modeScales(const std::vector<SensorDisp>& sensors)
 {
@@ -322,12 +331,14 @@ ModeFit fitModes(const std::vector<SensorDisp>& sensors)
   // columns, so the cost is irrelevant.
   Eigen::JacobiSVD<MatrixXd> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
   const auto& sv = svd.singularValues();
-  const double tol = 1e-8 * sv(0);
+  const double tol = SVDRelTol * sv(0);
   Eigen::MatrixXd cov = Eigen::MatrixXd::Zero(NPar, NPar); // of the normalised parameters, unit sigma
   VectorXd y = VectorXd::Zero(NPar);
+  Eigen::MatrixXd resMat = Eigen::MatrixXd::Zero(NPar, NPar); // V_k V_k^T, projector on the determined subspace
   for (int j = 0; j < NPar; ++j) {
     if (sv(j) > tol) {
       ++fit.rank;
+      resMat += svd.matrixV().col(j) * svd.matrixV().col(j).transpose();
       y += svd.matrixV().col(j) * (svd.matrixU().col(j).dot(b) / sv(j));
       cov += svd.matrixV().col(j) * svd.matrixV().col(j).transpose() / (sv(j) * sv(j));
     }
@@ -343,6 +354,7 @@ ModeFit fitModes(const std::vector<SensorDisp>& sensors)
   for (int c = 0; c < NCols; ++c) {
     const int j = NRigid + c;
     fit.amp[c] = theta(j);
+    fit.resolution[c] = resMat(j, j);
     fit.err[c] = std::sqrt(sigma2 * cov(j, j)) / colNorm(j);
   }
   for (int c = 0; c < NCols; ++c) {
@@ -404,6 +416,8 @@ nlohmann::json branchToJSON(const Branch& br, const ModeFit& fit, const std::arr
                      {"metricBError_um", CmToUm * fit.err[c]},
                      {"explainedFraction", fit.explained[c]},
                      {"leverArm", fit.scale[c]},
+                     {"resolution", fit.resolution[c]},
+                     {"determined", fit.resolution[c] >= MinResolution},
                      {"nativeAmplitude", fit.amp[c] / fit.scale[c]}};
     if (mA) {
       m["metricA_um"] = (*mA)[c].value;
@@ -423,17 +437,17 @@ nlohmann::json branchToJSON(const Branch& br, const ModeFit& fit, const std::arr
 
 void logBranch(const Branch& br, const ModeFit& fit, const std::array<MetricA, NCols>* mA)
 {
-  LOGP(info, "Weak modes of {}: {} sensors, displacement rms {:.1f} um -> {:.1f} um after rigid shift/rotation -> {:.1f} um after modes (rank {}/{}, cond {:.1e})",
-       br.top->getSymName(), br.sensors.size(), CmToUm * fit.rmsRaw, CmToUm * fit.rmsRigid, CmToUm * fit.rmsModes, fit.rank, NPar, fit.condition);
+  LOGP(info, "Weak modes of {} (singular values < {:.0e} of the largest truncated; modes with resolution < {:.1f} are degenerate with others, their amplitude is the minimum-norm one and not meaningful, marked '?'): {} sensors, displacement rms {:.1f} um -> {:.1f} um after rigid shift/rotation -> {:.1f} um after modes (rank {}/{}, cond {:.1e})",
+       br.top->getSymName(), SVDRelTol, MinResolution, br.sensors.size(), CmToUm * fit.rmsRaw, CmToUm * fit.rmsRigid, CmToUm * fit.rmsModes, fit.rank, NPar, fit.condition);
   if (mA) {
-    LOGP(info, "  {:<20} {:>12} {:>10} {:>10} {:>14}", "mode", "B [um@lever]", "+-", "explained", "A [um] (nDOF)");
+    LOGP(info, "  {:<20} {:>12} {:>10} {:>10} {:>6} {:>14}", "mode", "B [um@lever]", "+-", "explained", "resol", "A [um] (nDOF)");
     for (int c = 0; c < NCols; ++c) {
-      LOGP(info, "  {:<20} {:>12.2f} {:>10.2f} {:>9.1f}% {:>9.2f} ({})", colName(c), CmToUm * fit.amp[c], CmToUm * fit.err[c], 100. * fit.explained[c], (*mA)[c].value, (*mA)[c].nTerms);
+      LOGP(info, "  {:<20} {:>12.2f} {:>10.2f} {:>9.1f}% {:>5.2f}{} {:>9.2f} ({})", colName(c), CmToUm * fit.amp[c], CmToUm * fit.err[c], 100. * fit.explained[c], fit.resolution[c], fit.resolution[c] < MinResolution ? '?' : ' ', (*mA)[c].value, (*mA)[c].nTerms);
     }
   } else {
-    LOGP(info, "  {:<20} {:>12} {:>10} {:>10}", "mode", "B [um@lever]", "+-", "explained");
+    LOGP(info, "  {:<20} {:>12} {:>10} {:>10} {:>6}", "mode", "B [um@lever]", "+-", "explained", "resol");
     for (int c = 0; c < NCols; ++c) {
-      LOGP(info, "  {:<20} {:>12.2f} {:>10.2f} {:>9.1f}%", colName(c), CmToUm * fit.amp[c], CmToUm * fit.err[c], 100. * fit.explained[c]);
+      LOGP(info, "  {:<20} {:>12.2f} {:>10.2f} {:>9.1f}% {:>5.2f}{}", colName(c), CmToUm * fit.amp[c], CmToUm * fit.err[c], 100. * fit.explained[c], fit.resolution[c], fit.resolution[c] < MinResolution ? '?' : ' ');
     }
   }
 }
@@ -495,7 +509,7 @@ void writeRoot(const std::string& fileName, const std::vector<Branch>& branches,
   tSens.Write();
 
   std::string detName, modeName;
-  double ampB, errB, explained, ampA, lever;
+  double ampB, errB, explained, ampA, lever, resolution;
   int nTermsA;
   TTree tMode("modes", "fit results per branch and mode, um");
   tMode.Branch("branch", &iBranch);
@@ -507,6 +521,7 @@ void writeRoot(const std::string& fileName, const std::vector<Branch>& branches,
   tMode.Branch("metricA", &ampA);
   tMode.Branch("nTermsA", &nTermsA);
   tMode.Branch("leverArm", &lever);
+  tMode.Branch("resolution", &resolution);
   for (int ib = 0; ib < static_cast<int>(branches.size()); ++ib) {
     iBranch = ib;
     detName = branches[ib].top->getSymName();
@@ -518,6 +533,7 @@ void writeRoot(const std::string& fileName, const std::vector<Branch>& branches,
       ampA = mA ? (*mA)[ib][c].value : 0.;
       nTermsA = mA ? (*mA)[ib][c].nTerms : 0;
       lever = fits[ib].scale[c];
+      resolution = fits[ib].resolution[c];
       tMode.Fill();
     }
   }

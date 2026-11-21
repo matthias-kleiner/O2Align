@@ -47,6 +47,12 @@ Long64_t ProcessingStats::Merge(TCollection* collection)
     nTrcMultiPVAcc += other->nTrcMultiPVAcc;
     nTrcSinglePVAcc += other->nTrcSinglePVAcc;
     nTrcNoPVAcc += other->nTrcNoPVAcc;
+    nPVRefitTried += other->nPVRefitTried;
+    nPVRefitFailed += other->nPVRefitFailed;
+    nGBLFitSingle += other->nGBLFitSingle;
+    nGBLFitSingleFail += other->nGBLFitSingleFail;
+    nGBLFitMulti += other->nGBLFitMulti;
+    nGBLFitMultiFail += other->nGBLFitMultiFail;
     for (size_t iLayer = 0; iLayer < nITSLrPoints.size(); ++iLayer) {
       nITSLrPoints[iLayer] += other->nITSLrPoints[iLayer];
       nITSLrPointsOvl[iLayer] += other->nITSLrPointsOvl[iLayer];
@@ -125,6 +131,8 @@ TH1F ProcessingStats::createStatHisto(const std::string& pattern) const
 void ProcessingStats::Print(Option_t* option) const
 {
   LOGP(info, "Stats: {}", asString());
+  LOGP(info, "PV refits: tried={} failed={}", nPVRefitTried, nPVRefitFailed);
+  LOGP(info, "GBL fits: single-track tried={} failed={}, multi-track tried={} failed={}", nGBLFitSingle, nGBLFitSingleFail, nGBLFitMulti, nGBLFitMultiFail);
   LOGP(info, "Detector points: TPC={} TOF={}", nTPCPoints, nTOFPoints);
   for (size_t iLayer = 0; iLayer < nITSLrPoints.size(); ++iLayer) {
     LOGP(info, "\tITS layer {}: points={} overlap={}", iLayer, nITSLrPoints[iLayer], nITSLrPointsOvl[iLayer]);

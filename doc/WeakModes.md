@@ -85,7 +85,11 @@ Two numbers per branch and mode, deliberately independent:
 Caveats: the columns are not orthogonal (`curl` and `globalTilt` duplicate the rigid rotation, several
 modes overlap on a limited set of sensors), so the fit is rank-deficient by construction (the rank is
 logged and stored in the JSON) and neighbouring amplitudes can be correlated: check the correlation
-matrix before reading a single bar. Values are absolute: an injected misalignment (`misAlgJson`) is
+matrix before reading a single bar. Singular values below 1e-3 of the largest are truncated
+(`SVDRelTol` in `WeakModes.cxx`), and each mode gets a `resolution` (diagonal of the resolution matrix, 1 = fixed by the
+data, 0 = lost in the truncated null space; `determined` = resolution >= 0.5). The amplitude of an undetermined mode is
+the minimum-norm one and not meaningful (e.g. `bowing` vs `radialPolar_r*t2` on the thin TOF cylinder); it is marked `?`
+in the log and drawn in grey by `drawWeakModes.C`. Values are absolute: an injected misalignment (`misAlgJson`) is
 *not* subtracted.
 
 ## Standalone diagnostic of the initial (CCDB) alignment

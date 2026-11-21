@@ -1,0 +1,58 @@
+[
+  {
+    "match": "PVT/meanVertex",
+    "calib": {
+      "type": "meanvertex"
+    }
+  },
+  {
+    "match": "ITS",
+    "rigidBody": "fixed"
+  },
+  {
+    "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]",
+    "rigidBody": "fixed"
+  },
+  {
+    "match": "ITS/ITSULayer[0-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+",
+    "rigidBody": "fixed"
+  },
+  {
+    "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUHalfStave[0-1]",
+    "rigidBody": "fixed"
+  },
+  {
+    "match": "ITS/ITSULayer[3-6]/ITSUHalfBarrel[0-1]/ITSUStave[0-9]+/ITSUHalfStave[0-1]/ITSUModule[0-6]",
+    "rigidBody": "fixed"
+  },
+  {
+    "match": "TRD/sm[0-9]+",
+    "rigidBody": "all"
+  },
+  {
+    "match": "TRD/sm[0-9]+/st[0-4]/pl[0-5]",
+    "rigidBody": ["TY", "RX"]
+  },
+  {
+    "match": "TRD/sm[0-9]+/st[0-4]/pl[0-5]",
+    "measurement": {
+      "TY": [0, 0.1],
+      "RX": [0, 0.001]
+    }
+  },
+  {
+    "match": "TOF/sm[0-9]+",
+    "rigidBody": "all"
+  },
+  {
+    "match": "TOF/sm[0-9]+",
+    "measurement": {
+      "RX": [0, 0.001],
+      "RY": [0, 0.001]
+    }
+  },
+  {
+    "match": "TOF/sm[0-9]+/strip[0-9]+",
+    "rigidBody": "fixed"
+  }
+]

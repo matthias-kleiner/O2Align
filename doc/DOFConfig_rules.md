@@ -644,6 +644,17 @@ TRD has a dummy `TRD_envelope` (not a geometry alignable), followed by alignable
 | Supermodule | `TRD/sm[0-9]+` |
 | Chamber | `TRD/sm[0-9]+/st[0-9]/pl[0-9]` |
 
+The DOFs are in different frames at the two levels. A supermodule uses its TGeo frame: `TX` along rφ, `TY` along the
+beam, `TZ` radial. A chamber is a sensor whose frame is redefined by `SensorTRD::defineMatrixL2G` (the TGeo chamber
+frame rotated by RotX(−90°)·RotY(−90°)): `TX` radial, `TY` along rφ, `TZ` along the beam, so `RX` is the in-plane
+rotation (about the radial axis), `RY` the tilt in the r–z plane and `RZ` the tilt in the r–rφ plane (about the beam).
+In the mean-of-children constraint of a free supermodule, the chamber `RY` and `RZ` enter with lever arms of up to the
+stack z (±240 cm) and the layer offset from the supermodule centre (±31.5 cm).
+[local_frames_TRD.pdf](local_frames_TRD.pdf) (and `local_frames_ITS.pdf`, `local_frames_TOF.pdf`, drawn by
+`macro/drawLocalFrames.C`) shows, per alignable level, the DOF axes (solid) next to the TGeo axes (dashed) in the lab
+orientation. Of the ITS, TRD and TOF levels only the TRD chambers have a DOF frame differing from the TGeo one in
+orientation (the ITS chip DOF frame is the embedded sensor layer, differing in position only).
+
 ## TOF Alignable Match Strings
 
 TOF has a dummy `TOF_envelope` (not a geometry alignable), followed by alignable supermodules and strips. Both IDs in the geometry names are formatted as two digits:

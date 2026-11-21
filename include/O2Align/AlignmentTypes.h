@@ -49,8 +49,7 @@ struct FrameInfoExt final {
   float x{-999.f};                // X of the measurement in the tracking frame
   float alpha{-999.f};            // rotation angle of the tracking frame
   o2::BaseCluster<float> cluster; // cluster info
-  bool zFromTrack{false};         // the Z is not measured but taken from the track (TRD): no Z derivatives wrt the alignment
-  float tiltDz{0.f};              // zFromTrack: dy/dz of the measured y wrt the z of the measuring structure (TRD pad tilt, 0 if not corrected)
+  float tiltDz{0.f};              // dy/dz of the measured y wrt the z of the pad row (TRD pad tilt, 0 if not corrected)
   std::string asString() const;
   bool isValid() const { return lr > Invalid; }
   bool isVertex() const { return lr == Vertex; }
@@ -77,6 +76,11 @@ struct Track {
   std::vector<Measurement> points;    // measurment point, at the moment filled in parallel to GBL points but not used (might be used in the future for validation/debug output)
   std::vector<FrameInfoExt> info;     // frame info, owned by the track (detectors append to it)
   int failedFrame{-1};                // fitTrack: slot of `info` at which the last failed fit stopped (propagation or update), -1 if none
+  o2::track::TrackParD inputPar;      // the input track (reconstruction), before any refit; for cosmics the downward seed
+  o2::track::TrackParD kfInnerPar;    // state after the inward KF refit over the detector points, before the eventual vertex update
+  o2::track::TrackParCovD itsOutPar;  //! state of the outward KF refit at the outermost ITS point (seed of the ITS-only inward refit)
+  int itsOutFrame{-1};                //! slot of `info` of the outermost ITS point, <0 if the ITS did not contribute
+  int kfLastFrame{-1};                //! outermost slot of `info` used by the inward KF refit, <0: all
   int invertAt{-1};                   // cosmics: slot of `info` from which the track runs in the inverted (opposite direction) parametrisation, see AlignmentSpec::prepareCosmicTrack; <0: none
 
   /// KF refit over the frames in the inclusive [frameStart, frameStop] slot range of `info`,
@@ -106,7 +110,7 @@ struct Track {
   /// The chi2 of the vertex point added to `kfFit.chi2` is then that of the scaled covariance.
   bool updateWithVertex(const o2::dataformats::VertexBase& vtx, double covScale = 1.);
 
-  ClassDefNV(Track, 3)
+  ClassDefNV(Track, 4)
 };
 
 struct TrackSlopes {

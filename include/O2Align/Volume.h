@@ -18,6 +18,7 @@
 #include <ostream>
 #include <string>
 #include <map>
+#include <set>
 #include <unordered_map>
 #include <array>
 #include <limits>
@@ -74,7 +75,7 @@ class Volume
 
   static void applyDOFConfig(Volume* root, const std::string& jsonPath);
   /// parse millepede.res into label -> fitted value, fixed parameters included (at their preset value)
-  static std::map<uint32_t, double> readMillepedeResults(const std::string& milleResPath);
+  static std::map<uint32_t, double> readMillepedeResults(const std::string& milleResPath, std::map<uint32_t, std::string>* comments = nullptr);
   static void writeMillepedeResults(Volume* root, const std::map<uint32_t, double>& labelToValue, const std::string& outJsonPath);
 
   /// create the common root of the whole hierarchy: a fictitious volume with the identity L2G, whose
@@ -89,7 +90,9 @@ class Volume
   /// writeChildrenMeanConstraints) for every DOF of every volume whose own "weightedMean" clause did
   /// not override it; modeOpt: see ModeEquationOptions
   void writeRigidBodyConstraints(std::ostream& os, bool statWeighted = false, const ModeEquationOptions& modeOpt = {}) const;
-  void writeParameters(std::ostream& os) const;
+  /// \param startValues optional label -> starting value of the parameter (e.g. from a previous millepede.res); 0 if absent
+  /// \param written if given, receives the labels of all parameters written
+  void writeParameters(std::ostream& os, const std::map<uint32_t, double>* startValues = nullptr, std::set<uint32_t>* written = nullptr) const;
   void writeTree(std::ostream& os, int indent = 0) const;
 
   /// \name Global deformation-mode constraints
@@ -350,13 +353,14 @@ class Volume
   /// write the rigid-body block of the JSON output (result.json) for this volume, the fitted values
   /// as given in labelToValue. Generic over any
   /// RigidBodyDOFSet layout, hence implemented once in the base class. The caller
-  /// (writeMillepedeResults) only calls this when the volume has free rigid-body DOFs.
+  /// (writeMillepedeResults) only calls this when the volume has free rigid-body DOFs or a fixed one that
+  /// pede reports at a non-zero (preset) value.
   virtual bool MP2JSON_RB(const std::map<uint32_t, double>& labelToValue, nlohmann::json& entry) const;
   /// local delta (LOC->LOC, l' = delta*l) built from the fitted rigid-body parameters of this volume.
-  /// Returns false if it has no free rigid-body DOF or all its fitted values are 0 (fixed parameters
-  /// are absent from labelToValue, hence count as 0).
+  /// Returns false if it has no rigid-body DOF set or all its values are 0 (labels absent from
+  /// labelToValue count as 0). Fixed DOFs count too: pede reports them at their preset value.
   bool getFittedLocalDelta(const std::map<uint32_t, double>& labelToValue, TGeoHMatrix& delta) const;
-  /// fitted value of a parameter, 0 if it was not fitted (fixed or absent from millepede.res)
+  /// value of a parameter in millepede.res (a fixed one at its preset value), 0 if it is absent
   static double getFittedValue(const std::map<uint32_t, double>& labelToValue, uint32_t rawLabel)
   {
     const auto it = labelToValue.find(rawLabel);
@@ -364,8 +368,9 @@ class Volume
   }
   /// write the calibration block of the closure-test JSON output for this volume. The base
   /// implementation writes, under "calib", the absolute fitted values of the free DOFs of every
-  /// calibration slot (see calibSlotsToJSON); a detector-specific layout needs an override. The caller only calls this when
-  /// the volume has free calibration DOFs.
+  /// calibration slot, and of the fixed ones that pede reports at a non-zero (preset) value (see calibSlotsToJSON);
+  /// a detector-specific layout needs an override. The caller only calls this when the volume has free calibration
+  /// DOFs or such a fixed one.
   virtual bool MP2JSON_Calib(const std::map<uint32_t, double>& labelToValue, nlohmann::json& entry) const;
 
   /// ROOT-output counterparts of MP2JSON_RB/MP2JSON_Calib, same signature, not yet implemented.

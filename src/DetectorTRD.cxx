@@ -128,9 +128,16 @@ float DetectorTRD::trackletAngularPull(const o2::trd::Tracklet64& trackletRaw, c
   return (trkltLoc.getDy() + dyTiltCorr - mRecoParam.convertAngleToDy(snp)) / std::sqrt(mRecoParam.getDyRes(snp, 0));
 }
 
-// Point of a tracklet given the track state at its X: the track provides the Z and the angles needed for the
-// tilt correction and the covariance
-FrameInfoExt DetectorTRD::makeTrackletPoint(const o2::trd::Tracklet64& trackletRaw, const std::array<double, 3>& traXYZ, double alpSens, const o2::track::TrackParD& trkParam) const
+float DetectorTRD::getZCorrCoeffNRC() const
+{
+  const float c = Params::Instance().TRDNonRCCorrDzDtgl;
+  return c < -990.f ? mRecoParam.getZCorrCoeffNRC() : c;
+}
+
+// Point of a tracklet, defined as in the Kalman update of O2 (TRDGlobalTrackingSpec): y and z of the tracklet (z = pad-row centre,
+// moving with the chamber) in the tracking frame; the track state at its X gives the tilt correction of y, the angular pull and
+// the covariance. See doc/TRD.md.
+FrameInfoExt DetectorTRD::makeTrackletPoint(const o2::trd::Tracklet64& trackletRaw, const std::array<double, 3>& traXYZ, double alpSens, const o2::track::TrackParCovD& trkParam, float angularPull) const
 {
   const auto& params = Params::Instance();
   const auto* geo = o2::trd::Geometry::instance();
@@ -138,21 +145,24 @@ FrameInfoExt DetectorTRD::makeTrackletPoint(const o2::trd::Tracklet64& trackletR
   const o2::trd::PadPlane* pad = geo->getPadPlane(trkltDet);
   const double tilt = std::tan(TMath::DegToRad() * pad->getTiltingAngle()); // tilt is signed and returned in degrees
   const double padLength = pad->getRowSize(trackletRaw.getPadRow());
+  const double snp = trkParam.getSnp();
   // the tilted pads report the y at the pad-row centre: corrected with the track z, as in O2 (GPUTRDTracker, TrackInterpolation),
-  // only for a track within one pad length of the row centre (otherwise the tracklet is not from this track's row)
-  double tiltCorr = tilt * (traXYZ[2] - trkParam.getZ());
-  if (!(std::abs(traXYZ[2] - trkParam.getZ()) < padLength)) {
-    tiltCorr = 0.;
-  }
-  double posY = traXYZ[1] - tiltCorr;
-  const double posZ = trkParam.getZ() + params.TRDNonRCCorrDzDtgl * trkParam.getTgl();
+  // only for a track within one pad length of the row centre (otherwise the tracklet is not from this track's row) and with a z
+  // error well below the pad length
+  const double dzRow = traXYZ[2] - trkParam.getZ();
+  const bool applyTilt = std::abs(dzRow) < padLength && trkParam.getSigmaZ2() < padLength * padLength / 12.;
+  double posY = traXYZ[1] - (applyTilt ? tilt * dzRow : 0.);
+  const double posZ = traXYZ[2] + getZCorrCoeffNRC() * trkParam.getTgl(); // pad-row centre, error l^2/12
   // correction for DVT, equivalent to a shift in X at which Y is evaluated: dY = tg_phi * dvt
   if (std::abs(params.TRDCorrDVT) > 1e-9f) {
-    const double snp = trkParam.getSnp();
     posY += snp / std::sqrt((1. - snp) * (1. + snp)) * params.TRDCorrDVT;
   }
+  // angular pull as in O2 (rec.trd.useAngularPull): error of y increased with it, >=3 also the y shifted
+  if (params.TRDUseAngularPull >= 3) {
+    posY -= angularPull * mRecoParam.getCorrYDy(static_cast<float>(snp));
+  }
   std::array<float, 3> cov{};
-  mRecoParam.recalcTrkltCov(static_cast<float>(tilt), static_cast<float>(trkParam.getSnp()), static_cast<float>(padLength), cov);
+  mRecoParam.recalcTrkltCov(static_cast<float>(tilt), static_cast<float>(snp), static_cast<float>(padLength), cov, params.TRDUseAngularPull != 0 ? angularPull : 0.f);
 
   FrameInfoExt pnt;
   pnt.detIdx = mDetIdx;
@@ -160,8 +170,7 @@ FrameInfoExt DetectorTRD::makeTrackletPoint(const o2::trd::Tracklet64& trackletR
   pnt.label = Label(mDetIdx, trkltDet, true);
   pnt.x = static_cast<float>(traXYZ[0]);
   pnt.alpha = static_cast<float>(alpSens);
-  pnt.zFromTrack = true; // posZ is the track Z at the tracklet: it does not depend on the chamber position
-  pnt.tiltDz = tiltCorr != 0. ? static_cast<float>(tilt) : 0.f; // but the tilt-corrected y does, through the z of the pad row
+  pnt.tiltDz = applyTilt ? static_cast<float>(tilt) : 0.f; // the tilt-corrected y depends on the z of the pad row
   pnt.cluster = o2::BaseCluster<float>(static_cast<int16_t>(trkltDet), static_cast<float>(traXYZ[0]), static_cast<float>(posY), static_cast<float>(posZ),
                                        cov[0] + params.extraClsErrYTRD * params.extraClsErrYTRD,
                                        cov[2] + params.extraClsErrZTRD * params.extraClsErrZTRD, cov[1]);
@@ -208,14 +217,15 @@ bool DetectorTRD::prepareTrack(o2::globaltracking::RecoContainer* recoData, cons
       resTrack.info.resize(nPointsIni);
       return false;
     }
-    if (!prop->propagateToAlphaX(trkParam, refLin, alpSens, traXYZ[0], false, params.maxSnp, params.maxStep, 1, params.corrType)) {
+    if (!prop->propagateToAlphaX(trkParam, refLin, alpSens, traXYZ[0], false, params.maxSnp, params.maxStep, 1, static_cast<o2::base::PropagatorD::MatCorrType>(params.corrType))) {
       resTrack.info.resize(nPointsIni);
       return false;
     }
-    if (params.TRDAngularPullNSigma > 0.f && std::abs(trackletAngularPull(trackletRaw, mTrackletsLoc[trkltId], trkParam)) > params.TRDAngularPullNSigma) {
+    const float angularPull = trackletAngularPull(trackletRaw, mTrackletsLoc[trkltId], trkParam);
+    if (params.TRDAngularPullNSigma > 0.f && std::abs(angularPull) > params.TRDAngularPullNSigma) {
       continue; // tracklet slope incompatible with the track direction
     }
-    auto& pnt = resTrack.info.emplace_back(makeTrackletPoint(trackletRaw, traXYZ, alpSens, trkParam));
+    auto& pnt = resTrack.info.emplace_back(makeTrackletPoint(trackletRaw, traXYZ, alpSens, trkParam, angularPull));
     chi2 += static_cast<float>(trkParam.getPredictedChi2Quiet(pnt.cluster));
     if (!trkParam.update(pnt.cluster)) {
       resTrack.info.resize(nPointsIni);
@@ -223,7 +233,6 @@ bool DetectorTRD::prepareTrack(o2::globaltracking::RecoContainer* recoData, cons
     }
     if (refLin) { // displace the reference to the last updated tracklet
       refLin->setY(pnt.cluster.getY());
-      refLin->setZ(pnt.cluster.getZ());
     }
   }
   int nAdded = static_cast<int>(resTrack.info.size() - nPointsIni);
@@ -261,10 +270,11 @@ int DetectorTRD::prepareCosmicLeg(const o2::dataformats::TrackCosmicsExtended& c
     if (!propagateCosmicRef(ref, alpSens, traXYZ[0], trk)) {
       continue;
     }
-    if (params.TRDAngularPullNSigma > 0.f && std::abs(trackletAngularPull(trackletRaw, trkltLoc, trk)) > params.TRDAngularPullNSigma) {
+    const float angularPull = trackletAngularPull(trackletRaw, trkltLoc, trk);
+    if (params.TRDAngularPullNSigma > 0.f && std::abs(angularPull) > params.TRDAngularPullNSigma) {
       continue; // tracklet slope incompatible with the track direction
     }
-    const auto pnt = makeTrackletPoint(trackletRaw, traXYZ, alpSens, trk);
+    const auto pnt = makeTrackletPoint(trackletRaw, traXYZ, alpSens, trk, angularPull);
     const double chi2 = trk.getPredictedChi2Quiet(pnt.cluster);
     if (chi2 < bestChi2[pnt.lr]) {
       bestChi2[pnt.lr] = chi2;
